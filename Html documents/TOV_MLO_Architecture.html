@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TOV Machine Loading Optimizer — System Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f1117; color: #e2e8f0; padding: 24px; }
+
+  .page-title {
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  .page-title h1 { font-size: 22px; font-weight: 700; color: #f8fafc; letter-spacing: 0.5px; }
+  .page-title p  { font-size: 12px; color: #64748b; margin-top: 4px; }
+
+  .arch-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    max-width: 1200px;
+    margin: 24px auto 0;
+  }
+
+  /* ── Layer wrapper ── */
+  .layer {
+    position: relative;
+    padding: 16px 20px;
+    border-radius: 10px;
+    margin-bottom: 0;
+  }
+  .layer-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .layer-label .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* ── Box row ── */
+  .box-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: stretch; }
+
+  /* ── Individual box ── */
+  .box {
+    border-radius: 8px;
+    padding: 10px 14px;
+    flex: 1;
+    min-width: 130px;
+    position: relative;
+  }
+  .box h3 { font-size: 11px; font-weight: 700; margin-bottom: 4px; }
+  .box p  { font-size: 10px; line-height: 1.5; color: #94a3b8; }
+  .box .tag {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 3px;
+    margin-top: 4px;
+  }
+
+  /* ── Arrow connector ── */
+  .arrow-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 32px;
+    gap: 8px;
+    color: #475569;
+    font-size: 11px;
+  }
+  .arrow-row svg { flex-shrink: 0; }
+  .arrow-label { font-size: 10px; color: #64748b; letter-spacing: 0.3px; }
+
+  /* ── Layer colors ── */
+  .layer-oracle  { background: #0d1f2d; border: 1px solid #1e3a4a; }
+  .layer-backend { background: #0d1a0d; border: 1px solid #1a3a1a; }
+  .layer-api     { background: #1a1a0d; border: 1px solid #3a3a1a; }
+  .layer-frontend{ background: #1a0d1a; border: 1px solid #3a1a3a; }
+  .layer-deploy  { background: #1a0d0d; border: 1px solid #3a1a1a; }
+  .layer-config  { background: #0d1a1a; border: 1px solid #1a3a3a; }
+
+  /* Box themes */
+  .box-oracle  { background: #132636; border: 1px solid #2a5570; }
+  .box-readonly{ background: #0f2030; border: 1px solid #1e4060; }
+  .box-rw      { background: #173026; border: 1px solid #2a6040; }
+  .box-engine  { background: #132613; border: 1px solid #2a6030; }
+  .box-preproc { background: #1a2610; border: 1px solid #3a5020; }
+  .box-api     { background: #26261a; border: 1px solid #504020; }
+  .box-view    { background: #261226; border: 1px solid #502050; }
+  .box-deploy  { background: #261212; border: 1px solid #502020; }
+  .box-config  { background: #123026; border: 1px solid #205040; }
+
+  .tag-r    { background: #1e3a4a; color: #7ec8e3; }
+  .tag-rw   { background: #1a3a1a; color: #7ee87e; }
+  .tag-w    { background: #3a1a0a; color: #e8a87e; }
+  .tag-out  { background: #1a1a3a; color: #a0a0f0; }
+
+  .dot-oracle   { background: #3b82f6; }
+  .dot-backend  { background: #22c55e; }
+  .dot-api      { background: #eab308; }
+  .dot-frontend { background: #a855f7; }
+  .dot-deploy   { background: #ef4444; }
+  .dot-config   { background: #06b6d4; }
+
+  /* ── Formula box ── */
+  .formula-section {
+    max-width: 1200px;
+    margin: 24px auto 0;
+  }
+  .formula-section h2 {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: #94a3b8;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    border-bottom: 1px solid #1e293b;
+    padding-bottom: 6px;
+  }
+  .formula-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 900px) { .formula-grid { grid-template-columns: 1fr; } }
+  .formula-card {
+    background: #111827;
+    border: 1px solid #1e293b;
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .formula-card h3 { font-size: 11px; font-weight: 700; color: #e2e8f0; margin-bottom: 8px; }
+  .formula-card pre {
+    font-size: 10px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    color: #86efac;
+    white-space: pre-wrap;
+    line-height: 1.6;
+  }
+  .formula-card .note { font-size: 9px; color: #64748b; margin-top: 6px; }
+
+  /* ── Data flow legend ── */
+  .legend {
+    max-width: 1200px;
+    margin: 20px auto 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 10px;
+    color: #64748b;
+    border-top: 1px solid #1e293b;
+    padding-top: 14px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-dot  { width: 10px; height: 10px; border-radius: 50%; }
+
+  /* Side-by-side layout for engine section */
+  .engines-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 700px) { .engines-row { grid-template-columns: 1fr; } }
+
+  .section-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 4px 0;
+    max-width: 1200px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .divider-line { flex: 1; border-top: 1px dashed #1e3a4a; }
+  .divider-text { font-size: 10px; color: #3b82f6; font-weight: 600; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="page-title">
+  <h1>TOV Machine Loading Optimizer — System Architecture</h1>
+  <p>Project Owner: Harish Radhakrishnan &nbsp;|&nbsp; Emerson Process Management (India) Pvt. Ltd. &nbsp;|&nbsp; v1</p>
+</div>
+
+<div class="arch-grid">
+
+  <!-- ═══════════════════ LAYER 0: DATA ═══════════════════ -->
+  <div class="layer layer-oracle">
+    <div class="layer-label"><span class="dot dot-oracle"></span>DATA LAYER — Oracle Database (local: XE via Docker | production: company Oracle DB)</div>
+    <div class="box-row">
+
+      <div class="box box-readonly" style="flex:1.5">
+        <h3 style="color:#7ec8e3">wip_orders</h3>
+        <p>PRODUCTION_ORDER · OPERATION_NO · OPERATION · WORK_CENTER · CYCLE_TIME · QUANTITY_ORDERED · QUANTITY_COMPLETED · QUANTITY_REJECTED · ITEM_CATEGORY · CDD · PRODUCTION_START_DATE_AND_TIME · REFERENCE</p>
+        <span class="tag tag-r">READ ONLY — ERP owned</span>
+      </div>
+
+      <div class="box box-oracle">
+        <h3 style="color:#7ec8e3">machine_master</h3>
+        <p>machine_name · working_shift · WORKING_MINS · oee · AVAILABLE_MINS</p>
+        <p style="margin-top:5px">Baseline capacity. OEE = 0.85 uniform.</p>
+        <span class="tag tag-r">READ (v1)</span>
+      </div>
+
+      <div class="box box-rw">
+        <h3 style="color:#7ee87e">machine_daily</h3>
+        <p>machine_name · date · working_shift · WORKING_MINS · DOWNTIME · oee · AVAILABLE_MINS</p>
+        <p style="margin-top:5px">Day-level overrides. UI writable by planners.</p>
+        <span class="tag tag-rw">READ + WRITE (UI)</span>
+      </div>
+
+      <div class="box box-oracle">
+        <h3 style="color:#7ec8e3">routing_master</h3>
+        <p>ITEM_CATEGORY · OPERATION · machine_name · SETUP_TIME · MACHINE_PRIORITY (1–4) · size · class · design · moc</p>
+        <p style="margin-top:5px">v1: 7 routable operations. Extensible.</p>
+        <span class="tag tag-r">READ (v1)</span>
+      </div>
+
+      <div class="box box-rw">
+        <h3 style="color:#86efac">schedule_output</h3>
+        <p>PRODUCTION_ORDER · OPERATION_NO · machine_name · shift · scheduled_date · balance_qty · start_offset_min · end_offset_min · run_id · generated_at</p>
+        <span class="tag tag-rw">Engine 1 WRITES</span>
+      </div>
+
+      <div class="box box-rw">
+        <h3 style="color:#86efac">sim_results</h3>
+        <p>sim_id · elevated_order · order · old_completion_date · new_completion_date · slip_days · risk_flag · created_at</p>
+        <span class="tag tag-rw">Engine 2 WRITES</span>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <svg width="16" height="24" viewBox="0 0 16 24"><path d="M8 0v18M2 13l6 8 6-8" stroke="#3b82f6" stroke-width="1.5" fill="none"/></svg>
+    <span class="arrow-label">python-oracledb thin mode &nbsp;·&nbsp; db.py connection pool</span>
+  </div>
+
+  <!-- ═══════════════════ LAYER 1: BACKEND ═══════════════════ -->
+  <div class="layer layer-backend">
+    <div class="layer-label"><span class="dot dot-backend"></span>BACKEND LAYER — Python (preprocess · Engine 1 · Engine 2)</div>
+
+    <div class="box-row" style="margin-bottom:10px">
+      <div class="box box-preproc" style="flex:2">
+        <h3 style="color:#a3e635">preprocess.py — Data Pipeline (runs before every engine call)</h3>
+        <p>
+          1. Drop CYCLE_TIME = 0 rows (external vendors, missing CT)<br>
+          2. Keep only operations in routing_master (v1: VB02–VB09 subset)<br>
+          3. Exclude QAINSP work centers<br>
+          4. Compute Balance Qty = ORDERED − COMPLETED − REJECTED; drop if ≤ 0<br>
+          5. Normalize shift names → lowercase ("first", "second", "third")<br>
+          6. resolve_capacity(): merge machine_daily override onto machine_master baseline<br>
+          7. Use AVAILABLE_MINS directly when column is populated
+        </p>
+      </div>
+      <div class="box box-config" style="flex:1; min-width:160px">
+        <h3 style="color:#67e8f9">config.json</h3>
+        <p>
+          batch_bonus_months: 2<br>
+          batch_bonus_value: 0.5<br>
+          ageing_normalization_days: 180<br>
+          machine_priority_epsilon: 0.001<br>
+          risk_safe_threshold_days: 5<br>
+          engine2_time_limit_seconds: 10<br>
+          scheduling_horizon_safety_factor: 2<br>
+          scheduling_horizon_buffer_days: 7
+        </p>
+        <span class="tag" style="background:#0e3040;color:#67e8f9">UI-editable · never in Oracle</span>
+      </div>
+    </div>
+
+    <div class="engines-row">
+      <div class="box box-engine" style="padding:14px">
+        <h3 style="color:#4ade80; font-size:12px">ENGINE 1 — CP-SAT Scheduling Optimizer (Model B)</h3>
+        <p style="margin-top:6px">
+          <strong style="color:#86efac">Scheduling unit:</strong> (PRODUCTION_ORDER, OPERATION_NO)<br><br>
+          <strong style="color:#86efac">Time model:</strong> discrete (date, shift) slots · global slot index = 3·day + shift · NO minute axis<br><br>
+          <strong style="color:#86efac">Variables:</strong> assign[t,m] (AddExactlyOne) · integer qty[t,m,slot] into capacity buckets<br><br>
+          <strong style="color:#86efac">Capacity:</strong> Σ qty·CT + setup ≤ AVAILABLE_MINS per (machine, slot) · subsumes no-overlap<br><br>
+          <strong style="color:#86efac">Precedence:</strong> start_slot(next) ≥ end_slot(prev) · skips non-routed ops<br><br>
+          <strong style="color:#86efac">Batch rule:</strong> Stays on 1 machine · overflows to next OPEN shift (skip closed)<br><br>
+          <strong style="color:#86efac">Setup time:</strong> Slot-granular · charged on ITEM_CATEGORY change, waived if carried over<br><br>
+          <strong style="color:#86efac">Objective:</strong> Minimize weighted tardiness (days) + priority epsilon · integer-scaled<br><br>
+          <strong style="color:#86efac">Output:</strong> Writes → schedule_output (offsets post-solve)
+        </p>
+      </div>
+
+      <div class="box box-engine" style="padding:14px">
+        <h3 style="color:#4ade80; font-size:12px">ENGINE 2 — Recommendation / Impact Engine</h3>
+        <p style="margin-top:6px">
+          <strong style="color:#86efac">Trigger:</strong> Planner selects order(s) to elevate<br><br>
+          <strong style="color:#86efac">Step 1:</strong> Snapshot schedule_output → old_completion_date<br><br>
+          <strong style="color:#86efac">Step 2:</strong> Set elevated orders urgency_weight = 999999<br><br>
+          <strong style="color:#86efac">Step 3:</strong> Re-run Engine 1 · time limit = 10s<br><br>
+          <strong style="color:#86efac">Step 4:</strong> slip_days = new − old completion date per order<br>
+          slack = CDD − new_completion_date<br><br>
+          <strong style="color:#86efac">Classify:</strong> SAFE &gt;5d · AT_RISK 0–5d · BREACH &lt;0<br><br>
+          <strong style="color:#86efac">Output:</strong> Writes → sim_results · Returns top-5 impacted
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <svg width="16" height="24" viewBox="0 0 16 24"><path d="M8 0v18M2 13l6 8 6-8" stroke="#eab308" stroke-width="1.5" fill="none"/></svg>
+    <span class="arrow-label">FastAPI main.py &nbsp;·&nbsp; Uvicorn ASGI &nbsp;·&nbsp; port 8000 &nbsp;·&nbsp; CORS enabled</span>
+  </div>
+
+  <!-- ═══════════════════ LAYER 2: API ═══════════════════ -->
+  <div class="layer layer-api">
+    <div class="layer-label"><span class="dot dot-api"></span>API LAYER — FastAPI (10 endpoints) + Pydantic models.py</div>
+    <div class="box-row">
+
+      <div class="box box-api">
+        <h3 style="color:#fde047">POST /schedule/generate</h3>
+        <p>Triggers Engine 1 · writes schedule_output</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">GET /schedule/current</h3>
+        <p>Returns latest schedule_output as Gantt data</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">POST /priority/simulate</h3>
+        <p>Triggers Engine 2 · payload: {orders:[...]} · writes sim_results</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">GET /orders/wip</h3>
+        <p>Returns active WIP (CT&gt;0, routable, balance_qty&gt;0)</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">GET /machines/capacity</h3>
+        <p>Returns capacity_resolved for next N days</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">POST /data/refresh</h3>
+        <p>Re-fetches 4 read tables from Oracle</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">GET /machines/daily</h3>
+        <p>Returns machine_daily for a date range</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">PUT /machines/daily</h3>
+        <p>Planner creates / updates machine+shift+date row</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">GET /config</h3>
+        <p>Returns config.json contents</p>
+      </div>
+      <div class="box box-api">
+        <h3 style="color:#fde047">PUT /config</h3>
+        <p>Updates config.json (batch_bonus_months, etc.)</p>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <svg width="16" height="24" viewBox="0 0 16 24"><path d="M8 0v18M2 13l6 8 6-8" stroke="#a855f7" stroke-width="1.5" fill="none"/></svg>
+    <span class="arrow-label">HTTP /api &nbsp;·&nbsp; dev: Vite proxy → port 8000 &nbsp;·&nbsp; prod: Express proxy → port 8000</span>
+  </div>
+
+  <!-- ═══════════════════ LAYER 3: FRONTEND ═══════════════════ -->
+  <div class="layer layer-frontend">
+    <div class="layer-label"><span class="dot dot-frontend"></span>FRONTEND LAYER — React 18 + Vite · TailwindCSS · Recharts · React DnD</div>
+    <div class="box-row">
+
+      <div class="box box-view" style="flex:1.2">
+        <h3 style="color:#d8b4fe">ScheduleView.jsx</h3>
+        <p><strong style="color:#c084fc">Gantt Chart</strong> per machine</p>
+        <p>Shift utilisation % · Color-coded by order urgency · GanttChart.jsx component</p>
+      </div>
+      <div class="box box-view" style="flex:1.2">
+        <h3 style="color:#d8b4fe">OrderBoard.jsx</h3>
+        <p><strong style="color:#c084fc">WIP Order Cards</strong> + Drag-and-Drop</p>
+        <p>Drag to reprioritise · OrderCard.jsx · Triggers Engine 2 simulation</p>
+      </div>
+      <div class="box box-view" style="flex:1.2">
+        <h3 style="color:#d8b4fe">ImpactAnalyser.jsx</h3>
+        <p><strong style="color:#c084fc">Risk Report</strong> from Engine 2</p>
+        <p>slip_days · SAFE / AT_RISK / BREACH · RiskBadge.jsx · Top-5 impacted orders</p>
+      </div>
+      <div class="box box-view" style="flex:1.2">
+        <h3 style="color:#d8b4fe">MachineAvailability.jsx</h3>
+        <p><strong style="color:#c084fc">machine_daily Editor</strong> + Config Panel</p>
+        <p>Mark machines unavailable · Edit batch_bonus_months · Calls PUT /machines/daily + PUT /config</p>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="arrow-row">
+    <svg width="16" height="24" viewBox="0 0 16 24"><path d="M8 0v18M2 13l6 8 6-8" stroke="#ef4444" stroke-width="1.5" fill="none"/></svg>
+    <span class="arrow-label">Production deployment &nbsp;·&nbsp; Windows Server &nbsp;·&nbsp; NSSM Windows Services</span>
+  </div>
+
+  <!-- ═══════════════════ LAYER 4: DEPLOY ═══════════════════ -->
+  <div class="layer layer-deploy">
+    <div class="layer-label"><span class="dot dot-deploy"></span>DEPLOYMENT LAYER — Windows Server (IIS not used)</div>
+    <div class="box-row">
+
+      <div class="box box-deploy" style="flex:2">
+        <h3 style="color:#fca5a5">TovMLO-API (NSSM Windows Service)</h3>
+        <p>uvicorn main:app --host 0.0.0.0 --port 8000 &nbsp;|&nbsp; AppDirectory: C:\tov-mlo\backend &nbsp;|&nbsp; Auto-restart on failure</p>
+      </div>
+      <div class="box box-deploy" style="flex:2">
+        <h3 style="color:#fca5a5">TovMLO-Frontend (NSSM Windows Service)</h3>
+        <p>node server.js &nbsp;|&nbsp; Express on port 80 &nbsp;|&nbsp; Serves /dist static files &nbsp;|&nbsp; Proxies /api → localhost:8000</p>
+      </div>
+      <div class="box box-deploy">
+        <h3 style="color:#fca5a5">Docker (Dev only)</h3>
+        <p>oracle-xe container &nbsp;|&nbsp; port 1521 &nbsp;|&nbsp; gvenzl/oracle-xe:21-slim &nbsp;|&nbsp; Volume: oracle-data</p>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+<!-- ═══════════════════ FORMULAS ═══════════════════ -->
+<div class="formula-section">
+  <h2>Critical Formulas & Decision Logic</h2>
+  <div class="formula-grid">
+
+    <div class="formula-card">
+      <h3>Balance Qty (scheduling quantity)</h3>
+      <pre>balance_qty = QUANTITY_ORDERED
+          - QUANTITY_COMPLETED
+          - QUANTITY_REJECTED
+
+Skip operation if balance_qty ≤ 0
+Cascade: balance_qty of Op_n is
+input quantity available for Op_(n+1)</pre>
+      <p class="note">Per (PRODUCTION_ORDER, OPERATION_NO) row in wip_orders</p>
+    </div>
+
+    <div class="formula-card">
+      <h3>urgency_weight (Engine 1 objective)</h3>
+      <pre>pdd_score    = 1 / max(1, days_until_CDD)
+
+ageing_score = (today - order_date).days
+               / config.ageing_normalization_days
+
+batch_bonus  = config.batch_bonus_value
+               if days_until_CDD &lt; batch_bonus_months*30
+               else 0
+
+urgency_weight = pdd_score
+               + ageing_score
+               + batch_bonus
+
+Safety stock (CDD=NULL): urgency_weight = 0</pre>
+      <p class="note">batch_bonus_months editable via UI (config.json)</p>
+    </div>
+
+    <div class="formula-card">
+      <h3>CP-SAT Objective Function (Model B)</h3>
+      <pre>completion_day = end_slot // 3
+pdd_day        = (CDD - D[0]).days
+
+Minimize:
+  Σ urgency_s_i
+    × max(0, completion_day_i - pdd_day_i)
+
++ Σ eps_s × (MACHINE_PRIORITY_j - 1)
+    × assign_j
+
+urgency_s = round(urgency_weight × 1000)
+eps_s     = round(0.001 × 1000) = 1
+(tiebreaker only — never overrides tardiness)</pre>
+      <p class="note">Integer-scaled (CP-SAT is integer-only). Queue-depth balance emerges from tardiness minimization.</p>
+    </div>
+
+    <div class="formula-card">
+      <h3>Capacity Resolution</h3>
+      <pre>AVAILABLE_MINS (machine_master):
+  = WORKING_MINS × OEE
+  (use column directly when populated)
+
+AVAILABLE_MINS (machine_daily override):
+  = (WORKING_MINS - DOWNTIME) × OEE
+  (use column directly when populated)
+
+resolve_capacity():
+  Start with machine_master baseline
+  Override with machine_daily rows
+  for matching machine_name + shift + date</pre>
+      <p class="note">Computed in memory only — never stored to Oracle</p>
+    </div>
+
+    <div class="formula-card">
+      <h3>Batch Overflow Rule (Model B)</h3>
+      <pre>qty[t,m,slot] distributes the batch
+across the assigned machine's OPEN
+slots in [start_slot, end_slot].
+
+Per (machine, slot) bucket:
+  Σ qty·CT + setup ≤ AVAILABLE_MINS
+
+Remainder spills to next_open(m,slot):
+  smallest slot' &gt; slot with cap &gt; 0
+  → closed slots (cap=0) are SKIPPED
+  → spans arbitrarily many days
+
+RULE: Batch never switches machine.
+SETUP_TIME: charged at slot granularity.</pre>
+      <p class="note">Occupied slots = machine's open slots in [start_slot,end_slot] → contiguity for free</p>
+    </div>
+
+    <div class="formula-card">
+      <h3>Engine 2 — Risk Classification</h3>
+      <pre>slip_days = new_completion_date
+          - old_completion_date
+
+slack     = CDD - new_completion_date
+
+SAFE:    slack > risk_safe_threshold_days
+AT_RISK: 0 ≤ slack ≤ threshold_days
+BREACH:  slack &lt; 0
+
+Elevated order urgency_weight = 999999
+Engine 2 time limit = engine2_time_limit_seconds
+Return: top-5 orders by highest slip_days</pre>
+      <p class="note">risk_safe_threshold_days = 5 (configurable via config.json)</p>
+    </div>
+
+    <div class="formula-card">
+      <h3>Time-Mapping — Model B (slot index)</h3>
+      <pre>slot = one (date, shift) pair
+SHIFT_ORDER = [first, second, third]
+
+slot_index(date, shift)
+  = 3 × day_pos(date) + shift_pos(shift)
+
+inverse:
+  date  = D[slot_index // 3]
+  shift = S[slot_index %  3]
+
+cap[m,k] = AVAILABLE_MINS (machine, slot)
+           cap = 0  ⇒  closed slot
+next_open(m,k)= smallest k'&gt;k, cap&gt;0
+
+Integer scale: TIME_SCALE=100 (mins),
+               URGENCY_SCALE=1000 (weights)</pre>
+      <p class="note">Global, machine-independent index → precedence &amp; tardiness correct across machines. No minute axis.</p>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════ LEGEND ═══════════════════ -->
+<div class="legend">
+  <div class="legend-item"><span class="legend-dot" style="background:#3b82f6"></span>Data Layer (Oracle)</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>Backend (Python)</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#eab308"></span>API Layer (FastAPI)</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#a855f7"></span>Frontend (React)</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Deployment (NSSM/Windows)</div>
+  <div class="legend-item"><span class="legend-dot" style="background:#06b6d4"></span>Config (config.json)</div>
+  <div style="margin-left:auto; color:#475569; font-size:10px">
+    Dev: Windows 11 Enterprise · Oracle XE (Docker) · python-oracledb thin mode &nbsp;|&nbsp;
+    Prod: Windows Server · Oracle DB · NSSM Services
+  </div>
+</div>
+
+</body>
+</html>

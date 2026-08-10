@@ -1,0 +1,11 @@
+{
+  "batch_bonus_months": 2,
+  "batch_bonus_value": 0.5,
+  "downstream_queue_bonus_value": 0.3,
+  "ageing_normalization_days": 180,
+  "machine_priority_epsilon": 0.001,
+  "risk_safe_threshold_days": 5,
+  "engine2_time_limit_seconds": 10,
+  "scheduling_horizon_safety_factor": 2,
+  "scheduling_horizon_buffer_days": 7
+}

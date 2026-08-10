@@ -1,0 +1,23 @@
+# TOV Machine Loading Optimizer — backend dependencies
+# All packages are free / open-source (Apache-2.0, BSD, or MIT).
+
+# --- Engine 1 & 2: constraint solver ---
+ortools>=9.10,<10.0          # Google OR-Tools (CP-SAT). Apache-2.0.
+
+# --- Data pipeline ---
+pandas>=2.2,<3.0             # preprocess.py: table joins, balance_qty, capacity resolve
+numpy>=1.26                  # pandas transitive; pinned for reproducibility
+
+# --- Oracle connectivity (THIN MODE — no Instant Client required) ---
+oracledb>=2.4,<3.0           # python-oracledb thin mode
+
+# --- API layer (Phase 3, pinned now so the venv is stable) ---
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.29,<1.0
+pydantic>=2.7,<3.0           # models.py request/response + engine I/O schemas
+
+# --- Environment / config ---
+python-dotenv>=1.0           # loads .env (ORACLE_USER, ORACLE_PASSWORD, ORACLE_DSN)
+
+# --- Dev / test ---
+pytest>=8.0                  # engine unit tests with mocked Oracle DataFrames

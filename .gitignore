@@ -1,0 +1,22 @@
+# Python
+backend/.venv/
+**/__pycache__/
+*.pyc
+
+# Secrets
+.env
+*.env
+
+# Node / frontend build
+node_modules/
+frontend/dist/
+
+# Local, personal, or machine-specific
+.claude/settings.local.json
+
+# Internal Emerson documents — not part of the code project, kept local only
+WIP_Harish_Final.xls
+*.pptx
+*.pdf
+Chat Reports/
+Drafts and Test/
