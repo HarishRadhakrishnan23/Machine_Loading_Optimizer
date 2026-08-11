@@ -86,17 +86,39 @@ def build_capacity_slots(
     Expand resolved capacity into one CapacitySlot per (machine, shift, date)
     across the scheduling horizon. Slots with available_mins == 0 are kept so the
     solver can *see* that a machine is explicitly closed that slot (vs. absent).
+
+    Equivalent to calling resolve_capacity() per date, but normalizes the baseline
+    once and groups machine_daily by date up front — so it is O(horizon × machines)
+    plus a single pass over machine_daily, instead of re-scanning the full daily
+    frame (and re-lowercasing the baseline) on every horizon day.
     """
+    baseline = machine_master_df.copy()
+    baseline["working_shift"] = baseline["working_shift"].str.lower()
+
+    # (date) → {(machine_name, shift): AVAILABLE_MINS} override lookup, built once.
+    overrides_by_date: dict[date, dict[tuple[str, str], float]] = {}
+    if not machine_daily_df.empty:
+        daily = machine_daily_df.copy()
+        daily["working_shift"] = daily["working_shift"].str.lower()
+        for d, group in daily.groupby("date"):
+            overrides_by_date[d] = {
+                (row["machine_name"], row["working_shift"]): row["AVAILABLE_MINS"]
+                for _, row in group.iterrows()
+            }
+
     slots: list[CapacitySlot] = []
     for d in horizon_dates:
-        resolved = resolve_capacity(machine_master_df, machine_daily_df, d)
-        for _, row in resolved.iterrows():
+        day_overrides = overrides_by_date.get(d, {})
+        for _, row in baseline.iterrows():
+            machine_name = str(row["machine_name"])
+            shift = str(row["working_shift"]).lower()
+            available_mins = day_overrides.get((machine_name, shift), row["AVAILABLE_MINS"])
             slots.append(
                 CapacitySlot(
-                    machine_name=str(row["machine_name"]),
-                    shift=Shift(str(row["working_shift"]).lower()),
+                    machine_name=machine_name,
+                    shift=Shift(shift),
                     slot_date=d,
-                    available_mins=float(row["AVAILABLE_MINS"]),
+                    available_mins=float(available_mins),
                 )
             )
     return slots
@@ -178,13 +200,23 @@ def _downstream_queue_bonus(
     "Next downstream schedulable operation" = the smallest OPERATION_NO greater
     than this task's OPERATION_NO within the same ITEM_CATEGORY across the
     already-filtered WIP (filtered WIP only contains routable, CT>0, balance>0 rows).
+
+    Only an OTHER order queued at THAT specific next operation earns the bonus —
+    not merely any order sitting somewhere further downstream. (Same ITEM_CATEGORY
+    ⇒ same routing, so the next op number is well-defined across the category.)
     """
     same_cat = filtered_wip[filtered_wip["ITEM_CATEGORY"] == task_row["ITEM_CATEGORY"]]
-    downstream = same_cat[
-        (same_cat["OPERATION_NO"] > task_row["OPERATION_NO"])
-        & (same_cat["PRODUCTION_ORDER"] != task_row["PRODUCTION_ORDER"])
+    downstream = same_cat[same_cat["OPERATION_NO"] > task_row["OPERATION_NO"]]
+    if downstream.empty:
+        return 0.0
+
+    # The immediate next operation in this category's sequence.
+    next_op_no = downstream["OPERATION_NO"].min()
+    queued_at_next = downstream[
+        (downstream["OPERATION_NO"] == next_op_no)
+        & (downstream["PRODUCTION_ORDER"] != task_row["PRODUCTION_ORDER"])
     ]
-    return config.downstream_queue_bonus_value if not downstream.empty else 0.0
+    return config.downstream_queue_bonus_value if not queued_at_next.empty else 0.0
 
 
 def compute_urgency_weight(

@@ -59,6 +59,11 @@ class Config(BaseModel):
     machine_priority_epsilon: float = 0.001
     risk_safe_threshold_days: int = 5
     engine2_time_limit_seconds: int = 10
+    # Horizon sizing (CLAUDE.md "Horizon derivation"). Present in config.json;
+    # without them here Pydantic silently drops the keys and horizon logic that
+    # reads them raises AttributeError at runtime.
+    scheduling_horizon_safety_factor: int = 2
+    scheduling_horizon_buffer_days: int = 7
 
 
 # ─────────────────────────────────────────────────────────────────────────────

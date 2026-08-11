@@ -252,7 +252,11 @@ class Engine1Scheduler:
                     oa = relevant[0]
                 else:
                     oa = model.NewBoolVar(f"occ_any[{tag}|{k}]")
-                    model.Add(oa == sum(relevant))
+                    # True OR over candidate machines. AddExactlyOne(assign) makes
+                    # at most one occ[t,m,k] hot in any solution, so this equals a
+                    # plain sum today — but MaxEquality does not depend on that
+                    # global invariant, so it stays correct if the model changes.
+                    model.AddMaxEquality(oa, relevant)
                 self.occ_any[(pid, k)] = oa
 
             # start_slot / end_slot via Min/MaxEquality over k·occ_any (CLAUDE.md).
