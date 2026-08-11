@@ -34,10 +34,9 @@ The system has two ML engines:
 Every time-related value in every table is always in minutes:
 - CYCLE_TIME (cycle time per piece) → minutes
 - SETUP_TIME (setup time per machine per ITEM_CATEGORY change) → minutes
-- WORKING_MINS → minutes (in both machine_master and machine_daily)
-- DOWNTIME → minutes (machine_daily)
-- AVAILABLE_MINS → minutes
-- start_offset_min, end_offset_min (in schedule_output) → minutes
+- WORKING_MINS → minutes (in both MCH_MACHINE_AVAILABILITY and MCH_MACHINE_AVAILABILITY_BY_DATE)
+- AVAILABLE_MINS → minutes (pre-computed in the ERP views — use directly)
+- start_offset_min, end_offset_min (in MCH_SCHEDULE_OUTPUT) → minutes
 
 **start_offset_min / end_offset_min are REAL minutes into the shift (0 … WORKING_MINS of that shift), NOT productive/OEE minutes.** They are a POST-SOLVE display layout only — never a solver constraint. `AVAILABLE_MINS` (the OEE-haircut capacity) governs how much work fits in a slot; `WORKING_MINS` is only the wall-clock canvas the display offsets are drawn on. See **Time-Mapping Strategy (Model B)** below.
 
@@ -47,45 +46,82 @@ Never apply any unit conversion. All values arrive as minutes from Oracle.
 
 ## Data sources — Oracle DB
 
-### Access summary
-- machine_master: read + write (write access reserved — do not write to it in v1)
-- machine_daily: read + write — UI must provide a form for planners to update this table directly
-- routing_master: read + write (write access reserved — do not write to it in v1)
-- wip_orders: read-only — data is owned by ERP, never written by this application
-- schedule_output: read + write — Engine 1 writes here
-- sim_results: read + write — Engine 2 writes here
+All four upstream data sources are **read-only ERP views** (created and owned in Oracle by the
+ERP team; this application only SELECTs from them). The application writes to exactly **two**
+tables, which it creates and owns: MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2).
+
+### Table / view name map (ERP name ⇄ legacy name used in this doc)
+| Role in this doc | Oracle object (real name)         | Kind  | Access |
+|------------------|-----------------------------------|-------|--------|
+| machine_master   | MCH_MACHINE_AVAILABILITY          | view  | read-only |
+| machine_daily    | MCH_MACHINE_AVAILABILITY_BY_DATE  | view  | read-only |
+| routing_master   | MCH_MACHINE_PRIORITY              | view  | read-only |
+| wip_orders       | MCH_WIP                           | view  | read-only |
+| schedule_output  | MCH_SCHEDULE_OUTPUT               | table | read + write (Engine 1 writes) |
+| sim_results      | MCH_SIM_RESULTS                   | table | read + write (Engine 2 writes) |
+
+Legacy names (machine_master, wip_orders, schedule_output, …) are kept as readable aliases
+throughout this document; the **real Oracle object names are the MCH_* names above**.
+
+### Column-name changes vs. earlier drafts (apply everywhere)
+- machine identifier: **WORK_CENTER** (was `machine_name`) — unified across all views.
+- shift column: **SHIFT** (was `working_shift`) — still normalized to lowercase on read.
+- machine_daily date column: **WORKING_DATE** (was `date`).
+- **No DOWNTIME column** anymore — the views publish AVAILABLE_MINS directly (already OEE-adjusted).
+- In MCH_WIP: the ascending sequence number is the **OPERATION** column (this doc historically
+  calls it `OPERATION_NO` — they are the same thing), and the task/operation code (VB02, R002, …)
+  is the **TASK** column (this doc historically called that `OPERATION`).
+- In MCH_MACHINE_PRIORITY (routing): the operation code is **TASK**, the capable machine is
+  **WORK_CENTER**. Routing ⇄ WIP join is `MCH_MACHINE_PRIORITY.TASK = MCH_WIP.TASK`.
+- **COMPANY** appears in every view — a tenant/company filter; informational, not used by the engine.
 
 ---
 
-### machine_master
-**Exact Oracle columns:** machine_name, WORKING_MINS, working_shift, oee, AVAILABLE_MINS
-- Baseline capacity per machine per shift.
-- AVAILABLE_MINS = WORKING_MINS × OEE — use AVAILABLE_MINS directly when column is populated.
-- Shifts stored in mixed case in DB; always normalize to lowercase on read: "first", "second", "third"
-- All machines are available for all shifts by default — machine_master is the universal baseline.
+### machine_master → MCH_MACHINE_AVAILABILITY (read-only view)
+**Exact Oracle columns:** COMPANY, WORK_CENTER, SHIFT, WORKING_MINS, OEE, AVAILABLE_MINS
+- Baseline capacity per machine (WORK_CENTER) per shift (SHIFT).
+- WORK_CENTER is the machine identifier throughout the system (was `machine_name`).
+- AVAILABLE_MINS = WORKING_MINS × OEE, pre-computed in the view — use AVAILABLE_MINS directly.
+- SHIFT stored in mixed case in DB; always normalize to lowercase on read: "first", "second", "third".
+- All machines are available for all shifts by default — this view is the universal baseline.
 - OEE = 0.85 uniformly across all machines and all shifts (treat as fixed in v1).
-- Used as fallback when machine_daily has no entry for a given machine+shift+date.
+- Used as fallback when MCH_MACHINE_AVAILABILITY_BY_DATE has no row for a WORK_CENTER+shift+date.
+- COMPANY: tenant/company code — informational, not used by the engine.
 
-### machine_daily
-**Exact Oracle columns:** machine_name, date, working_shift, WORKING_MINS, DOWNTIME, oee, AVAILABLE_MINS
-- Day-specific overrides for capacity (populated manually by planners via UI).
-- AVAILABLE_MINS = (WORKING_MINS − DOWNTIME) × OEE — use AVAILABLE_MINS directly when column is populated.
-- If AVAILABLE_MINS = 0 for a machine+shift+date → that machine does not work that slot.
-- Planner sets WORKING_MINS = 0 (or AVAILABLE_MINS = 0) when a machine is unavailable due to breakdown or maintenance.
-- If no row exists in machine_daily for a machine+shift+date → fall back to machine_master baseline.
-- Shift names normalized to lowercase on read.
-- UI REQUIREMENT: React frontend provides a form to create or update any machine+shift+date row without touching other tables.
+### machine_daily → MCH_MACHINE_AVAILABILITY_BY_DATE (read-only view)
+**Exact Oracle columns:** COMPANY, WORK_CENTER, WORKING_DATE, SHIFT, WORKING_MINS, OEE, AVAILABLE_MINS
+- Day-specific capacity overrides, **prepared entirely in the ERP** — this application only reads it.
+- **Read-only.** There is NO UI write layer and NO application write path for this view; the earlier
+  "planner edits machine_daily via a form" requirement is removed. Closures/maintenance days are
+  set upstream in the ERP.
+- **No DOWNTIME column** — the view already publishes AVAILABLE_MINS (OEE-adjusted). Use AVAILABLE_MINS directly.
+- WORKING_DATE is the date column (was `date`); WORK_CENTER is the machine; SHIFT is the shift.
+- If AVAILABLE_MINS = 0 for a WORK_CENTER+shift+WORKING_DATE → that machine does not work that slot.
+- If no row exists for a WORK_CENTER+shift+date → fall back to the MCH_MACHINE_AVAILABILITY baseline.
+- SHIFT normalized to lowercase on read.
+- COMPANY: tenant/company code — informational, not used by the engine.
 
-### wip_orders
-**Exact Oracle columns:** PRODUCTION_ORDER, PRODUCTION_START_DATE_AND_TIME, CDD, QUANTITY_ORDERED, ITEM_CATEGORY, REFERENCE, OPERATION_NO, OPERATION, WORK_CENTER, CYCLE_TIME, QUANTITY_COMPLETED, QUANTITY_REJECTED
+### wip_orders → MCH_WIP (read-only view)
+**Exact Oracle columns:** COMPANY, PRODUCTION_ORDER, PRODUCTION_START_DATE_AND_TIME, ORDER_STATUS,
+ITEM, ITEM_DESCRIPTION, SIZE_INCH, CLASS, MOC, DESIGN, ITEM_CATEGORY, REFERENCE, QUANTITY_ORDERED,
+CDD, OPERATION, OPERATION_STATUS, TASK, WORK_CENTER, QUANTITY_COMPLETED, QUANTITY_REJECTED, CYCLE_TIME
 
 **Column meanings:**
 - CDD = Committed Delivery Date = PDD (Promise Delivery Date). Use CDD throughout the codebase.
-- ITEM_CATEGORY = concatenation_key (format: Size~Class~Design~MOC, e.g. "30~150~DF~CS")
-- PRODUCTION_START_DATE_AND_TIME = order_date, used for ageing score calculation
-- REFERENCE = specification_reference — informational only, not used by the engine
-- OPERATION = task code (e.g., VB02, VB03, R002 for rework operations)
-- WORK_CENTER = the machine or work center assigned to that operation in ERP
+- **OPERATION** (NUMBER) = the ascending operation-sequence number (10, 20, 30, 35, …). This is the
+  value this doc historically calls `OPERATION_NO`; the two names refer to the same column.
+- **TASK** (VARCHAR2) = the task/operation code (e.g., VB02, VB03, R002 for rework). This is the value
+  this doc historically called `OPERATION`. Routing capability is matched on TASK.
+- ITEM_CATEGORY = concatenation_key (format: Size~Class~Design~MOC, e.g. "30~150~DF~CS").
+  Its components are also available directly as SIZE_INCH, CLASS, DESIGN, MOC.
+- PRODUCTION_START_DATE_AND_TIME = order_date, used for ageing score calculation.
+- REFERENCE = specification_reference — informational only, not used by the engine.
+- WORK_CENTER = the machine / work center assigned to that operation in ERP.
+- ITEM / ITEM_DESCRIPTION = part number and its description — informational (UI display).
+- ORDER_STATUS / OPERATION_STATUS = ERP status text — informational only. Do NOT use for scheduling
+  decisions (Balance Qty is the sole indicator; see below).
+- QUANTITY_REJECTED is nullable — treat NULL as 0 when computing Balance Qty.
+- COMPANY: tenant/company code — informational, not used by the engine.
 
 **Balance Qty — the ONLY scheduling quantity indicator:**
 - Balance Qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED (per operation row)
@@ -95,8 +131,8 @@ Never apply any unit conversion. All values arrive as minutes from Oracle.
 - Rejected pieces: ERP re-entry as a new production order is a manual process outside this system's scope
 - Do NOT use OPERATION_STATUS to decide scheduling — Balance Qty is the sole indicator
 
-**Rework operations (R002):**
-- R002 rows are treated as normal operations — schedule exactly like any other operation
+**Rework operations (R002 task):**
+- Rows whose TASK = R002 are treated as normal operations — schedule exactly like any other operation
 - No special exclusion or detection logic for rework; if it has a valid CYCLE_TIME and positive Balance Qty, it is scheduled
 
 **QA Inspection operations:**
@@ -110,38 +146,42 @@ Never apply any unit conversion. All values arrive as minutes from Oracle.
 - These rows are excluded from both CP-SAT scheduling and UI display
 
 **v1 scheduling scope:**
-- Only 7 operations currently have routing_master entries and are scheduled by CP-SAT:
+- Only 7 TASK codes currently have MCH_MACHINE_PRIORITY (routing) entries and are scheduled by CP-SAT:
   VB02 (Cone Oversize), VB03 (ST-21 Weld Overlay), VB04 (Stem Boring), VB05 (Cone Finishing),
   VB06 (Stem Boring & Cone Finishing), VB07 (Serration), VB09 (Phosphating)
 - 15 other operations in WIP have no routing entries — skip them in CP-SAT for v1
 - System is routing-extensible: when routing entries are added for additional operations, they are automatically included in scheduling without code changes
 
-### routing_master
-**Exact Oracle columns:** size, class, design, moc, ITEM_CATEGORY, OPERATION, machine_name, SETUP_TIME, MACHINE_PRIORITY
+### routing_master → MCH_MACHINE_PRIORITY (read-only view)
+**Exact Oracle columns:** COMPANY, SIZE_INCH, CLASS, MOC, DESIGN, ITEM_CATEGORY, TASK, MACHINE_PRIORITY, WORK_CENTER, SETUP_TIME
 
-- Capability matrix — defines which machines can perform each operation for each ITEM_CATEGORY
-- A single machine can appear in multiple rows for different operations and/or different valve types
+- Capability matrix — defines which machines (WORK_CENTER) can perform each TASK for each ITEM_CATEGORY.
+- TASK is the operation code (VB02, …); it joins to MCH_WIP.TASK. WORK_CENTER is the capable machine
+  (was `machine_name`). SIZE_INCH/CLASS/MOC/DESIGN are the ITEM_CATEGORY components (was size/class/moc/design).
+- A single machine can appear in multiple rows for different tasks and/or different valve types.
 - SETUP_TIME: time required to set up a machine for the FIRST PIECE of a new ITEM_CATEGORY.
   Same ITEM_CATEGORY back-to-back on the same machine = SETUP_TIME of 0.
 - MACHINE_PRIORITY: integer 1 (most preferred) to 4 (least preferred).
   Used as a soft tiebreaker in the CP-SAT objective — does not override queue-depth-driven allocation.
+- COMPANY: tenant/company code — informational, not used by the engine.
 
 ---
 
 ## capacity_resolved — NOT a table
 
-The merge of machine_daily (override) and machine_master (baseline) happens entirely in memory (pandas) every time the engines run. It is never written to any table.
+The merge of MCH_MACHINE_AVAILABILITY_BY_DATE (override) onto MCH_MACHINE_AVAILABILITY (baseline)
+happens entirely in memory (pandas) every time the engines run. It is never written to any table.
 
 ```python
 def resolve_capacity(machine_master_df, machine_daily_df, target_date):
     resolved = machine_master_df.copy()
-    resolved['working_shift'] = resolved['working_shift'].str.lower()
-    daily = machine_daily_df[machine_daily_df['date'] == target_date].copy()
-    daily['working_shift'] = daily['working_shift'].str.lower()
+    resolved['SHIFT'] = resolved['SHIFT'].str.lower()
+    daily = machine_daily_df[machine_daily_df['WORKING_DATE'] == target_date].copy()
+    daily['SHIFT'] = daily['SHIFT'].str.lower()
     for _, row in daily.iterrows():
         mask = (
-            (resolved['machine_name'] == row['machine_name']) &
-            (resolved['working_shift'] == row['working_shift'])
+            (resolved['WORK_CENTER'] == row['WORK_CENTER']) &
+            (resolved['SHIFT'] == row['SHIFT'])
         )
         resolved.loc[mask, 'AVAILABLE_MINS'] = row['AVAILABLE_MINS']
     return resolved
@@ -170,7 +210,7 @@ Runtime parameters editable via UI. Stored as a JSON file at `backend/config.jso
 - `scheduling_horizon_safety_factor` / `scheduling_horizon_buffer_days` size the scheduling horizon (see **Horizon derivation** in the Time-Mapping Strategy). They guarantee the horizon is long enough that every task is placeable (an infeasible-by-deadline order still gets scheduled — just tardy — rather than making the whole model infeasible).
 
 FastAPI exposes `GET /config` and `PUT /config` to read and update this file.
-The UI's Machine Availability editor provides a settings panel to change `batch_bonus_months` (and other params) without touching any Oracle table.
+The UI's Machine Availability & Settings view provides a settings panel to change `batch_bonus_months` (and other params) without touching any Oracle table.
 
 ---
 
@@ -180,12 +220,12 @@ Library: Google OR-Tools (`pip install ortools`), Apache 2.0 license, fully free
 
 ### Preprocessing pipeline (preprocess.py)
 Execute in this order before building the CP-SAT model:
-1. Load all 4 Oracle tables into pandas DataFrames
+1. Load all 4 Oracle views (MCH_WIP, MCH_MACHINE_AVAILABILITY, MCH_MACHINE_AVAILABILITY_BY_DATE, MCH_MACHINE_PRIORITY) into pandas DataFrames
 2. **Filter CT=0:** Drop all rows where `CYCLE_TIME = 0`
-3. **Filter routable ops:** Keep only rows where `OPERATION` is in routing_master (`OPERATION` column)
+3. **Filter routable ops:** Keep only rows where `TASK` is present in MCH_MACHINE_PRIORITY (`TASK` column)
 4. **Filter QA:** Drop rows where `WORK_CENTER` contains 'QAINSP'
 5. **Compute Balance Qty:** `balance_qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED`; drop rows where `balance_qty ≤ 0`
-6. **Normalize shifts:** `working_shift = working_shift.str.lower()` in both machine_master and machine_daily
+6. **Normalize shifts:** `SHIFT = SHIFT.str.lower()` in both machine views
 7. **Resolve capacity:** Call `resolve_capacity()` for each scheduling date to produce capacity_resolved
 
 ### Time-Mapping Strategy — Model B (global slot index + capacity buckets)
@@ -377,7 +417,7 @@ Decision variables:
   # same category carried over from that machine's previous OPEN slot (prev_open).
 
 ── Occupancy window + contiguity (Hard Rules 3, 4 — one machine, skip closed slots) ──
-  occ_any[t,k] = Σ_m occ[t,m,k]                       # 0/1 (single machine)
+  occ_any[t,k] = OR_m occ[t,m,k]  (AddMaxEquality)    # true OR, 0/1; single machine ⇒ ≤1 active term
   end_slot[t]   = MaxEquality( k · occ_any[t,k] )                      over k ∈ K
   start_slot[t] = MinEquality( k · occ_any[t,k] + |K| · (1 − occ_any[t,k]) )
   For the chosen machine m:
@@ -395,12 +435,12 @@ Decision variables:
   Minimize Σ urgency_s × tardiness_days + Σ eps_s × (MACHINE_PRIORITY − 1) × assign
 ```
 
-**Post-solve extraction → schedule_output** (see Output): for each `(t, m, k)` with `qty > 0`,
+**Post-solve extraction → MCH_SCHEDULE_OUTPUT** (see Output): for each `(t, m, k)` with `qty > 0`,
 emit one row `(order, op, m, shift = S[k%3], date = D[k//3], balance_qty = qty)`, then lay the slot's
 tasks back-to-back from offset 0 to fill `start_offset_min / end_offset_min` within `[0, WORKING_MINS]`.
 
 ### Output
-Written to `schedule_output`. One row per `(PRODUCTION_ORDER, OPERATION_NO, machine_name, shift, scheduled_date)` — a batch that overflows across slots produces multiple rows (same order/op/machine, different shift/date).
+Written to `MCH_SCHEDULE_OUTPUT`. One row per `(PRODUCTION_ORDER, OPERATION_NO, WORK_CENTER, shift, scheduled_date)` — a batch that overflows across slots produces multiple rows (same order/op/machine, different shift/date).
 
 - `scheduled_date = D[k // 3]` and `shift = S[k % 3]` for each occupied slot `k`.
 - `start_offset_min / end_offset_min`: POST-SOLVE display layout only. Within each `(machine, slot)`, lay the assigned tasks back-to-back from offset 0 using consumed minutes (`qty × CYCLE_TIME` + any charged setup). Since consumed ≤ `AVAILABLE_MINS ≤ WORKING_MINS`, all offsets fall inside `[0, WORKING_MINS]`. These offsets are NOT solver constraints.
@@ -414,7 +454,7 @@ Written to `schedule_output`. One row per `(PRODUCTION_ORDER, OPERATION_NO, mach
 Planner selects one or more orders to elevate via the Order Board UI.
 
 ### Process
-1. Read current `schedule_output` → old_completion_date per order (baseline snapshot)
+1. Read current `MCH_SCHEDULE_OUTPUT` → old_completion_date per order (baseline snapshot)
 2. Set elevated order(s): `urgency_weight = 999999` (forces to top of scheduling queue)
 3. Re-run Engine 1 CP-SAT with `max_time_in_seconds = config.engine2_time_limit_seconds` (default: 10s)
 4. For every other order in the new schedule:
@@ -424,20 +464,58 @@ Planner selects one or more orders to elevate via the Order Board UI.
    - **SAFE:**    `slack > config.risk_safe_threshold_days` (default: 5 days)
    - **AT_RISK:** `0 ≤ slack ≤ config.risk_safe_threshold_days`
    - **BREACH:**  `slack < 0`
-6. Write all results to `sim_results` table
+6. Write all results to `MCH_SIM_RESULTS` table
 7. Return top-5 most impacted orders (highest slip_days) in API response
 
 ---
 
-## Write tables (Python engines write here)
+## Write tables (created + owned by this application — the ONLY two objects it writes)
 
-**schedule_output**
-- PRODUCTION_ORDER, OPERATION_NO, machine_name, shift, scheduled_date
-- balance_qty, start_offset_min, end_offset_min, run_id, generated_at
+Both are real Oracle tables (not views). They are created once in Oracle SQL Developer using the
+DDL below. Machine identity uses **WORK_CENTER** to match the ERP views; the operation-sequence
+number is stored as **OPERATION_NO** (= MCH_WIP.OPERATION).
 
-**sim_results**
-- sim_id, elevated_order, order, old_completion_date, new_completion_date
-- slip_days, risk_flag (SAFE / AT_RISK / BREACH), created_at
+### schedule_output → MCH_SCHEDULE_OUTPUT (Engine 1 writes)
+```sql
+CREATE TABLE MCH_SCHEDULE_OUTPUT (
+    RUN_ID            VARCHAR2(36)  NOT NULL,   -- one id per /schedule/generate run
+    PRODUCTION_ORDER  VARCHAR2(9)   NOT NULL,
+    OPERATION_NO      NUMBER        NOT NULL,   -- = MCH_WIP.OPERATION (ascending seq number)
+    TASK              VARCHAR2(51),             -- task code (VB02, …); for display, nullable
+    WORK_CENTER       VARCHAR2(49)  NOT NULL,   -- assigned machine
+    SHIFT             VARCHAR2(10)  NOT NULL,   -- first | second | third
+    SCHEDULED_DATE    DATE          NOT NULL,
+    BALANCE_QTY       NUMBER        NOT NULL,   -- pieces placed in THIS slot
+    START_OFFSET_MIN  NUMBER        NOT NULL,   -- display: minutes into shift (0 … WORKING_MINS)
+    END_OFFSET_MIN    NUMBER        NOT NULL,   -- display: minutes into shift
+    GENERATED_AT      TIMESTAMP     NOT NULL,
+    CONSTRAINT PK_MCH_SCHEDULE_OUTPUT
+        PRIMARY KEY (RUN_ID, PRODUCTION_ORDER, OPERATION_NO, WORK_CENTER, SHIFT, SCHEDULED_DATE)
+);
+```
+Model mapping (models.py `ScheduleOutputRow`): production_order→PRODUCTION_ORDER, operation_no→OPERATION_NO,
+machine_name→WORK_CENTER, shift→SHIFT, scheduled_date→SCHEDULED_DATE, balance_qty→BALANCE_QTY,
+start_offset_min→START_OFFSET_MIN, end_offset_min→END_OFFSET_MIN, run_id→RUN_ID, generated_at→GENERATED_AT.
+(TASK is an extra display-only column not currently in the Pydantic model — populate it or leave NULL.)
+
+### sim_results → MCH_SIM_RESULTS (Engine 2 writes)
+```sql
+CREATE TABLE MCH_SIM_RESULTS (
+    SIM_ID               VARCHAR2(36)  NOT NULL,  -- one id per /priority/simulate run
+    ELEVATED_ORDER       VARCHAR2(200) NOT NULL,  -- elevated PRODUCTION_ORDER(s), comma-joined
+    PRODUCTION_ORDER     VARCHAR2(9)   NOT NULL,  -- the impacted order (models.py `order` field)
+    OLD_COMPLETION_DATE  DATE,
+    NEW_COMPLETION_DATE  DATE,
+    SLIP_DAYS            NUMBER,                   -- new_completion − old_completion, in days
+    RISK_FLAG            VARCHAR2(10)  NOT NULL,   -- SAFE | AT_RISK | BREACH
+    CREATED_AT           TIMESTAMP     NOT NULL,
+    CONSTRAINT PK_MCH_SIM_RESULTS PRIMARY KEY (SIM_ID, PRODUCTION_ORDER)
+);
+```
+Model mapping (models.py `SimResultRow`): sim_id→SIM_ID, elevated_order→ELEVATED_ORDER,
+order→PRODUCTION_ORDER (Oracle reserves the word ORDER, so the impacted order is stored as the
+column PRODUCTION_ORDER), old_completion_date→OLD_COMPLETION_DATE, new_completion_date→NEW_COMPLETION_DATE,
+slip_days→SLIP_DAYS, risk_flag→RISK_FLAG, created_at→CREATED_AT.
 
 ---
 
@@ -463,17 +541,19 @@ Local dev DSN: `localhost:1521/XEPDB1` (Oracle XE via Docker).
 
 Framework: FastAPI | ASGI server: Uvicorn | Port: 8000
 
-### Endpoints (10 total)
-- POST /schedule/generate — triggers Engine 1, writes to schedule_output
-- GET  /schedule/current — reads latest schedule_output, returns Gantt data
-- POST /priority/simulate — triggers Engine 2 with payload `{orders: [...]}`, writes to sim_results
-- GET  /orders/wip — returns active wip_orders (CT > 0, routable, balance_qty > 0)
+### Endpoints (9 total)
+- POST /schedule/generate — triggers Engine 1, writes to MCH_SCHEDULE_OUTPUT
+- GET  /schedule/current — reads latest MCH_SCHEDULE_OUTPUT, returns Gantt data
+- POST /priority/simulate — triggers Engine 2 with payload `{orders: [...]}`, writes to MCH_SIM_RESULTS
+- GET  /orders/wip — returns active MCH_WIP rows (CT > 0, routable, balance_qty > 0)
 - GET  /machines/capacity — returns capacity_resolved for next N days
-- POST /data/refresh — re-fetches all 4 read-only tables from Oracle
-- GET  /machines/daily — returns machine_daily records for a given date range
-- PUT  /machines/daily — planner creates or updates a machine+shift+date row
+- POST /data/refresh — re-fetches all 4 read-only ERP views from Oracle
+- GET  /machines/daily — returns MCH_MACHINE_AVAILABILITY_BY_DATE rows for a date range (read-only display)
 - GET  /config — returns current config.json contents
 - PUT  /config — updates config.json (batch_bonus_months, etc.)
+
+There is **no** `PUT /machines/daily` — MCH_MACHINE_AVAILABILITY_BY_DATE is an ERP-owned read-only
+view; the application never writes machine availability.
 
 CORS enabled for React frontend origin.
 Schedule regeneration: manual trigger only in v1 (no background timer).
@@ -487,8 +567,10 @@ Framework: React 18 + Vite | Styling: TailwindCSS | Charts: Recharts | Drag-and-
 ### Four main views
 1. **Schedule view** — Gantt chart per machine, showing shift utilisation %
 2. **Order board** — WIP order cards, drag-to-reprioritise, trigger Engine 2 simulation
-3. **Impact analyser** — sim_results: risk scores, slip days, SAFE/AT_RISK/BREACH badges per order
-4. **Machine availability editor** — form to create/update machine_daily records + settings panel for config.json (batch_bonus_months and other parameters editable here)
+3. **Impact analyser** — MCH_SIM_RESULTS: risk scores, slip days, SAFE/AT_RISK/BREACH badges per order
+4. **Machine availability & settings** — read-only view of MCH_MACHINE_AVAILABILITY_BY_DATE (capacity is
+   ERP-owned, not editable here) + settings panel for config.json (batch_bonus_months and other
+   parameters editable here)
 
 ### API proxy
 Development: `vite.config.js` proxies `/api` → `http://localhost:8000`
@@ -570,7 +652,7 @@ tov-mlo/
         │   ├── ScheduleView.jsx
         │   ├── OrderBoard.jsx
         │   ├── ImpactAnalyser.jsx
-        │   └── MachineAvailability.jsx  ← machine_daily editor + config settings panel
+        │   └── MachineAvailability.jsx  ← read-only machine_daily viewer + config settings panel
         ├── components/
         │   ├── GanttChart.jsx
         │   ├── OrderCard.jsx
@@ -585,9 +667,9 @@ tov-mlo/
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
-| 0 — Foundation | Oracle XE running, CREATE TABLE DDL (6 tables), import script, test_connection.py, .env | Ready to start |
-| 1 — Engine 1 | preprocess.py, engine1_scheduler.py (full CP-SAT with batch overflow + setup + priority), write schedule_output | After Phase 0 |
-| 2 — Engine 2 | engine2_recommender.py, risk classifier, write sim_results | After Phase 1 |
+| 0 — Foundation | Oracle connection to the 4 ERP views + CREATE TABLE DDL for the 2 write tables (MCH_SCHEDULE_OUTPUT, MCH_SIM_RESULTS), test_connection.py, .env | Ready to start |
+| 1 — Engine 1 | preprocess.py, engine1_scheduler.py (full CP-SAT with batch overflow + setup + priority), write MCH_SCHEDULE_OUTPUT | After Phase 0 |
+| 2 — Engine 2 | engine2_recommender.py, risk classifier, write MCH_SIM_RESULTS | After Phase 1 |
 | 3 — FastAPI | All 10 endpoints, config GET/PUT, Pydantic schemas, CORS, error handling | After Phase 2 |
 | 4 — React UI | All 4 views, config settings panel in MachineAvailability, drag-drop Order Board | After Phase 3 |
 | 5 — Deploy | NSSM Windows services (Uvicorn + Express), end-to-end integration test | After Phase 4 |
@@ -621,8 +703,9 @@ tov-mlo/
 - Maximum utilization: guiding principle, not a hard constraint.
 - capacity_resolved: computed in memory only, never stored to any table.
 - Schedule regeneration: manual trigger only in v1. No background timer.
-- machine_daily: the only Oracle table written by this application in v1.
-- machine_master, routing_master, wip_orders: strictly read-only in v1.
+- Writes: only MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2) are written by this application.
+- All four ERP sources — MCH_WIP, MCH_MACHINE_AVAILABILITY, MCH_MACHINE_AVAILABILITY_BY_DATE, MCH_MACHINE_PRIORITY — are read-only views (machine_daily is NOT written; there is no UI edit path).
+- ERP column names: machine identifier = WORK_CENTER (not machine_name); shift = SHIFT; machine_daily date = WORKING_DATE; MCH_WIP op-sequence number = OPERATION (this doc's "OPERATION_NO"); op/task code = TASK (this doc's old "OPERATION"). No DOWNTIME column — AVAILABLE_MINS comes straight from the views.
 - config.json: all runtime settings stored here. Never stored in Oracle tables.
 - IIS not used. Express.js on Node.js handles all production serving.
 - Both Uvicorn (port 8000) and Express (port 80) run as permanent NSSM Windows Services.
