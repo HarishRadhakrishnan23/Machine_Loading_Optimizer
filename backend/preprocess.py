@@ -1,17 +1,28 @@
 """
 preprocess.py — Data pipeline that runs before every engine call.
 
-Turns the 4 raw Oracle DataFrames (wip_orders, machine_master, machine_daily,
-routing_master) into a single validated `SchedulerInput` for the CP-SAT engine.
+Turns the 4 raw Oracle DataFrames — read from the ERP views MCH_WIP,
+MCH_MACHINE_AVAILABILITY, MCH_MACHINE_AVAILABILITY_BY_DATE, MCH_MACHINE_PRIORITY
+(aliased below as wip_df, machine_master_df, machine_daily_df, routing_df) —
+into a single validated `SchedulerInput` for the CP-SAT engine.
+
+Real ERP column names used here (see CLAUDE.md "Column-name changes"):
+    WORK_CENTER   = machine identifier (all 4 views)
+    SHIFT         = shift name (machine_master_df + machine_daily_df)
+    WORKING_DATE  = the override date (machine_daily_df only)
+    TASK          = operation/task code, e.g. VB02, R002 (wip_df + routing_df) —
+                    routing capability is matched on TASK, not on the sequence number.
+    OPERATION     = the ascending operation-SEQUENCE number (wip_df only) — this is
+                    what the rest of the codebase calls `operation_no`.
 
 Pipeline order (locked in CLAUDE.md):
     1. Drop CYCLE_TIME == 0 rows            (external vendors / missing CT / non-machine)
-    2. Keep only routable OPERATION codes   (present in routing_master; v1 = 7 ops)
+    2. Keep only routable TASK codes        (present in MCH_MACHINE_PRIORITY; v1 = 7 tasks)
     3. Drop QA rows                         (WORK_CENTER contains 'QAINSP')
-    4. balance_qty = ORDERED − COMPLETED − REJECTED; drop rows where ≤ 0
-    5. Normalize shift names → lowercase    (machine_master + machine_daily)
-    6. resolve_capacity()                   (machine_daily override on machine_master)
-    7. Use AVAILABLE_MINS column directly when populated
+    4. balance_qty = ORDERED − COMPLETED − REJECTED (REJECTED is nullable ⇒ treat NULL as 0); drop rows where ≤ 0
+    5. Normalize shift names → lowercase    (machine_master_df + machine_daily_df)
+    6. resolve_capacity()                   (machine_daily_df override on machine_master_df)
+    7. Use AVAILABLE_MINS column directly (already OEE-adjusted by the views)
 
 This module is pure pandas + python. It never touches Oracle directly — db.py
 hands it DataFrames, so tests can pass hand-built fixtures instead of a live DB.
@@ -48,29 +59,29 @@ def resolve_capacity(
     target_date: date,
 ) -> pd.DataFrame:
     """
-    Merge the day-specific machine_daily override onto the machine_master baseline
-    for a single date. Returns a resolved capacity frame (in memory only — never
-    written to Oracle).
+    Merge the day-specific MCH_MACHINE_AVAILABILITY_BY_DATE override onto the
+    MCH_MACHINE_AVAILABILITY baseline for a single date. Returns a resolved
+    capacity frame (in memory only — never written to Oracle).
 
-    machine_master  : baseline capacity per machine per shift (all machines, all shifts).
-    machine_daily   : overrides for a specific machine+shift+date (breakdown, maintenance).
+    machine_master_df : baseline capacity per WORK_CENTER per SHIFT (all machines, all shifts).
+    machine_daily_df  : overrides for a specific WORK_CENTER+SHIFT+WORKING_DATE (ERP-prepared).
 
     Rule: start from the baseline; for every machine_daily row matching this date,
-    overwrite AVAILABLE_MINS for that machine+shift. If no daily row exists for a
-    machine+shift, the baseline stands. AVAILABLE_MINS == 0 ⇒ machine idle that slot.
+    overwrite AVAILABLE_MINS for that WORK_CENTER+SHIFT. If no daily row exists for a
+    WORK_CENTER+SHIFT, the baseline stands. AVAILABLE_MINS == 0 ⇒ machine idle that slot.
 
     Faithful to the reference implementation in CLAUDE.md.
     """
     resolved = machine_master_df.copy()
-    resolved["working_shift"] = resolved["working_shift"].str.lower()
+    resolved["SHIFT"] = resolved["SHIFT"].str.lower()
 
-    daily = machine_daily_df[machine_daily_df["date"] == target_date].copy()
+    daily = machine_daily_df[machine_daily_df["WORKING_DATE"] == target_date].copy()
     if not daily.empty:
-        daily["working_shift"] = daily["working_shift"].str.lower()
+        daily["SHIFT"] = daily["SHIFT"].str.lower()
         for _, row in daily.iterrows():
             mask = (
-                (resolved["machine_name"] == row["machine_name"])
-                & (resolved["working_shift"] == row["working_shift"])
+                (resolved["WORK_CENTER"] == row["WORK_CENTER"])
+                & (resolved["SHIFT"] == row["SHIFT"])
             )
             resolved.loc[mask, "AVAILABLE_MINS"] = row["AVAILABLE_MINS"]
 
@@ -93,16 +104,16 @@ def build_capacity_slots(
     frame (and re-lowercasing the baseline) on every horizon day.
     """
     baseline = machine_master_df.copy()
-    baseline["working_shift"] = baseline["working_shift"].str.lower()
+    baseline["SHIFT"] = baseline["SHIFT"].str.lower()
 
-    # (date) → {(machine_name, shift): AVAILABLE_MINS} override lookup, built once.
+    # (date) → {(work_center, shift): AVAILABLE_MINS} override lookup, built once.
     overrides_by_date: dict[date, dict[tuple[str, str], float]] = {}
     if not machine_daily_df.empty:
         daily = machine_daily_df.copy()
-        daily["working_shift"] = daily["working_shift"].str.lower()
-        for d, group in daily.groupby("date"):
+        daily["SHIFT"] = daily["SHIFT"].str.lower()
+        for d, group in daily.groupby("WORKING_DATE"):
             overrides_by_date[d] = {
-                (row["machine_name"], row["working_shift"]): row["AVAILABLE_MINS"]
+                (row["WORK_CENTER"], row["SHIFT"]): row["AVAILABLE_MINS"]
                 for _, row in group.iterrows()
             }
 
@@ -110,12 +121,12 @@ def build_capacity_slots(
     for d in horizon_dates:
         day_overrides = overrides_by_date.get(d, {})
         for _, row in baseline.iterrows():
-            machine_name = str(row["machine_name"])
-            shift = str(row["working_shift"]).lower()
-            available_mins = day_overrides.get((machine_name, shift), row["AVAILABLE_MINS"])
+            work_center = str(row["WORK_CENTER"])
+            shift = str(row["SHIFT"]).lower()
+            available_mins = day_overrides.get((work_center, shift), row["AVAILABLE_MINS"])
             slots.append(
                 CapacitySlot(
-                    machine_name=machine_name,
+                    machine_name=work_center,
                     shift=Shift(shift),
                     slot_date=d,
                     available_mins=float(available_mins),
@@ -143,16 +154,16 @@ def filter_wip_orders(
     # 1. Drop CYCLE_TIME == 0 (covers external vendors, missing CT, non-machine work).
     df = df[df["CYCLE_TIME"] > 0]
 
-    # 2. Keep only operations that have a routing_master entry (v1: 7 ops; extensible).
-    routable_ops = set(routing_df["OPERATION"].unique())
-    df = df[df["OPERATION"].isin(routable_ops)]
+    # 2. Keep only TASK codes that have an MCH_MACHINE_PRIORITY entry (v1: 7 tasks; extensible).
+    routable_tasks = set(routing_df["TASK"].unique())
+    df = df[df["TASK"].isin(routable_tasks)]
 
     # 3. Drop QA inspection rows (WORK_CENTER contains 'QAINSP'). Case-insensitive.
     df = df[~df["WORK_CENTER"].astype(str).str.upper().str.contains(QA_WORK_CENTER_TOKEN)]
 
-    # 4. balance_qty = ORDERED − COMPLETED − REJECTED; drop rows ≤ 0.
+    # 4. balance_qty = ORDERED − COMPLETED − REJECTED; QUANTITY_REJECTED is nullable, treat NULL as 0.
     df["balance_qty"] = (
-        df["QUANTITY_ORDERED"] - df["QUANTITY_COMPLETED"] - df["QUANTITY_REJECTED"]
+        df["QUANTITY_ORDERED"] - df["QUANTITY_COMPLETED"] - df["QUANTITY_REJECTED"].fillna(0)
     )
     df = df[df["balance_qty"] > 0]
 
@@ -197,23 +208,24 @@ def _downstream_queue_bonus(
     operation — i.e. a machine is already (or about to be) set up for this
     ITEM_CATEGORY downstream, so scheduling this order now saves a setup.
 
-    "Next downstream schedulable operation" = the smallest OPERATION_NO greater
-    than this task's OPERATION_NO within the same ITEM_CATEGORY across the
-    already-filtered WIP (filtered WIP only contains routable, CT>0, balance>0 rows).
+    "Next downstream schedulable operation" = the smallest OPERATION (sequence
+    number) greater than this task's OPERATION within the same ITEM_CATEGORY
+    across the already-filtered WIP (filtered WIP only contains routable,
+    CT>0, balance>0 rows).
 
     Only an OTHER order queued at THAT specific next operation earns the bonus —
     not merely any order sitting somewhere further downstream. (Same ITEM_CATEGORY
     ⇒ same routing, so the next op number is well-defined across the category.)
     """
     same_cat = filtered_wip[filtered_wip["ITEM_CATEGORY"] == task_row["ITEM_CATEGORY"]]
-    downstream = same_cat[same_cat["OPERATION_NO"] > task_row["OPERATION_NO"]]
+    downstream = same_cat[same_cat["OPERATION"] > task_row["OPERATION"]]
     if downstream.empty:
         return 0.0
 
     # The immediate next operation in this category's sequence.
-    next_op_no = downstream["OPERATION_NO"].min()
+    next_op_no = downstream["OPERATION"].min()
     queued_at_next = downstream[
-        (downstream["OPERATION_NO"] == next_op_no)
+        (downstream["OPERATION"] == next_op_no)
         & (downstream["PRODUCTION_ORDER"] != task_row["PRODUCTION_ORDER"])
     ]
     return config.downstream_queue_bonus_value if not queued_at_next.empty else 0.0
@@ -248,24 +260,25 @@ def compute_urgency_weight(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Machine candidates from routing_master
+# Machine candidates from MCH_MACHINE_PRIORITY (routing_master)
 # ─────────────────────────────────────────────────────────────────────────────
 def build_machine_candidates(
-    operation: str,
+    task: str,
     item_category: str,
     routing_df: pd.DataFrame,
 ) -> list[MachineCandidate]:
     """
-    All machines capable of `operation` for `item_category`, from routing_master.
-    Each becomes an OptionalIntervalVar candidate in the CP-SAT model.
+    All machines (WORK_CENTER) capable of `task` for `item_category`, from
+    MCH_MACHINE_PRIORITY. Each becomes an OptionalIntervalVar candidate in the
+    CP-SAT model.
     """
     rows = routing_df[
-        (routing_df["OPERATION"] == operation)
+        (routing_df["TASK"] == task)
         & (routing_df["ITEM_CATEGORY"] == item_category)
     ]
     return [
         MachineCandidate(
-            machine_name=str(r["machine_name"]),
+            machine_name=str(r["WORK_CENTER"]),
             setup_time=float(r["SETUP_TIME"]),
             machine_priority=int(r["MACHINE_PRIORITY"]),
         )
@@ -298,16 +311,18 @@ def build_scheduler_input(
     # Steps 1–4: filter + balance_qty.
     filtered = filter_wip_orders(wip_df, routing_df)
 
-    # Build one SchedulableTask per (PRODUCTION_ORDER, OPERATION_NO) survivor.
+    # Build one SchedulableTask per (PRODUCTION_ORDER, OPERATION) survivor.
+    # Note: wip_df's OPERATION is the ascending sequence number (→ SchedulableTask.operation_no);
+    # wip_df's TASK is the operation/task code (→ SchedulableTask.operation).
     tasks: list[SchedulableTask] = []
     for _, row in filtered.iterrows():
         candidates = build_machine_candidates(
-            operation=row["OPERATION"],
+            task=row["TASK"],
             item_category=row["ITEM_CATEGORY"],
             routing_df=routing_df,
         )
         if not candidates:
-            # Routable per the OPERATION filter but no machine matches this exact
+            # Routable per the TASK filter but no machine matches this exact
             # ITEM_CATEGORY — cannot schedule; skip (surfaced to UI as unroutable).
             continue
 
@@ -319,8 +334,8 @@ def build_scheduler_input(
         tasks.append(
             SchedulableTask(
                 production_order=str(row["PRODUCTION_ORDER"]),
-                operation_no=float(row["OPERATION_NO"]),
-                operation=str(row["OPERATION"]),
+                operation_no=float(row["OPERATION"]),
+                operation=str(row["TASK"]),
                 item_category=str(row["ITEM_CATEGORY"]),
                 balance_qty=int(row["balance_qty"]),
                 cycle_time=float(row["CYCLE_TIME"]),
