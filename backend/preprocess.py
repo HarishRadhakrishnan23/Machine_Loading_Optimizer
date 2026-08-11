@@ -287,6 +287,80 @@ def build_machine_candidates(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Horizon derivation (CLAUDE.md "Horizon derivation")
+# ─────────────────────────────────────────────────────────────────────────────
+def compute_horizon(
+    filtered_wip: pd.DataFrame,
+    machine_master_df: pd.DataFrame,
+    config: Config,
+    today: date,
+) -> list[date]:
+    """
+    Derive the scheduling horizon to guarantee feasibility: long enough that
+    every task can fit, or at least scheduled (possibly tardy). Bounded by the
+    latest CDD and padded per config.scheduling_horizon_buffer_days.
+
+    Inputs:
+        filtered_wip: WIP rows that survived CT>0, routable, non-QA, balance>0.
+        machine_master_df: baseline machine capacity (for daily_cap computation).
+        config: loaded config with scheduling_horizon_safety_factor and buffer_days.
+        today: reference date (scheduling starts today).
+
+    Returns:
+        List of consecutive calendar dates from today + computed horizon_days.
+
+    CLAUDE.md formula:
+        total_work = Σ_tasks (balance_qty × CYCLE_TIME) + setup allowance
+        daily_cap = Σ_machines Σ_shifts AVAILABLE_MINS
+        horizon_days = ceil(total_work / daily_cap) × safety_factor
+        horizon_days = max(horizon_days, days_until_latest_CDD) + buffer_days
+    """
+    # Compute total_work (piece-minutes across all tasks).
+    total_work = 0.0
+    for _, row in filtered_wip.iterrows():
+        balance = row.get("balance_qty", 0)
+        ct = row.get("CYCLE_TIME", 0)
+        total_work += balance * ct
+
+    # Add setup allowance: assume 1 setup per machine per day (rough upper bound).
+    num_machines = machine_master_df["WORK_CENTER"].nunique()
+    avg_setup = filtered_wip.groupby("ITEM_CATEGORY").size().mean() if not filtered_wip.empty else 0
+    # Simplistic: worst case ~1 setup per machine per day for avg_setup categories.
+    setup_allowance = num_machines * avg_setup * 30.0  # ~30 min per setup on average
+
+    # Compute daily_cap (sum of all AVAILABLE_MINS per day across all machines × shifts).
+    daily_cap = machine_master_df["AVAILABLE_MINS"].sum()
+    if daily_cap <= 0:
+        daily_cap = 1  # fallback: never divide by zero
+
+    # Horizon sizing.
+    import math
+    horizon_days_work = math.ceil((total_work + setup_allowance) / daily_cap)
+    horizon_days_work *= config.scheduling_horizon_safety_factor
+
+    # Extend to latest CDD.
+    cdd_list = [
+        row["CDD"].date() if isinstance(row["CDD"], (datetime, pd.Timestamp)) and not pd.isna(row["CDD"]) else None
+        for _, row in filtered_wip.iterrows()
+    ]
+    cdd_list = [d for d in cdd_list if d is not None]
+    if cdd_list:
+        latest_cdd = max(cdd_list)
+        days_until_cdd = (latest_cdd - today).days
+        horizon_days_work = max(horizon_days_work, days_until_cdd)
+
+    # Add buffer.
+    horizon_days = horizon_days_work + config.scheduling_horizon_buffer_days
+
+    # Ensure at least 1 day (even if nothing is scheduled, have a day to show).
+    horizon_days = max(horizon_days, 1)
+
+    # Generate consecutive calendar dates.
+    from datetime import timedelta
+    return [today + timedelta(days=i) for i in range(horizon_days)]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Top-level pipeline
 # ─────────────────────────────────────────────────────────────────────────────
 def build_scheduler_input(
