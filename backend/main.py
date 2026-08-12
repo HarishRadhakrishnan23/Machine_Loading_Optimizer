@@ -169,7 +169,7 @@ def get_current_schedule():
                        GENERATED_AT
                 FROM MCH_SCHEDULE_OUTPUT
                 ORDER BY GENERATED_AT DESC, WORK_CENTER, SCHEDULED_DATE, START_OFFSET_MIN
-                LIMIT 1000
+                FETCH FIRST 1000 ROWS ONLY
                 """,
                 conn,
             )

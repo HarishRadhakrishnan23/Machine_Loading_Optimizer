@@ -1,12 +1,22 @@
 import { useDrag } from 'react-dnd'
 import clsx from 'clsx'
-import { differenceInCalendarDays, format } from 'date-fns'
+import { differenceInCalendarDays, format, parseISO } from 'date-fns'
 
 export const ORDER_CARD_TYPE = 'ORDER_CARD'
 
+function isValidDate(dateStr) {
+  if (!dateStr || dateStr === 'None' || dateStr === 'null') return false
+  try {
+    const d = parseISO(String(dateStr))
+    return !isNaN(d.getTime())
+  } catch {
+    return false
+  }
+}
+
 function urgencyTone(cdd) {
-  if (!cdd) return { label: 'Safety stock', tone: 'text-slate-400', ring: 'ring-slate-200' }
-  const days = differenceInCalendarDays(new Date(cdd), new Date())
+  if (!isValidDate(cdd)) return { label: 'Safety stock', tone: 'text-slate-400', ring: 'ring-slate-200' }
+  const days = differenceInCalendarDays(parseISO(String(cdd)), new Date())
   if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: 'text-risk-breach', ring: 'ring-red-200' }
   if (days <= 7) return { label: `${days}d left`, tone: 'text-risk-atrisk', ring: 'ring-amber-200' }
   return { label: `${days}d left`, tone: 'text-risk-safe', ring: 'ring-green-200' }
@@ -54,7 +64,7 @@ export default function OrderCard({ order, selected, onToggle }) {
       </div>
 
       <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-500">
-        <span>CDD {order.cdd ? format(new Date(order.cdd), 'MMM d, yyyy') : '—'}</span>
+        <span>CDD {isValidDate(order.cdd) ? format(parseISO(String(order.cdd)), 'MMM d, yyyy') : '—'}</span>
         <span>{order.operations} op{order.operations !== 1 ? 's' : ''} left</span>
       </div>
 
