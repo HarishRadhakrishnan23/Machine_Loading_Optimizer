@@ -22,6 +22,7 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from db import (
     read_wip_orders,
@@ -257,16 +258,26 @@ def get_wip_orders():
         if filtered.empty:
             return {"orders": [], "count": 0}
 
-        # Group by production order
+        # Group by production order.
+        # NOTE: balance_qty is per-OPERATION (CLAUDE.md: "Balance Qty of Op_n is the
+        # max input available for Op_n+1") — operations of the same order are pipeline
+        # stages, not independent quantities. balance_qty_total (summed across an
+        # order's pending ops) is therefore only comparable to quantity_ordered × the
+        # number of pending ops, never to quantity_ordered alone — otherwise a 2-op
+        # order can show e.g. "20 / 10 pcs" (200%). Expose that matching denominator
+        # explicitly so the UI never has to guess it.
         orders_list = []
         for order_id, group in filtered.groupby("PRODUCTION_ORDER"):
+            quantity_ordered = int(group.iloc[0]["QUANTITY_ORDERED"])
+            operations = len(group)
             orders_list.append({
                 "production_order": order_id,
                 "item": group.iloc[0]["ITEM"],
                 "cdd": str(group.iloc[0]["CDD"]) if group.iloc[0]["CDD"] else None,
-                "quantity_ordered": int(group.iloc[0]["QUANTITY_ORDERED"]),
+                "quantity_ordered": quantity_ordered,
+                "quantity_ordered_total": quantity_ordered * operations,
                 "balance_qty_total": int(group["balance_qty"].sum()),
-                "operations": len(group),
+                "operations": operations,
             })
 
         return {"orders": orders_list, "count": len(orders_list)}
@@ -413,12 +424,15 @@ def refresh_all_data():
 # ─────────────────────────────────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def generic_exception_handler(request, exc):
-    """Catch-all error handler."""
-    return {
-        "error": str(exc),
-        "type": type(exc).__name__,
-        "timestamp": datetime.now().isoformat(),
-    }
+    """Catch-all error handler. Must return a Response — a bare dict is not callable by Starlette."""
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": str(exc),
+            "type": type(exc).__name__,
+            "timestamp": datetime.now().isoformat(),
+        },
+    )
 
 
 if __name__ == "__main__":

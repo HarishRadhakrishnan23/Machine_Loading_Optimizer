@@ -8,6 +8,7 @@ This is the glue that ties together:
 Used by FastAPI endpoint POST /schedule/generate and by engine2_recommender for priority simulations.
 """
 
+import sys
 from datetime import date, datetime
 from typing import Optional
 
@@ -18,6 +19,15 @@ from db import (
     read_routing_master,
     write_schedule_output,
 )
+
+# Windows services / non-console launchers (NSSM, some IDE runners) attach stdout
+# with the system codepage (often cp1252), which cannot encode the ✓/═ etc. used
+# in the progress logs below and raises UnicodeEncodeError. Force UTF-8 once.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 from engine1_scheduler import run_engine1
 from models import Config, ScheduleOutputRow, SchedulerResult
 from preprocess import build_scheduler_input, compute_horizon, filter_wip_orders

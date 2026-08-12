@@ -13,6 +13,7 @@ Orchestrates:
 Returns: RiskReport with per-order impact and top-5 most affected.
 """
 
+import sys
 from datetime import date, datetime
 from typing import Optional
 
@@ -23,6 +24,14 @@ from db import (
     read_routing_master,
     write_sim_results,
 )
+
+# See pipeline.py: forces UTF-8 stdout so the ✓/═ progress logs below don't crash
+# under launchers that attach a cp1252 console (NSSM, some IDE runners).
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 from engine2_recommender import (
     build_cdd_map,
     simulate_priority_elevation,
