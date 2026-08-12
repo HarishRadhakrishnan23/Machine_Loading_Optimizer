@@ -352,6 +352,13 @@ def compute_horizon(
     # Add buffer.
     horizon_days = horizon_days_work + config.scheduling_horizon_buffer_days
 
+    # Cap at 150 days max for solver performance (rolling horizon approach).
+    # Balances feasibility (fits all work) vs. speed (keeps solve time ~2-3 min).
+    # With 150 days × 3 shifts × 26 machines = ~11,700 solver slots, which is
+    # manageable with a 120-second time limit; 90 days was infeasible.
+    MAX_HORIZON_DAYS = 150
+    horizon_days = min(horizon_days, MAX_HORIZON_DAYS)
+
     # Ensure at least 1 day (even if nothing is scheduled, have a day to show).
     horizon_days = max(horizon_days, 1)
 

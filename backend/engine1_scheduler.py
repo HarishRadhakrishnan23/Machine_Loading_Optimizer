@@ -425,12 +425,13 @@ class Engine1Scheduler:
     def solve(self, max_time_in_seconds: Optional[float] = None) -> SchedulerResult:
         """
         Solve the built model and return a SchedulerResult. `max_time_in_seconds`
-        is used by Engine 2 (config.engine2_time_limit_seconds); None ⇒ solve to
-        optimality (or solver default).
+        is used by Engine 2 (config.engine2_time_limit_seconds); None ⇒ defaults
+        to 120 seconds (Engine 1 = OPTIMAL quality; Engine 2 uses config param).
         """
         solver = cp_model.CpSolver()
-        if max_time_in_seconds is not None:
-            solver.parameters.max_time_in_seconds = max_time_in_seconds
+        # Default Engine 1 time limit: 120s for OPTIMAL quality. Engine 2 overrides with config.engine2_time_limit_seconds.
+        time_limit = max_time_in_seconds if max_time_in_seconds is not None else 120
+        solver.parameters.max_time_in_seconds = time_limit
 
         status = solver.Solve(self.model)
         run_id = uuid.uuid4().hex
