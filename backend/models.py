@@ -68,8 +68,13 @@ class Config(BaseModel):
     # 0 = no limit (full dataset). Set to 100 for rapid iteration, 0 for production.
     dev_max_orders: int = 0
     # CP-SAT solver parallelization and time budget.
-    solver_workers: int = 0  # 0 = auto-detect cores; set to specific count to limit
+    solver_workers: int = 0  # 0 = use ALL CPU cores; set to a specific count to limit
     solver_time_limit_seconds: int = 600  # time budget for Engine 1 (production: 600-3600s OK)
+    # Model C — soft-cost weights (see CLAUDE.md "Objective function").
+    # setup_penalty_weight: mild objective cost per setup event — nudges the solver to
+    # batch same-size work together (maximise utilisation) WITHOUT ever delaying a
+    # delivery to save a setup. Kept small so tardiness always dominates. 0 disables it.
+    setup_penalty_weight: float = 0.05
 
 
 # ─────────────────────────────────────────────────────────────────────────────
