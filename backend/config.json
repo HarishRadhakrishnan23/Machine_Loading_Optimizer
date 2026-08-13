@@ -8,7 +8,7 @@
   "engine2_time_limit_seconds": 10,
   "scheduling_horizon_safety_factor": 2,
   "scheduling_horizon_buffer_days": 7,
-  "dev_max_orders": 100,
+  "dev_max_orders": 0,
   "solver_workers": 0,
-  "solver_time_limit_seconds": 120
+  "solver_time_limit_seconds": 3600
 }
