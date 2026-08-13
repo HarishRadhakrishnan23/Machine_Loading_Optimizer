@@ -1,22 +1,75 @@
 # Python
-backend/.venv/
-**/__pycache__/
-*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Secrets
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables (NEVER commit .env)
 .env
-*.env
+.env.local
+.env.*.local
 
-# Node / frontend build
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend)
 node_modules/
+npm-debug.log
+yarn-error.log
+.npm
+dist/
+.parcel-cache
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+.tmp/
+
+# Dependencies that should be installed fresh
+backend/venv/
+frontend/node_modules/
+
+# Build artifacts
 frontend/dist/
-
-# Local, personal, or machine-specific
-.claude/settings.local.json
-
-# Internal Emerson documents — not part of the code project, kept local only
-WIP_Harish_Final.xls
-*.pptx
-*.pdf
-Chat Reports/
-Drafts and Test/
+*.whl

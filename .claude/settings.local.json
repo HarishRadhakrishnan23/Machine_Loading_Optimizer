@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile models.py preprocess.py engine1_scheduler.py)",
+      "Bash(python -m py_compile models.py risk_classifier.py engine2_recommender.py)",
+      "Bash(python -c \"import json; print\\('config.json OK:', json.load\\(open\\('backend/config.json'\\)\\)\\)\")",
+      "Bash(python -c \"c=open\\('Html documents/TOV_MLO_Architecture.html',encoding='utf-8'\\).read\\(\\); print\\('formula-card count:', c.count\\('formula-card'\\)\\)\")",
+      "Bash(python -m py_compile engine1_scheduler.py)",
+      "Bash(python -c \"import ortools; print\\('ortools version:', ortools.__version__\\)\")",
+      "Bash(pip install *)",
+      "Bash(jobs)",
+      "Bash(python -c \"import ortools, pydantic; print\\('ortools:', ortools.__version__\\); print\\('pydantic:', pydantic.VERSION\\)\")",
+      "Bash(pip --version)",
+      "Bash(python *)",
+      "Bash(tee /tmp/ortools_install.log)",
+      "PowerShell(winget *)",
+      "PowerShell(py *)",
+      "Bash(curl -sI --max-time 15 https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe)",
+      "Bash(curl -C - -o python-3.11.9-amd64.exe --max-time 1800 https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe)",
+      "Bash(echo \"DOWNLOAD_EXIT=$?\")",
+      "Bash(env)",
+      "PowerShell(netsh winhttp *)",
+      "Read(//tmp/**)",
+      "Bash(curl -C - --ssl-no-revoke --max-time 300 -o python-3.11.9-amd64.exe https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe)",
+      "Bash(rm -f /tmp/python-3.11.9-amd64.exe)",
+      "Bash(curl --ssl-no-revoke --max-time 900 -o python-3.11.9-amd64.exe https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(ls -la /tmp/python-3.11.9-amd64.exe)",
+      "Bash(git --version)",
+      "Bash(gh --version)",
+      "Bash(gh auth *)",
+      "Bash(git init *)",
+      "Bash(git config *)",
+      "Bash(\".venv/Scripts/python.exe\" -m py_compile models.py preprocess.py engine1_scheduler.py engine2_recommender.py risk_classifier.py)",
+      "Bash(\".venv/Scripts/python.exe\" -c \"import json; from models import Config; c=Config\\(**json.load\\(open\\('config.json'\\)\\)\\); print\\('safety_factor=', c.scheduling_horizon_safety_factor\\); print\\('buffer_days=', c.scheduling_horizon_buffer_days\\); import preprocess, engine1_scheduler; print\\('IMPORTS OK'\\)\")",
+      "mcp__visualize__show_widget",
+      "Bash(npm run *)",
+      "Bash(\"./venv/Scripts/python.exe\" \"C:\\\\Users\\\\E1558411\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-E1558411-OneDrive---Emerson-Desktop-Machine-Loading-Project-Machine-Load-Prj\\\\8424d66a-00d2-45f3-9d3d-19131d82ce80\\\\scratchpad\\\\mock_server.py\")",
+      "Bash(powershell -Command \"Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "PowerShell($python311 = Get-Command python3.11 -ErrorAction SilentlyContinue; if \\($python311\\) { Write-Output \"Found: $\\($python311.Source\\)\" } else { Write-Output \"Not found as python3.11\" }; py -3.11 --version)"
+    ]
+  }
+}

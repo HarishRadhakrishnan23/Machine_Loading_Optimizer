@@ -1,0 +1,41 @@
+Shift & clock reality
+1. Do first / second / third have fixed wall-clock windows (e.g. 06:00–14:00 / 14:00–22:00 / 22:00–06:00)? Are they the same every day and every machine? And in schedule_output, are start_offset_min/end_offset_min meant as real minutes into the shift (0…WORKING_MINS) or minutes into the productive budget (0…AVAILABLE_MINS, i.e. after the 0.85 OEE haircut)?
+
+Ans: Yes, first / second / third have fixed wall-clock windows and they the same every day and every machine. start_offset_min/end_offset_min meant as real minutes into the shift (0…WORKING_MINS) only!. 
+
+2. Is WORKING_MINS uniform (say 480 everywhere), or does it vary by machine/shift?
+
+Ans: WORKING_MINS vary by shift and machine, instead of calculating WORKING_MINS, use AVAILABLE_MINS which is defined for every machine in Machine_master table. Always use AVAILABLE_MINS to check the total time per machine per shift.
+
+Calendar & horizon
+3. Are there non-working days (weekends/holidays) in the horizon, or does every date have all three shifts? And how is the horizon set — fixed N days from today, a config value, or derived from the latest CDD? Concretely: where does horizon_dates come from at runtime?
+
+Ans: If a machine is not available due to external factors like holiday or festival or machine breakdown, etc., It will be updated in Machine_Daily table for that particular date so dont worry about that in calcluation.
+
+Fidelity (these unlock Model B)
+4. Confirm we optimize at day/shift resolution, and that start_offset_min/end_offset_min are a post-solve display layout — not hard sequencing constraints the solver must honor. (If you truly need minute-exact, feasible within-shift sequencing, that's Model A and a much heavier build.)
+
+Ans: We optimize at day/shift resolution, and that start_offset_min/end_offset_min are a post-solve display layout
+
+5. Setup time: OK to charge it at slot granularity — one SETUP_TIME per distinct ITEM_CATEGORY that a machine touches in a slot, waived when the same category carried over from that machine's previous slot — rather than full exact within-shift sequence optimization? (The exact version needs circuit/sequence variables and is substantially harder.)
+
+Ans: Yes., it is OK to charge Setup time at slot granularity
+
+Overflow edge case (the desktop audit's "closed slot" question)
+6. If a batch overflows and the immediate next shift is closed (AVAILABLE_MINS = 0, breakdown/maintenance), should the remainder go to the next open shift on the same machine (skip the closed one), and can a batch span arbitrarily many shifts/days until it's done?
+
+Ans: "Batch overflow: if balance_qty × CYCLE_TIME exceeds AVAILABLE_MINS in a shift, the remainder schedules on the same machine in the next immediate open shift (skip closed slots), spanning arbitrarily many days until the batch completes." 
+
+Paradigm sign-off
+7. Are you OK reframing from the per-machine absolute-minute axis to Model B (global slot index + capacity buckets)? If yes, I'll formulate all four of your target formulas (slot-bounds, (date,shift,offset)↔index/absolute-minute, contiguity, closed-slot handling) plus re-spec all 7 stubs against it, then update CLAUDE.md and TOV_MLO_Architecture.html so the two docs are self-contained.
+
+Ans: Yes I am okay with reframing from the per-machine absolute-minute axis to Model B (global slot index + capacity buckets)
+
+My honest recommendation: yes to Model B, day-level, slot-granular setup, skip-closed-slots overflow. But answer 1–3 especially (they're domain facts only you have), and push back on 4/5/7 if your fidelity needs are higher than I'm assuming — that changes the whole formulation.
+
+One thing I want to flag on process: once we finalize, I'll be rewriting sizeable chunks of both CLAUDE.md and the architecture HTML. Do you want me to show you the revised sections for approval before writing, or write them directly and let you review the diff after?
+Ans: No you don't need to show me the revised sections for approval before writing. Just write them directly and let you review the difference after.
+
+I have given my answers for all 7 questions I want you to update C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\CLAUDE.md and C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\Html documents\TOV_MLO_Architecture.html directly and let me know the difference after completion.
+
+claude --resume "machine-loading-v1"

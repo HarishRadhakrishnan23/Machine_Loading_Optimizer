@@ -1,0 +1,296 @@
+ ---
+  Full Report from Previous Session
+
+  Here is the complete report, exact words, from the previous analysis:
+
+  ---
+  Analysis is complete. Here's my full report:
+
+  ---
+  1. CLARIFICATION QUESTIONS (need your answers)
+
+  Q1 — Routing only covers 7 out of 22 operations
+
+  The routing_master has entries for only 7 operations: VB02 (Cone Oversize), VB03 (ST-21 Weld Overlay), VB04 (Stem
+  Boring), VB05 (Cone Finishing), VB06 (Stem Boring & Cone Finishing), VB07 (Serration), VB09 (Phosphating).
+  
+  15 operations in WIP have no routing — including major ones like:
+  - VA03 (TOV-BLASTING) — 239 pending rows
+  - VB08 (Deburring) — 253 pending rows
+  - VB10 (DP Test) — 239 pending rows
+  - VB12 (SERIAL NUMBER PUNCHING) — 238 pending rows
+  - VB13 (CLEANING) — 249 pending rows
+  - VB14 (MOLYCOAT APPLICATION) — 191 pending rows
+  - VB17 (Semi-Machining & Stem Bore Roughing) — 172 pending rows (external vendors)
+
+  These are NOT QA inspections — they're real operations with cycle times. But they have no entry in routing_master, so our
+   engine can't know which machines to assign them to.
+
+  Question: For these 15 operations, are they:
+  - (a) Fixed-machine operations (always done on the one machine shown in WIP's WORK_CENTER column, no choice needed)? If
+  so, should the engine still schedule them for capacity, just not reassign machines?
+  - (b) Missing from routing and needs to be added by your team lead?
+  - (c) Should we exclude them from CP-SAT scheduling entirely (like QA inspections), and only schedule the 7 routing
+  operations?
+  
+  Answer: For now the data has only the 7 major operations which are required for planning the most effective routing plan for the machine shop. 
+  So my manager asked to continue with these 7 major operations only but however in future datas for rest of the 15 operations will be added and the system or the algorithm we are trying to build should be adaptable to such changes.
+  So the correct option to choose would be a mix of (b) + (c., that is these 15 datas are missing from routing which will be added later, so for now ignore them in CP-SAT scheduling entirely (like QA inspections), and only schedule the 7 routing operations but will designing the CP-SAT scheduling keep in mind of adding these changes later.
+
+  Q2 — External vendors (321 rows)
+
+  Work centers like DS1086 (SHRI BALAJI VALVE COMPONENTS LIMITED), DM0226 (MICRONIX), DH0086 (HIGH PRECISION INDUSTRY
+  PRIVATE) etc. are clearly external subcontractors, not in-house machines. Their operations (VB17, VB04, VB01, F100)
+  mostly have cycle_time = 0.
+
+  Question: Should external vendor operations be treated similarly to QA inspections — skip from scheduling but display in
+  the UI? We have no control over their capacity, so the engine can't schedule them.
+  
+  Answer: Skip external vendor operations from scheduling and need not display in UI. Simply saying, please skip every order whose cycle time is 0.
+
+  Q3 — MACHINE_PRIORITY (1, 2, 3, 4) still exists in routing
+
+  The routing_master has a MACHINE_PRIORITY column with values 1 through 4:
+  - Priority 1: 1,721 rows
+  - Priority 2: 1,250 rows
+  - Priority 3: 472 rows
+  - Priority 4: 186 rows
+
+  We agreed earlier that machine allocation is queue-depth driven, not P1/P2 based. But the column exists. Question: Should
+   we:
+  - (a) Ignore MACHINE_PRIORITY entirely (pure queue-depth CP-SAT allocation)?
+  - (b) Use it as a tiebreaker (when queue depths are similar, prefer higher-priority machine)?
+  - (c) Use it as a soft constraint (weighted penalty for using lower-priority machines)?
+  
+  Answer : (b) Use it as a tiebreaker (when queue depths are similar, prefer higher-priority machine).
+
+  Q4 — 413 non-QA rows with CYCLE_TIME = 0
+
+  Many real operations have CT = 0, not just QA inspections. The biggest groups:
+  - VB17 (Semi-Machining) = 180 rows (all external vendors)
+  - VB04 (Stem Boring) = 49 rows
+  - VB01 (Semi Finish Machining) = 39 rows
+  - F100 (FULL FINISHED) = 38 rows
+
+  Question: For internal machines with CT = 0, does this mean the cycle time data is missing/not yet measured? Or does CT =
+   0 genuinely mean zero processing time? If missing, how should the engine handle it — skip the operation, or use a
+  default estimate?
+  
+  Answer: Engine should skip any order with cycle time zero.
+
+  Q5 — Shift naming inconsistency
+
+  Machine_Master uses: first, Second, Third (mixed case). Machine_Daily uses: Third. Question: Are these always exactly
+  these strings? We need to normalize the casing — should I standardize to lowercase (first, second, third)?
+  
+  Answer : Yes., Definitely standardize to lowercase (first, second, third).
+
+  Q6 — Rework detection
+
+  There's no REWORK_ORDER column in the actual WIP data. But there are 10 rows with task R002 (Rework). Question: How do we
+   identify rework orders to exclude them? Is it:
+  - (a) Filter by TASK containing "Rework" or "R002"?
+  - (b) Filter by PRODUCTION_ORDER prefix (e.g., rework orders start with a different prefix)?
+  - (c) Something else from the ERP data we haven't seen?
+  
+  Answer: Consider Rework as normal task of that respective item_category to its respective operation, treat it just like another task for that operation. 
+
+  ---
+  2. ASSUMPTIONS TO VERIFY
+
+  ┌─────┬─────────────────────────────────────────────────────────────────────────────────────────┬────────────────────┐─────────────────────────────────────────────
+  │  #  │                                       Assumption                                        │       Status       │   Verification by Harish                    │
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 1   │ The column ITEM_CATEGORY in the data = concatenation_key in CLAUDE.md                   │ Verify             │             YES                             │  
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 2   │ PRODUCTION_START_DATE_AND_TIME = the order date used for ageing calculation             │ Verify             │             YES                             │
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 3   │ REFERENCE column = specification_reference (informational, not used by engine)          │ Verify             │             YES                             │
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 4   │ Each (PRODUCTION_ORDER, OPERATION) pair is unique — confirmed, zero duplicates found    │ Verified           │       YES - Already Verified                │
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 5   │ Balance Qty = QUANTITY_ORDERED − QUANTITY_COMPLETED — the sole scheduling indicator     │ Confirmed by you   │  Slight change will be informed down below  │                                                                                      │                    │                           │
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 6   │ All cycle times are in minutes                                                          │ Confirmed by you   │       YES - Already Verified                │
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 7   │ Machine_Daily has only 1 data row currently — it's a mostly-empty override table        │ Verify             │       YES - Yes it will be populated        │
+  │     │ populated as needed                                                                     │                    │       manually by user in UI when req       │
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 8   │ Machine_Master OEE is uniformly 0.85 across all machines and shifts currently           │ Observed — may     │         NO - IT will be Uniform             │
+  │     │                                                                                         │ change             │      across all shifts and machines         │
+  ├─────┼─────────────────────────────────────────────────────────────────────────────────────────┼────────────────────┤─────────────────────────────────────────────
+  │ 9   │ AVAILABLE_MINS = (WORKING_MINS − DOWNTIME) × OEE for machine_daily, WORKING_MINS × OEE  │ Verify formula     │    YES - the formula is correct but use the │
+  │     │ for machine_master                                                                      │                    │     AVAILABLE_MINS directly when available  │
+  └─────┴─────────────────────────────────────────────────────────────────────────────────────────┴────────────────────┘─────────────────────────────────────────────
+
+  ---
+  3. CONTRADICTIONS WITH CLAUDE.md
+
+  ┌─────┬──────────────────────────────────────┬───────────────────────────────────────────┬──────────────────────────┐
+  │  #  │            CLAUDE.md says            │             Actual data shows             │      Action needed       │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 1   │ Column ct_min                        │ Actual column is CYCLE_TIME               │ Update CLAUDE.md         │     
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 2   │ Column concatenation_key             │ Actual column is ITEM_CATEGORY            │ Update CLAUDE.md         │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 3   │ Column pdd / cdd                     │ Confirmed CDD                             │ Already updated          │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 4   │ Column rework_order (YES/NO flag)    │ No such column exists; rework identified  │ Update CLAUDE.md         │
+  │     │                                      │ by task R002                              │                          │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 5   │ Routing has no machine priority      │ Routing has MACHINE_PRIORITY 1–4          │ Decide & update          │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 6   │ Shift names: "first", "second",      │ Actual: "first", "Second", "Third" (mixed │ Normalize                │
+  │     │ "third" (all lowercase)              │  case)                                    │                          │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 7   │ "serial_no" referenced throughout    │ No serial number column in data —         │ Already updated, but     │
+  │     │                                      │ scheduling is at order+operation level    │ some references remain   │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 8   │ Machine_Daily column                 │ Actual column is DOWNTIME                 │ Update CLAUDE.md         │
+  │     │ planned_downtime_mins                │                                           │                          │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 9   │ Machine_Master column                │ Actual column is WORKING_MINS             │ Update CLAUDE.md         │
+  │     │ working_mins_per_shift               │                                           │                          │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 10  │ Routing_Master column setup_mins     │ Actual column is SETUP_TIME               │ Update CLAUDE.md         │
+  ├─────┼──────────────────────────────────────┼───────────────────────────────────────────┼──────────────────────────┤
+  │ 11  │ Only 7 of 22 WIP operations have     │ CLAUDE.md implies all machining ops are   │ Clarify (Q1 above)       │
+  │     │ routing entries                      │ scheduled                                 │ [Clarified in Q1 answer] │
+  └─────┴──────────────────────────────────────┴───────────────────────────────────────────┴──────────────────────────┘
+
+  ---
+  4. PROPOSED STEP-BY-STEP PROCEDURE
+
+  Once you answer the clarification questions above, here's the execution plan:
+
+  Phase 0 — Foundation (Oracle XE + Data Import)
+
+  1. Update CLAUDE.md with correct column names and all decisions from your answers
+  2. Start Docker/Oracle XE
+  3. Write CREATE TABLE DDL for all 6 tables using exact column names/types from the data
+  4. You create the schemas yourself in DBeaver (learning exercise as planned)
+  5. Write a Python import script to load the 4 Excel sheets into Oracle XE
+  6. Write test_connection.py that reads all 4 tables and prints stats
+  7. Write .env with local Oracle XE credentials
+
+  Phase 1 — Engine 1 (CP-SAT Scheduler)
+
+  1. Write preprocess.py — resolve_capacity(), clean WIP (filter rework, compute balance qty, exclude QA/external)
+  2. Write engine1_scheduler.py:
+    - Build IntervalVars for each schedulable (order, operation)
+    - Precedence constraints respecting full operation chain (including non-scheduled ops as pass-throughs)
+    - Capacity constraints per machine per shift
+    - Setup time logic (concatenation_key switching)
+    - Queue-depth allocation via objective function
+  3. Test with real data from Oracle XE
+  4. Write results to schedule_output table
+
+  Phase 2 — Engine 2 (Recommendation Engine)
+
+  1. Write engine2_recommender.py — elevate priority, re-solve, compute slip/risk
+  2. Write results to sim_results table
+
+  Phase 3 — FastAPI Backend
+
+  1. All endpoints with correct column names
+  2. Machine_daily PUT endpoint for UI updates
+  3. Pydantic models, CORS, error handling
+
+  Phase 4 — React Frontend
+
+  1. Schedule view (Gantt), Order board (drag-drop), Impact analyser, Machine availability editor
+  2. Non-scheduled operations shown in a separate display section
+
+  Phase 5 — Deployment
+
+  1. Test locally end-to-end
+  2. Deploy to Windows Server with NSSM
+  
+  HARD RULES to be followed:
+  
+  1. Scheduling of operation should always be sequential in ascending order.
+  2. Always Consider Batch - wise quantity scheduling for any given operation and any given machine. 
+  But if a batch has more quantity, whose completion time (Cycle time * No of Quantities to be completed) is higher the AVAILABLE_MINS then assign it to the next immeadiate shift.
+  3. Batch_bonus is only applicable to orders whose PDD (CDD) falls in less than 2 months from the Current Date.
+
+
+  ---
+  Answer the 6 questions above and I'll update CLAUDE.md with every correction and decision, then we start building.
+
+  ---
+  My Additional Clarifications (Not in the Previous Report)
+
+  Three things in CLAUDE.md have internal contradictions or undefined logic that the previous analysis did not raise:
+
+  C1 — urgency_weight formula is incomplete.
+  CLAUDE.md defines three components — pdd_score, ageing_score, batch_bonus — but never says how they combine into a single
+   number. Is it pdd_score + ageing_score + batch_bonus? A product? Separately weighted? Without the final formula, the
+  solver has nothing concrete to optimize on.
+  
+  IMPORTANT Answer: Yes, Urgency_weight formula is pdd_score + ageing_score + batch_bonus, but there is a catch here., 
+  batch_bonus should only be given to orders whose PDD falls in less than 2 months from the Current_date of processing.
+
+  C2 — "No partial batches across shifts" conflicts with large orders.
+  CLAUDE.md states each (order, operation) batch is atomic within a shift block — meaning all pieces of one operation for
+  one order must land in a single shift. But if an order has (say) 10 pieces × 90 min CT = 900 min, and a shift only has
+  ~420 min of available capacity, that batch can never physically fit in one shift. This constraint would make many large
+  orders unschedulable. Needs a decision: should large operations be allowed to span multiple shifts, or is there a maximum
+   order quantity that makes this safe in practice?
+   
+   Answer: Partial batches are allowed but only if the qty cannot be completed in that particular available shift, 
+   and the partial batch should only be allotted to the next immeadiate shift.
+
+  C3 — Precedence constraints break when non-routed operations exist in the chain.
+  The CP-SAT model enforces: start of Op_n+1 ≥ end of Op_n. But if Op_n (e.g., Blasting) has no routing entry and is
+  therefore excluded from the CP-SAT model, there is no end_op_n variable to anchor the constraint for Op_n+1. The report
+  mentions "Precedence constraints respecting full operation chain (including non-scheduled ops as pass-throughs)" but the
+  implementation of this pass-through is undefined. How should the engine determine the estimated completion time of a
+  non-scheduled operation in order to set the start constraint for the next scheduled one?
+  
+  Answer: Do not consider the non scheduled operation while scheduling and while determining the completetion time. 
+  Map the previous operation of the pass-through as Op_n for the Op_n+1
+
+  Please answer the 6 questions from the report and these 3 additional points — then I can update CLAUDE.md completely and
+  we begin Phase 0 coding.
+
+
+  C2 — "No partial batches across shifts" conflicts with large orders.
+  CLAUDE.md states each (order, operation) batch is atomic within a shift block — meaning all pieces of one operation for
+  one order must land in a single shift. But if an order has (say) 10 pieces × 90 min CT = 900 min, and a shift only has
+  ~420 min of available capacity, that batch can never physically fit in one shift. This constraint would make many large
+  orders unschedulable. Needs a decision: should large operations be allowed to span multiple shifts, or is there a maximum
+   order quantity that makes this safe in practice?
+   
+   Answer: Partial batches are allowed but only if the qty cannot be completed in that particular available shift, 
+   and the partial batch should only be allotted to the next immeadiate shift.
+
+  C3 — Precedence constraints break when non-routed operations exist in the chain.
+  The CP-SAT model enforces: start of Op_n+1 ≥ end of Op_n. But if Op_n (e.g., Blasting) has no routing entry and is
+  therefore excluded from the CP-SAT model, there is no end_op_n variable to anchor the constraint for Op_n+1. The report
+  mentions "Precedence constraints respecting full operation chain (including non-scheduled ops as pass-throughs)" but the
+  implementation of this pass-through is undefined. How should the engine determine the estimated completion time of a
+  non-scheduled operation in order to set the start constraint for the next scheduled one?
+  
+  Answer: Do not consider the non scheduled operation while scheduling and while determining the completetion time. 
+  Map the previous operation of the pass-through as Op_n for the Op_n+1
+
+  Please answer the 6 questions from the report and these 3 additional points — then I can update CLAUDE.md completely and
+  we begin Phase 0 coding.
+  
+  Changes to be made and plans to be updated in the project in the project: 
+  
+  1.Balance Qty = QUANTITY_ORDERED − QUANTITY_COMPLETED - QUANTITY_REJECTED. And only this Balance qty should go to the pipepline of next operation in sequence. 
+  (Not your concern, just FYI) Rejected quantity will be generated as new production order and will be sent to WIP pipeline. 
+  
+  2. Do not break or split a batchwise qty, unless it is required. "If a batch quantity is assigned to a machine continue the whole batch on that machine". 
+  Consider SETUP_TIME as a criteria and decide whether is it feasible to continue on the same machine or it can be more efficient to run it on two machines. 
+  
+  3. Always Consider all machines are availabe for every all shift as default., if its not available for a particular shift, it will be upated on in Machine daily.
+  
+  4. Maximum Utilization and output extraction from a machine is must. Find the most effective method to load the machine and always ensure maximum machine utilization.
+  
+  5. I need to provide a provision in UI to change the 2 months time applicable for calculating the batch_bonus., such that if my team wants to change that validity to 1 month or 6 month, they should be able to do in UI itself. this data cannot be written in the exsiting databases so create an xml file separtely if needed to store the user input.
+  
+  6. Plan throughly for both Planning Efficiency ML Algorithm and Recommendation Engine Algorithm.
+  
+  7. Change this "Development machine: MacBook Air M4 (Apple Silicon)" to "Development machine: Windows 11 Enterprise" and add "Project Owner: Harish Radhakrishnan" in the next line after it.

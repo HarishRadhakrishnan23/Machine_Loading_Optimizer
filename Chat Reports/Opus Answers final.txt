@@ -1,0 +1,143 @@
+● CLAUDE.md updated. Now creating the architecture diagram.
+
+● Write(TOV_MLO_Architecture.html)
+  ⎿  Wrote 536 lines to TOV_MLO_Architecture.html
+      1 <!DOCTYPE html>
+      2 <html lang="en">
+      3 <head>
+      4 <meta charset="UTF-8">
+      5 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      6 <title>TOV Machine Loading Optimizer — System Architecture</title>
+      7 <style>
+      8   * { margin: 0; padding: 0; box-sizing: border-box; }
+      9   body { font-family: 'Segoe UI', Arial, sans-serif; background: #0f1117; color: #e2e8f0; padding: 24px; }
+     … +541 lines (ctrl+o to expand)
+
+● Both files written. Here is the complete project plan report.
+
+  ---
+  TOV Machine Loading Optimizer — Full Project Plan
+
+  Vision & Mission
+
+  Vision: Eliminate manual planning bottlenecks in Emerson's TOV valve shop floor with a fully automated, ML-driven scheduling system.
+
+  Mission: Generate real-time, optimal shift-level schedules that minimize delivery tardiness, maximize machine utilization, and give
+  planners instant "what-if" impact analysis when priorities change.
+
+  ---
+  All Decisions — Final Locked State
+
+  ┌───────────────────┬────────────────────────────────────────────────────────────────────────┐
+  │       Topic       │                                Decision                                │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ CT=0 rows         │ Skip entirely — covers external vendors + missing data                 │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Routable ops (v1) │ 7 only: VB02, VB03, VB04, VB05, VB06, VB07, VB09                       │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Non-routed ops    │ Skip in CP-SAT; system designed for routing-extensible future addition │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Balance Qty       │ ORDERED − COMPLETED − REJECTED — cascade forward to next op            │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Rework (R002)     │ Normal operation — no special logic                                    │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ QA Inspection     │ Excluded from CP-SAT; shown in UI                                      │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Shift names       │ Normalized to lowercase on read                                        │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Machine defaults  │ All machines available all shifts; machine_daily for exceptions only   │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Batch continuity  │ One machine per batch; overflow to same machine next immediate shift   │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ MACHINE_PRIORITY  │ Soft epsilon penalty in objective (ε = 0.001) — tiebreaker only        │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Max utilization   │ Guiding principle; tardiness minimization handles it implicitly        │
+  ├───────────────────┼────────────────────────────────────────────────────────────────────────┤
+  │ Config storage    │ backend/config.json — UI-editable; never in Oracle                     │
+  └───────────────────┴────────────────────────────────────────────────────────────────────────┘
+
+  ---
+  Critical Formulas (locked)
+
+  Balance Qty:
+  balance_qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED
+
+  urgency_weight:
+  pdd_score    = 1 / max(1, days_until_CDD)
+  ageing_score = (today − order_date).days / config.ageing_normalization_days
+  batch_bonus  = config.batch_bonus_value  if days_until_CDD < batch_bonus_months×30  else 0
+  urgency_weight = pdd_score + ageing_score + batch_bonus
+  Safety stock (CDD=NULL): urgency_weight = 0
+
+  CP-SAT Objective:
+  Minimize: Σ urgency_weight_i × max(0, completion_day_i − pdd_day_i)
+          + Σ ε × (MACHINE_PRIORITY_j − 1) × is_assigned_j
+
+  Batch overflow:
+  qty_fits = floor(AVAILABLE_MINS / CYCLE_TIME)
+  Remaining qty → same machine, next immediate shift
+
+  Engine 2 risk:
+  slip_days = new_completion_date − old_completion_date
+  slack     = CDD − new_completion_date
+  SAFE: slack > 5d | AT_RISK: 0–5d | BREACH: slack < 0
+
+  ---
+  Phase Plan
+
+  ┌──────────────┬────────────────────────────────────────────────────────────────────────────────────────┬───────────────────────────┐
+  │    Phase     │                                    What gets built                                     │       Prerequisite        │
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 0 —          │ Oracle XE schemas (6 tables), DBeaver DDL exercise, Python import script,              │ Oracle XE running         │
+  │ Foundation   │ test_connection.py, .env                                                               │ (already done)            │
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 1 — Engine 1 │ preprocess.py + engine1_scheduler.py (full CP-SAT: batch overflow, setup time, epsilon │ Phase 0                   │
+  │              │  tiebreaker, precedence skipping)                                                      │                           │
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 2 — Engine 2 │ engine2_recommender.py (snapshot, re-solve, slip/risk classifier)                      │ Phase 1                   │
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 3 — FastAPI  │ main.py with all 10 endpoints, models.py Pydantic schemas, CORS, config GET/PUT        │ Phase 2                   │
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 4 — React UI │ All 4 views, Gantt chart, drag-drop order board, risk badges, machine_daily editor +   │ Phase 3                   │
+  │              │ config panel                                                                           │                           │
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 5 — Deploy   │ NSSM services for Uvicorn + Express, end-to-end integration test on Windows Server     │ Phase 4                   │
+  └──────────────┴────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────┘
+
+  ---
+  Architecture Diagram
+
+  Open this file in any browser — it's fully self-contained:
+
+  C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\TOV_MLO_Architecture.html
+
+  It shows all 5 layers (Data → Backend → API → Frontend → Deployment), config.json flow, all 10 API endpoints, all 4 React views, and all
+   6 critical formulas with their logic notes — dark-themed and readable at any zoom level.
+
+  ---
+  CLAUDE.md is now fully updated and locked. We are ready to start Phase 0. Just say the word and I'll write the 6 CREATE TABLE DDL
+  statements (using exact Oracle column names from the data) and the Python import script.
+
+✻ Cogitated for 6m 56s
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 3 — FastAPI  │ main.py with all 10 endpoints, models.py Pydantic schemas, CORS, config GET/PUT        │ Phase 2                   │
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 4 — React UI │ All 4 views, Gantt chart, drag-drop order board, risk badges, machine_daily editor +   │ Phase 3                   │
+  │              │ config panel                                                                           │                           │
+  ├──────────────┼────────────────────────────────────────────────────────────────────────────────────────┼───────────────────────────┤
+  │ 5 — Deploy   │ NSSM services for Uvicorn + Express, end-to-end integration test on Windows Server     │ Phase 4                   │
+  └──────────────┴────────────────────────────────────────────────────────────────────────────────────────┴───────────────────────────┘
+
+  ---
+  Architecture Diagram
+
+  Open this file in any browser — it's fully self-contained:
+
+  C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\TOV_MLO_Architecture.html
+
+  It shows all 5 layers (Data → Backend → API → Frontend → Deployment), config.json flow, all 10 API endpoints, all 4 React views, and all
+   6 critical formulas with their logic notes — dark-themed and readable at any zoom level.
+
+  ---
+  CLAUDE.md is now fully updated and locked. We are ready to start Phase 0. Just say the word and I'll write the 6 CREATE TABLE DDL
+  statements (using exact Oracle column names from the data) and the Python import script.

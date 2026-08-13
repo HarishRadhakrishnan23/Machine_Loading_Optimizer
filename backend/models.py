@@ -64,6 +64,12 @@ class Config(BaseModel):
     # reads them raises AttributeError at runtime.
     scheduling_horizon_safety_factor: int = 2
     scheduling_horizon_buffer_days: int = 7
+    # Development mode: limit WIP orders to top-N by urgency (for fast testing).
+    # 0 = no limit (full dataset). Set to 100 for rapid iteration, 0 for production.
+    dev_max_orders: int = 0
+    # CP-SAT solver parallelization and time budget.
+    solver_workers: int = 0  # 0 = auto-detect cores; set to specific count to limit
+    solver_time_limit_seconds: int = 600  # time budget for Engine 1 (production: 600-3600s OK)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

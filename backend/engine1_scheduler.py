@@ -425,13 +425,16 @@ class Engine1Scheduler:
     def solve(self, max_time_in_seconds: Optional[float] = None) -> SchedulerResult:
         """
         Solve the built model and return a SchedulerResult. `max_time_in_seconds`
-        is used by Engine 2 (config.engine2_time_limit_seconds); None ⇒ defaults
-        to 120 seconds (Engine 1 = OPTIMAL quality; Engine 2 uses config param).
+        overrides config.solver_time_limit_seconds. Engine 2 passes its own limit.
         """
         solver = cp_model.CpSolver()
-        # Default Engine 1 time limit: 120s for OPTIMAL quality. Engine 2 overrides with config.engine2_time_limit_seconds.
-        time_limit = max_time_in_seconds if max_time_in_seconds is not None else 120
+        # Time limit: Engine 2 override if passed, else config.solver_time_limit_seconds.
+        time_limit = max_time_in_seconds if max_time_in_seconds is not None else self.config.solver_time_limit_seconds
         solver.parameters.max_time_in_seconds = time_limit
+
+        # Parallelization: 0 = auto-detect, else respect config.solver_workers.
+        if self.config.solver_workers > 0:
+            solver.parameters.num_workers = self.config.solver_workers
 
         status = solver.Solve(self.model)
         run_id = uuid.uuid4().hex

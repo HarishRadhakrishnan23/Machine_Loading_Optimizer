@@ -392,6 +392,17 @@ def build_scheduler_input(
     # Steps 1–4: filter + balance_qty.
     filtered = filter_wip_orders(wip_df, routing_df)
 
+    # Dev mode: limit to top-N orders by urgency (soonest CDD + oldest orders).
+    # 0 = no limit (production). Set to 100 for rapid dev iteration.
+    if config.dev_max_orders > 0:
+        filtered = filtered.sort_values(
+            by=["CDD", "PRODUCTION_START_DATE_AND_TIME"],
+            na_position="last",  # safety stock (NULL CDD) goes last
+            ascending=[True, True]  # soonest CDD first, oldest orders first
+        )
+        top_orders = filtered["PRODUCTION_ORDER"].unique()[:config.dev_max_orders]
+        filtered = filtered[filtered["PRODUCTION_ORDER"].isin(top_orders)].reset_index(drop=True)
+
     # Build one SchedulableTask per (PRODUCTION_ORDER, OPERATION) survivor.
     # Note: wip_df's OPERATION is the ascending sequence number (→ SchedulableTask.operation_no);
     # wip_df's TASK is the operation/task code (→ SchedulableTask.operation).
