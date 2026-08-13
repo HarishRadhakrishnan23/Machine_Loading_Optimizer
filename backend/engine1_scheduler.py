@@ -1,6 +1,13 @@
 """
 engine1_scheduler.py — Engine 1: CP-SAT Scheduling Optimizer (Model C).
 
+Logging: Every solve run writes to backend/logs/engine1_YYYYMMDD_HHMMSS.log
+This log shows:
+  - Pre-solve diagnostics (work vs capacity, routing coverage, precedence depth)
+  - Greedy fallback placement trace (which tasks placed where, which failed and why)
+  - CP-SAT status and objective value
+  - Final schedule summary or failure diagnosis
+
     "PRODUCTION SHOULD NEVER STOP. Maximise machine + manpower utilisation.
      Setup time is always a cost when a new valve size joins a machine."
 
@@ -53,10 +60,12 @@ urgency weights by URGENCY_SCALE.
 
 from __future__ import annotations
 
+import logging
 import os
 import uuid
 from collections import defaultdict
 from datetime import date, datetime
+from pathlib import Path
 from typing import Callable, Optional
 
 from ortools.sat.python import cp_model
@@ -84,13 +93,33 @@ _TARDINESS_UPPER_BOUND = 100_000
 TaskKey = tuple[str, float]
 
 
+def _setup_logging() -> logging.Logger:
+    """Create a logger for this solve run, write to backend/logs/."""
+    log_dir = Path(__file__).parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"engine1_{timestamp}.log"
+
+    logger = logging.getLogger(f"engine1_{timestamp}")
+    logger.setLevel(logging.DEBUG)
+    handler = logging.FileHandler(log_file)
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+    # Also print to console
+    console = logging.StreamHandler()
+    console.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(console)
+    return logger
+
+
 class Engine1Scheduler:
     """Builds and solves the Model C CP-SAT scheduling model."""
 
-    def __init__(self, scheduler_input: SchedulerInput):
+    def __init__(self, scheduler_input: SchedulerInput, logger: Optional[logging.Logger] = None):
         self.input = scheduler_input
         self.config: Config = scheduler_input.config
         self.model = cp_model.CpModel()
+        self.logger = logger or logging.getLogger("engine1_noop")
 
         # Decision variables.
         self.qty: dict[tuple[TaskKey, str, int], cp_model.IntVar] = {}
@@ -178,37 +207,37 @@ class Engine1Scheduler:
     # ── diagnostics ──────────────────────────────────────────────────────────
     def diagnose_feasibility(self) -> None:
         """Print pre-solve diagnostics: work vs capacity, routing coverage, chain depth."""
-        print("\n" + "=" * 70)
-        print("PRE-SOLVE DIAGNOSTICS (Model C — flexible routing)")
-        print("=" * 70)
+        self.logger.info("\n" + "=" * 70)
+        self.logger.info("PRE-SOLVE DIAGNOSTICS (Model C — flexible routing)")
+        self.logger.info("=" * 70)
 
         total_work_mins = sum(t.balance_qty * t.cycle_time for t in self.input.tasks)
-        print("\nWork load:")
-        print(f"  Total piece-minutes: {total_work_mins:,.0f} min ({total_work_mins/60/480:.1f} machine-days)")
+        self.logger.info("\nWork load:")
+        self.logger.info(f"  Total piece-minutes: {total_work_mins:,.0f} min ({total_work_mins/60/480:.1f} machine-days)")
 
         total_available = sum(self.cap_s.values()) / TIME_SCALE
         ratio = total_work_mins / total_available if total_available else float("inf")
-        print(f"  Total available:     {total_available:,.0f} min ({total_available/60/480:.1f} machine-days)")
-        print(f"  Capacity ratio:      {ratio:.1%} (1.0 = perfectly tight)")
+        self.logger.info(f"  Total available:     {total_available:,.0f} min ({total_available/60/480:.1f} machine-days)")
+        self.logger.info(f"  Capacity ratio:      {ratio:.1%} (1.0 = perfectly tight)")
 
         unroutable = [
             t for t in self.input.tasks
             if not self.candidates.get((t.production_order, t.operation_no), [])
         ]
         if unroutable:
-            print(f"\n⚠️  {len(unroutable)} tasks have no capable machines:")
+            self.logger.warning(f"\n⚠️  {len(unroutable)} tasks have no capable machines:")
             for t in unroutable[:5]:
-                print(f"     {t.production_order} Op{t.operation_no}: TASK={t.operation}")
+                self.logger.warning(f"     {t.production_order} Op{t.operation_no}: TASK={t.operation}")
         else:
-            print(f"\n✓ All {len(self.input.tasks)} tasks have routing coverage")
+            self.logger.info(f"\n✓ All {len(self.input.tasks)} tasks have routing coverage")
 
         max_ops = max((len(v) for v in self.tasks_by_order.values()), default=0)
-        print("\nOrders:")
-        print(f"  Unique production orders: {len(self.tasks_by_order)}")
-        print(f"  Max operations per order: {max_ops}")
-        print(f"  Total tasks:              {len(self.input.tasks)}")
-        print(f"\nCategories (valve sizes): {len({t.item_category for t in self.input.tasks})}")
-        print("=" * 70 + "\n")
+        self.logger.info("\nOrders:")
+        self.logger.info(f"  Unique production orders: {len(self.tasks_by_order)}")
+        self.logger.info(f"  Max operations per order: {max_ops}")
+        self.logger.info(f"  Total tasks:              {len(self.input.tasks)}")
+        self.logger.info(f"\nCategories (valve sizes): {len({t.item_category for t in self.input.tasks})}")
+        self.logger.info("=" * 70 + "\n")
 
     # ── model construction ───────────────────────────────────────────────────
     def build_model(self) -> None:
@@ -422,9 +451,14 @@ class Engine1Scheduler:
         Returned dict: {(task_key, machine, slot) -> pieces}. Used as a CP-SAT hint
         AND as the fallback schedule if CP-SAT finds nothing better in time.
         """
+        self.logger.info("\n" + "=" * 70)
+        self.logger.info("GREEDY WARM-START / FALLBACK PASS")
+        self.logger.info("=" * 70)
+
         remaining = {(m, k): self.cap_s[(m, k)] for m, ks in self.open_slots.items() for k in ks}
         cat_here: dict[tuple[str, int], set[str]] = defaultdict(set)  # (m,k) -> sizes set up
         assign: dict[tuple[TaskKey, str, int], int] = defaultdict(int)
+        failed_tasks: list[tuple[TaskKey, int, str]] = []  # (task_key, balance_qty, reason)
 
         # Process orders most-urgent first; ops within an order ascending.
         orders_sorted = sorted(
@@ -443,10 +477,12 @@ class Engine1Scheduler:
                 op_end_k = prev_end_k
 
                 guard = 0
+                placed_on_op = 0
                 while remaining_pieces > 0:
                     guard += 1
                     if guard > 500_000:
-                        break  # safety valve; horizon sizing should prevent this
+                        failed_tasks.append((pid, t.balance_qty, "guard limit (likely no open capacity)"))
+                        break
                     best = None  # (sort_key, m, k, setup_cost)
                     for m in machines:
                         prio = self.machine_priority[(pid, m)]
@@ -466,20 +502,37 @@ class Engine1Scheduler:
                                     best = (sort_key, m, k, setup_cost)
                                 break  # smallest usable k for this machine
                     if best is None:
-                        break  # no open capacity anywhere ≥ prev_end_k
+                        reason = f"no capable machine has open slot ≥ slot {prev_end_k} with {ct} mins free"
+                        failed_tasks.append((pid, remaining_pieces, reason))
+                        break
                     _, m, k, setup_cost = best
                     if c not in cat_here[(m, k)]:
                         remaining[(m, k)] -= setup_cost
                         cat_here[(m, k)].add(c)
-                    place = min(remaining_pieces, remaining[(m, k)] // ct)
+                    place = min(remaining_pieces, max(0, remaining[(m, k)] // ct))
                     if place <= 0:
-                        # size just set up but no piece room left this slot; move on.
+                        # setup consumed all/most capacity; move on to next slot
                         continue
                     assign[(pid, m, k)] += place
                     remaining[(m, k)] -= place * ct
                     remaining_pieces -= place
+                    placed_on_op += place
                     op_end_k = max(op_end_k, k)
-                prev_end_k = op_end_k  # next op waits for this op's last slot
+                if placed_on_op > 0:
+                    self.logger.debug(f"  {pid[0]} Op{pid[1]}: placed {placed_on_op}/{t.balance_qty} pieces")
+                prev_end_k = op_end_k
+
+        # Summary
+        placed_total = sum(assign.values())
+        needed_total = sum(t.balance_qty for t in self.input.tasks)
+        self.logger.info(f"\nGreedy result: {placed_total}/{needed_total} pieces placed")
+        if failed_tasks:
+            self.logger.info(f"Failed to place {len(failed_tasks)} tasks:")
+            for pid, remaining, reason in failed_tasks[:10]:  # show first 10
+                self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+            if len(failed_tasks) > 10:
+                self.logger.info(f"  ... and {len(failed_tasks) - 10} more")
+        self.logger.info("=" * 70)
 
         return dict(assign)
 
@@ -526,6 +579,7 @@ class Engine1Scheduler:
 
         # Prefer the CP-SAT solution; otherwise fall back to the greedy schedule.
         if solve_status in (SolveStatus.OPTIMAL, SolveStatus.FEASIBLE):
+            self.logger.info(f"✓ CP-SAT: {solve_status.value} (objective: {solver.ObjectiveValue():.0f})")
             get_qty = lambda pid, m, k: solver.Value(self.qty[(pid, m, k)])  # noqa: E731
             result = SchedulerResult(
                 run_id=run_id,
@@ -535,10 +589,11 @@ class Engine1Scheduler:
             )
             result.assignments = self._rows_from_assignment(get_qty, run_id, generated_at)
             result.completion_dates = self._completion_from_assignment(get_qty)
+            self.logger.info(f"✓ Extracted {len(result.assignments)} assignment rows from CP-SAT solution")
             return result
 
         if greedy_complete:
-            print(f"      CP-SAT returned {solve_status.value}; returning greedy fallback schedule.")
+            self.logger.info(f"⚠️  CP-SAT returned {solve_status.value}; returning greedy fallback schedule.")
             get_qty = lambda pid, m, k: greedy.get((pid, m, k), 0)  # noqa: E731
             result = SchedulerResult(
                 run_id=run_id,
@@ -548,9 +603,12 @@ class Engine1Scheduler:
             )
             result.assignments = self._rows_from_assignment(get_qty, run_id, generated_at)
             result.completion_dates = self._completion_from_assignment(get_qty)
+            self.logger.info(f"✓ Extracted {len(result.assignments)} assignment rows from greedy fallback")
             return result
 
-        # Neither path produced a schedule (should not happen with a sized horizon).
+        # Neither path produced a schedule (greedy also failed — data pathology likely).
+        self.logger.error(f"✗ CP-SAT {solve_status.value} AND greedy fallback incomplete — no schedule possible")
+        self.logger.error(f"  Greedy placed {sum(greedy.values())} pieces out of {sum(t.balance_qty for t in self.input.tasks)} needed")
         return SchedulerResult(
             run_id=run_id,
             generated_at=generated_at,
@@ -662,7 +720,8 @@ def run_engine1(
     max_time_in_seconds: Optional[float] = None,
 ) -> SchedulerResult:
     """Build + solve in one call. Engine 2 reuses this with a shorter time limit."""
-    engine = Engine1Scheduler(scheduler_input)
+    logger = _setup_logging()
+    engine = Engine1Scheduler(scheduler_input, logger=logger)
     engine.diagnose_feasibility()
     engine.build_model()
     return engine.solve(max_time_in_seconds=max_time_in_seconds)
