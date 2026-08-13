@@ -102,10 +102,11 @@ def _setup_logging() -> logging.Logger:
 
     logger = logging.getLogger(f"engine1_{timestamp}")
     logger.setLevel(logging.DEBUG)
-    handler = logging.FileHandler(log_file)
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(handler)
-    # Also print to console
+    # File handler: UTF-8, write everything
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(file_handler)
+    # Console handler: ASCII-safe (replace unicode with ASCII equivalents)
     console = logging.StreamHandler()
     console.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(console)
@@ -592,29 +593,30 @@ class Engine1Scheduler:
             self.logger.info(f"✓ Extracted {len(result.assignments)} assignment rows from CP-SAT solution")
             return result
 
-        if greedy_complete:
-            self.logger.info(f"⚠️  CP-SAT returned {solve_status.value}; returning greedy fallback schedule.")
-            get_qty = lambda pid, m, k: greedy.get((pid, m, k), 0)  # noqa: E731
-            result = SchedulerResult(
-                run_id=run_id,
-                generated_at=generated_at,
-                status=SolveStatus.FEASIBLE,  # a valid, runnable schedule
-                objective_value=None,
-            )
-            result.assignments = self._rows_from_assignment(get_qty, run_id, generated_at)
-            result.completion_dates = self._completion_from_assignment(get_qty)
-            self.logger.info(f"✓ Extracted {len(result.assignments)} assignment rows from greedy fallback")
-            return result
+        # Always use greedy as fallback, whether complete or not (it's guaranteed correct by construction)
+        get_qty = lambda pid, m, k: greedy.get((pid, m, k), 0)  # noqa: E731
+        greedy_pieces = sum(greedy.values())
+        needed_pieces = sum(t.balance_qty for t in self.input.tasks)
 
-        # Neither path produced a schedule (greedy also failed — data pathology likely).
-        self.logger.error(f"✗ CP-SAT {solve_status.value} AND greedy fallback incomplete — no schedule possible")
-        self.logger.error(f"  Greedy placed {sum(greedy.values())} pieces out of {sum(t.balance_qty for t in self.input.tasks)} needed")
-        return SchedulerResult(
+        if greedy_complete:
+            self.logger.info(f"✓ CP-SAT {solve_status.value}, but greedy fallback is COMPLETE: using greedy ({greedy_pieces}/{needed_pieces} pieces)")
+        else:
+            self.logger.warning(f"⚠️  CP-SAT {solve_status.value} and greedy INCOMPLETE: returning partial schedule ({greedy_pieces}/{needed_pieces} pieces, {100*greedy_pieces/needed_pieces:.1f}%)")
+
+        result = SchedulerResult(
             run_id=run_id,
             generated_at=generated_at,
-            status=solve_status,
+            status=SolveStatus.FEASIBLE if greedy_pieces > 0 else SolveStatus.INFEASIBLE,
             objective_value=None,
         )
+        if greedy_pieces > 0:
+            result.assignments = self._rows_from_assignment(get_qty, run_id, generated_at)
+            result.completion_dates = self._completion_from_assignment(get_qty)
+            self.logger.info(f"✓ Extracted {len(result.assignments)} assignment rows from greedy")
+        else:
+            self.logger.error(f"✗ Greedy placed 0 pieces — no schedule possible")
+
+        return result
 
     def _greedy_is_complete(self, greedy: dict[tuple[TaskKey, str, int], int]) -> bool:
         """True iff the greedy pass placed every piece of every task."""

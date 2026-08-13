@@ -1,0 +1,950 @@
+VN1003578 Op60.0: placed 7/7 pieces
+  VN1003578 Op90.0: placed 7/7 pieces
+  VN1003578 Op100.0: placed 7/7 pieces
+  VN1003593 Op10.0: placed 4/4 pieces
+  VN1003593 Op20.0: placed 4/4 pieces
+  VN1003593 Op60.0: placed 4/4 pieces
+  VN1003593 Op65.0: placed 4/4 pieces
+  VN1003593 Op80.0: placed 4/4 pieces
+  VN1003593 Op90.0: placed 4/4 pieces
+  VN1003443 Op10.0: placed 1/1 pieces
+  VN1003443 Op60.0: placed 3/3 pieces
+  VN1003443 Op65.0: placed 3/3 pieces
+  VN1003443 Op80.0: placed 3/3 pieces
+  VN1003443 Op90.0: placed 3/3 pieces
+  VN1003483 Op10.0: placed 1/1 pieces
+  VN1003483 Op20.0: placed 1/1 pieces
+  VN1003483 Op60.0: placed 1/1 pieces
+  VN1003483 Op90.0: placed 1/1 pieces
+  VN1003483 Op100.0: placed 1/1 pieces
+  QS1000575 Op10.0: placed 10/10 pieces
+  QS1000575 Op20.0: placed 10/10 pieces
+  QS1000575 Op50.0: placed 10/10 pieces
+  QS1000575 Op60.0: placed 10/10 pieces
+  QS1000575 Op90.0: placed 10/10 pieces
+  QS1000575 Op100.0: placed 10/10 pieces
+  VN1003591 Op10.0: placed 11/11 pieces
+  VN1003591 Op20.0: placed 11/11 pieces
+  VN1003591 Op60.0: placed 11/11 pieces
+  VN1003591 Op65.0: placed 11/11 pieces
+  VN1003591 Op80.0: placed 11/11 pieces
+  VN1003591 Op90.0: placed 11/11 pieces
+  VN1003449 Op50.0: placed 2/2 pieces
+  VN1003449 Op60.0: placed 1/1 pieces
+  VN1003449 Op100.0: placed 1/1 pieces
+  VN1003532 Op10.0: placed 3/3 pieces
+  VN1003532 Op20.0: placed 4/4 pieces
+  VN1003532 Op50.0: placed 18/18 pieces
+  VN1003532 Op60.0: placed 18/18 pieces
+  VN1003532 Op90.0: placed 18/18 pieces
+  VN1003532 Op100.0: placed 18/18 pieces
+  VN1003359 Op10.0: placed 7/7 pieces
+  VN1003359 Op20.0: placed 9/9 pieces
+  VN1003359 Op50.0: placed 14/14 pieces
+  VN1003359 Op60.0: placed 15/15 pieces
+  VN1003359 Op90.0: placed 15/15 pieces
+  VN1003359 Op100.0: placed 15/15 pieces
+  VN1003379 Op10.0: placed 1/1 pieces
+  VN1003379 Op20.0: placed 1/1 pieces
+  VN1003379 Op50.0: placed 1/1 pieces
+  VN1003379 Op60.0: placed 1/1 pieces
+  VN1003379 Op80.0: placed 1/1 pieces
+  VN1003377 Op80.0: placed 1/1 pieces
+  VN1003391 Op20.0: placed 2/2 pieces
+  VN1003391 Op50.0: placed 6/6 pieces
+  VN1003391 Op60.0: placed 6/6 pieces
+  VN1003391 Op90.0: placed 6/6 pieces
+  VN1003391 Op100.0: placed 6/6 pieces
+  VN1003450 Op10.0: placed 5/5 pieces
+  VN1003450 Op20.0: placed 5/5 pieces
+  VN1003450 Op50.0: placed 5/5 pieces
+  VN1003450 Op60.0: placed 5/5 pieces
+  VN1003450 Op80.0: placed 5/5 pieces
+  VN1003462 Op20.0: placed 4/4 pieces
+  VN1003462 Op60.0: placed 4/4 pieces
+  VN1003462 Op65.0: placed 4/4 pieces
+  VN1003462 Op80.0: placed 4/4 pieces
+  VN1003462 Op90.0: placed 4/4 pieces
+  VN1003515 Op10.0: placed 6/6 pieces
+  VN1003515 Op60.0: placed 6/6 pieces
+  VN1003515 Op80.0: placed 6/6 pieces
+  VN1003519 Op100.0: placed 2/2 pieces
+  VN1003516 Op20.0: placed 1/1 pieces
+  VN1003516 Op60.0: placed 8/8 pieces
+  VN1003516 Op90.0: placed 8/8 pieces
+  VN1003516 Op100.0: placed 8/8 pieces
+  VN1003543 Op65.0: placed 1/1 pieces
+  VN1003543 Op80.0: placed 1/1 pieces
+  VN1003543 Op90.0: placed 1/1 pieces
+  VN1003556 Op10.0: placed 5/5 pieces
+  VN1003556 Op20.0: placed 5/5 pieces
+  VN1003556 Op50.0: placed 5/5 pieces
+  VN1003556 Op60.0: placed 5/5 pieces
+  VN1003556 Op90.0: placed 5/5 pieces
+  VN1003556 Op100.0: placed 5/5 pieces
+  VN1003585 Op10.0: placed 2/2 pieces
+  VN1003585 Op60.0: placed 2/2 pieces
+  VN1003585 Op65.0: placed 2/2 pieces
+  VN1003585 Op80.0: placed 2/2 pieces
+  VN1003585 Op90.0: placed 2/2 pieces
+  VN1003425 Op80.0: placed 1/1 pieces
+  VN1003599 Op10.0: placed 1/1 pieces
+  VN1003599 Op65.0: placed 1/1 pieces
+  VN1003599 Op80.0: placed 1/1 pieces
+  VN1003599 Op90.0: placed 1/1 pieces
+  VN1003565 Op65.0: placed 4/4 pieces
+  VN1003565 Op80.0: placed 4/4 pieces
+  VN1003565 Op90.0: placed 4/4 pieces
+  VN1002732 Op20.0: placed 1/1 pieces
+  VN1002732 Op60.0: placed 1/1 pieces
+  VN1002732 Op90.0: placed 1/1 pieces
+  VN1002732 Op100.0: placed 1/1 pieces
+  VL1000451 Op50.0: placed 1/1 pieces
+  VL1000451 Op60.0: placed 1/1 pieces
+  VL1000451 Op90.0: placed 1/1 pieces
+  VL1000451 Op100.0: placed 1/1 pieces
+  VL1000514 Op60.0: placed 1/1 pieces
+  VL1000514 Op90.0: placed 1/1 pieces
+  VL1000514 Op100.0: placed 1/1 pieces
+  VL1000505 Op50.0: placed 1/1 pieces
+  VL1000505 Op60.0: placed 1/1 pieces
+  VL1000505 Op90.0: placed 1/1 pieces
+  VL1000505 Op100.0: placed 1/1 pieces
+  VN1001866 Op10.0: placed 1/1 pieces
+  VN1001866 Op50.0: placed 1/1 pieces
+  VN1001866 Op60.0: placed 1/1 pieces
+  VN1001866 Op90.0: placed 1/1 pieces
+  VN1001866 Op100.0: placed 1/1 pieces
+  VL1000443 Op60.0: placed 1/1 pieces
+  VN1002148 Op90.0: placed 1/1 pieces
+  VL1000488 Op10.0: placed 1/1 pieces
+  VL1000488 Op20.0: placed 1/1 pieces
+  VL1000488 Op60.0: placed 1/1 pieces
+  VL1000488 Op80.0: placed 1/1 pieces
+  VL1000488 Op90.0: placed 1/1 pieces
+  VN1001911 Op60.0: placed 1/1 pieces
+  VN1001911 Op80.0: placed 1/1 pieces
+  VN1001966 Op10.0: placed 1/1 pieces
+  VN1001966 Op20.0: placed 1/1 pieces
+  VN1001966 Op60.0: placed 1/1 pieces
+  VN1001966 Op80.0: placed 1/1 pieces
+  VN1001966 Op90.0: placed 1/1 pieces
+  VL1000523 Op60.0: placed 1/1 pieces
+  VL1000523 Op70.0: placed 1/1 pieces
+  VL1000580 Op60.0: placed 1/1 pieces
+  VL1000580 Op70.0: placed 1/1 pieces
+  VN1001941 Op90.0: placed 1/1 pieces
+  VN1002061 Op60.0: placed 1/1 pieces
+  VL1000707 Op60.0: placed 1/1 pieces
+  VL1000707 Op70.0: placed 1/1 pieces
+  VN1002153 Op60.0: placed 2/2 pieces
+  VN1002153 Op80.0: placed 2/2 pieces
+  VN1002153 Op90.0: placed 2/2 pieces
+  VN1002210 Op60.0: placed 1/1 pieces
+  VN1002210 Op70.0: placed 1/1 pieces
+  VL1000826 Op60.0: placed 6/6 pieces
+  VL1000826 Op80.0: placed 6/6 pieces
+  VL1000826 Op90.0: placed 6/6 pieces
+  VL1000761 Op60.0: placed 1/1 pieces
+  VL1001060 Op10.0: placed 5/5 pieces
+  VL1001060 Op20.0: placed 5/5 pieces
+  VL1001060 Op50.0: placed 5/5 pieces
+  VL1001060 Op60.0: placed 5/5 pieces
+  VL1001060 Op90.0: placed 5/5 pieces
+  VL1001060 Op100.0: placed 5/5 pieces
+  VN1002488 Op60.0: placed 1/1 pieces
+  VN1002488 Op100.0: placed 1/1 pieces
+  VL1000977 Op60.0: placed 1/1 pieces
+  VL1000977 Op100.0: placed 1/1 pieces
+  VN1002640 Op10.0: placed 1/1 pieces
+  VN1002640 Op20.0: placed 1/1 pieces
+  VN1002640 Op60.0: placed 1/1 pieces
+  VN1002640 Op80.0: placed 1/1 pieces
+  VN1002640 Op90.0: placed 1/1 pieces
+  VN1002499 Op60.0: placed 1/1 pieces
+  VN1002499 Op80.0: placed 2/2 pieces
+  VL1001033 Op60.0: placed 1/1 pieces
+  VN1002479 Op100.0: placed 1/1 pieces
+  VL1001052 Op60.0: placed 1/1 pieces
+  VL1001052 Op80.0: placed 1/1 pieces
+  VL1000994 Op60.0: placed 1/1 pieces
+  VL1000994 Op90.0: placed 1/1 pieces
+  VL1000995 Op10.0: placed 1/1 pieces
+  VL1000995 Op20.0: placed 1/1 pieces
+  VL1000995 Op60.0: placed 1/1 pieces
+  VL1000995 Op80.0: placed 1/1 pieces
+  VL1000995 Op90.0: placed 1/1 pieces
+  VN1002493 Op60.0: placed 1/1 pieces
+  VN1002523 Op60.0: placed 1/1 pieces
+  VN1002523 Op90.0: placed 1/1 pieces
+  VN1002612 Op10.0: placed 1/1 pieces
+  VN1002484 Op30.0: placed 1/1 pieces
+  VN1002484 Op40.0: placed 1/1 pieces
+  VL1001182 Op60.0: placed 1/1 pieces
+  VL1001182 Op80.0: placed 1/1 pieces
+  VL1001182 Op90.0: placed 1/1 pieces
+  VN1002790 Op10.0: placed 1/1 pieces
+  VN1002790 Op20.0: placed 1/1 pieces
+  VN1002790 Op60.0: placed 1/1 pieces
+  VN1002790 Op70.0: placed 1/1 pieces
+  VN1002761 Op90.0: placed 1/1 pieces
+  VL1001169 Op10.0: placed 2/2 pieces
+  VL1001169 Op60.0: placed 1/1 pieces
+  VL1001169 Op70.0: placed 1/1 pieces
+  VL1001147 Op60.0: placed 1/1 pieces
+  VL1001252 Op10.0: placed 8/8 pieces
+  VL1001252 Op20.0: placed 4/4 pieces
+  VL1001252 Op50.0: placed 8/8 pieces
+  VL1001252 Op60.0: placed 8/8 pieces
+  VL1001252 Op90.0: placed 8/8 pieces
+  VL1001252 Op100.0: placed 8/8 pieces
+  VL1001253 Op10.0: placed 1/1 pieces
+  VL1001253 Op60.0: placed 1/1 pieces
+  VL1001188 Op60.0: placed 1/1 pieces
+  VL1001227 Op60.0: placed 1/1 pieces
+  VL1001227 Op80.0: placed 1/1 pieces
+  VL1001227 Op90.0: placed 1/1 pieces
+  VL1001208 Op60.0: placed 1/1 pieces
+  VL1001211 Op60.0: placed 1/1 pieces
+  VL1001211 Op80.0: placed 1/1 pieces
+  VL1001211 Op90.0: placed 1/1 pieces
+  VL1001130 Op60.0: placed 1/1 pieces
+  VN1002714 Op10.0: placed 1/1 pieces
+  VN1002714 Op60.0: placed 1/1 pieces
+  VN1003319 Op60.0: placed 1/1 pieces
+  VN1003323 Op20.0: placed 1/1 pieces
+  VN1003323 Op50.0: placed 2/2 pieces
+  VN1003323 Op60.0: placed 2/2 pieces
+  VN1003323 Op90.0: placed 2/2 pieces
+  VN1003323 Op100.0: placed 3/3 pieces
+  VN1003315 Op60.0: placed 1/1 pieces
+  VN1003315 Op90.0: placed 1/1 pieces
+  VN1003316 Op10.0: placed 6/6 pieces
+  VN1003316 Op20.0: placed 6/6 pieces
+  VN1003316 Op50.0: placed 6/6 pieces
+  VN1003316 Op60.0: placed 6/6 pieces
+  VN1003316 Op90.0: placed 6/6 pieces
+  VN1003316 Op100.0: placed 6/6 pieces
+  VL1001292 Op10.0: placed 1/1 pieces
+  VL1001292 Op20.0: placed 1/1 pieces
+  VL1001292 Op50.0: placed 1/1 pieces
+  VL1001292 Op90.0: placed 1/1 pieces
+  VL1001292 Op100.0: placed 1/1 pieces
+  VN1002701 Op10.0: placed 3/3 pieces
+  VN1002701 Op20.0: placed 3/3 pieces
+  VN1002701 Op60.0: placed 3/3 pieces
+  VN1002701 Op80.0: placed 3/3 pieces
+  VN1002701 Op90.0: placed 3/3 pieces
+  VN1002929 Op60.0: placed 1/1 pieces
+  VN1002929 Op80.0: placed 1/1 pieces
+  VN1002929 Op90.0: placed 1/1 pieces
+  VN1002879 Op10.0: placed 1/1 pieces
+  VN1002879 Op20.0: placed 1/1 pieces
+  VN1002879 Op60.0: placed 1/1 pieces
+  VN1002879 Op80.0: placed 1/1 pieces
+  VN1002879 Op90.0: placed 1/1 pieces
+  VL1001316 Op20.0: placed 1/1 pieces
+  VL1001316 Op60.0: placed 1/1 pieces
+  VL1001316 Op80.0: placed 1/1 pieces
+  VL1001316 Op90.0: placed 1/1 pieces
+  VL1001319 Op70.0: placed 1/1 pieces
+  VN1002864 Op10.0: placed 2/2 pieces
+  VN1002864 Op20.0: placed 2/2 pieces
+  VN1002864 Op50.0: placed 2/2 pieces
+  VN1002864 Op60.0: placed 2/2 pieces
+  VN1002864 Op80.0: placed 2/2 pieces
+  VN1002923 Op60.0: placed 1/1 pieces
+  VN1002841 Op10.0: placed 1/1 pieces
+  VN1002841 Op20.0: placed 1/1 pieces
+  VN1002841 Op50.0: placed 1/1 pieces
+  VN1002841 Op60.0: placed 1/1 pieces
+  VN1002841 Op80.0: placed 1/1 pieces
+  VN1002842 Op10.0: placed 7/7 pieces
+  VN1002842 Op20.0: placed 6/6 pieces
+  VN1002842 Op50.0: placed 7/7 pieces
+  VN1002842 Op60.0: placed 7/7 pieces
+  VN1002842 Op90.0: placed 7/7 pieces
+  VN1002842 Op100.0: placed 7/7 pieces
+  VL1001307 Op10.0: placed 1/1 pieces
+  VL1001307 Op20.0: placed 1/1 pieces
+  VL1001307 Op60.0: placed 1/1 pieces
+  VL1001307 Op80.0: placed 1/1 pieces
+  VL1001307 Op90.0: placed 1/1 pieces
+  VN1002849 Op10.0: placed 1/1 pieces
+  VN1002849 Op20.0: placed 1/1 pieces
+  VN1003326 Op60.0: placed 10/10 pieces
+  VN1003326 Op90.0: placed 8/8 pieces
+  VN1003326 Op100.0: placed 10/10 pieces
+  VL1001312 Op60.0: placed 1/1 pieces
+  VL1001312 Op90.0: placed 1/1 pieces
+  VN1003501 Op80.0: placed 1/1 pieces
+  VN1002981 Op10.0: placed 1/1 pieces
+  VN1002981 Op20.0: placed 1/1 pieces
+  VN1002981 Op50.0: placed 1/1 pieces
+  VN1002981 Op60.0: placed 1/1 pieces
+  VN1002981 Op80.0: placed 1/1 pieces
+  VN1003038 Op60.0: placed 1/1 pieces
+  VN1003038 Op70.0: placed 1/1 pieces
+  VN1003008 Op60.0: placed 1/1 pieces
+  VN1003008 Op80.0: placed 1/1 pieces
+  VN1003008 Op90.0: placed 1/1 pieces
+  VN1003013 Op10.0: placed 1/1 pieces
+  VN1003013 Op20.0: placed 1/1 pieces
+  VN1003013 Op50.0: placed 1/1 pieces
+  VN1003013 Op60.0: placed 1/1 pieces
+  VN1003013 Op90.0: placed 1/1 pieces
+  VN1003013 Op100.0: placed 1/1 pieces
+  VN1003052 Op60.0: placed 1/1 pieces
+  VN1003043 Op60.0: placed 1/1 pieces
+  VN1003043 Op80.0: placed 1/1 pieces
+  VL1001294 Op10.0: placed 1/1 pieces
+  VL1001294 Op20.0: placed 1/1 pieces
+  VL1001294 Op60.0: placed 1/1 pieces
+  VL1001294 Op70.0: placed 1/1 pieces
+  VN1002951 Op10.0: placed 2/2 pieces
+  VN1002951 Op20.0: placed 2/2 pieces
+  VN1002951 Op50.0: placed 2/2 pieces
+  VN1002951 Op60.0: placed 2/2 pieces
+  VN1002951 Op80.0: placed 2/2 pieces
+  VN1002910 Op60.0: placed 1/1 pieces
+  VL1001280 Op60.0: placed 1/1 pieces
+  VL1001280 Op90.0: placed 1/1 pieces
+  VN1002836 Op10.0: placed 4/4 pieces
+  VN1002836 Op20.0: placed 4/4 pieces
+  VN1002836 Op50.0: placed 4/4 pieces
+  VN1002836 Op60.0: placed 4/4 pieces
+  VN1002836 Op90.0: placed 4/4 pieces
+  VN1002836 Op100.0: placed 4/4 pieces
+  VN1003067 Op10.0: placed 1/1 pieces
+  VN1003067 Op20.0: placed 1/1 pieces
+  VN1003067 Op60.0: placed 1/1 pieces
+  VN1003067 Op80.0: placed 1/1 pieces
+  VN1003067 Op90.0: placed 1/1 pieces
+  VN1003074 Op10.0: placed 1/1 pieces
+  VN1003074 Op20.0: placed 1/1 pieces
+  VN1003074 Op60.0: placed 1/1 pieces
+  VN1003074 Op80.0: placed 1/1 pieces
+  VN1003074 Op90.0: placed 1/1 pieces
+  VD1000292 Op20.0: placed 2/2 pieces
+  VD1000292 Op50.0: placed 2/2 pieces
+  VD1000292 Op60.0: placed 2/2 pieces
+  VD1000292 Op80.0: placed 2/2 pieces
+  VD1000292 Op90.0: placed 2/2 pieces
+  VD1000293 Op20.0: placed 2/2 pieces
+  VD1000293 Op50.0: placed 2/2 pieces
+  VD1000293 Op60.0: placed 2/2 pieces
+  VD1000293 Op80.0: placed 2/2 pieces
+  VD1000294 Op20.0: placed 1/1 pieces
+  VD1000294 Op50.0: placed 1/1 pieces
+  VD1000294 Op60.0: placed 1/1 pieces
+  VD1000294 Op90.0: placed 1/1 pieces
+  VD1000294 Op100.0: placed 1/1 pieces
+  VD1000295 Op20.0: placed 2/2 pieces
+  VD1000295 Op50.0: placed 2/2 pieces
+  VD1000295 Op60.0: placed 2/2 pieces
+  VD1000295 Op80.0: placed 2/2 pieces
+  VD1000296 Op20.0: placed 2/2 pieces
+  VD1000296 Op50.0: placed 2/2 pieces
+  VD1000296 Op60.0: placed 2/2 pieces
+  VD1000296 Op90.0: placed 2/2 pieces
+  VD1000296 Op100.0: placed 2/2 pieces
+  VD1000297 Op20.0: placed 1/1 pieces
+  VD1000297 Op50.0: placed 1/1 pieces
+  VD1000297 Op60.0: placed 1/1 pieces
+  VD1000297 Op80.0: placed 1/1 pieces
+  VD1000298 Op20.0: placed 1/1 pieces
+  VD1000298 Op50.0: placed 1/1 pieces
+  VD1000298 Op60.0: placed 1/1 pieces
+  VD1000298 Op90.0: placed 1/1 pieces
+  VD1000298 Op100.0: placed 1/1 pieces
+  VD1000299 Op20.0: placed 1/1 pieces
+  VD1000299 Op50.0: placed 1/1 pieces
+  VD1000299 Op60.0: placed 1/1 pieces
+  VD1000299 Op80.0: placed 1/1 pieces
+  VN1003002 Op60.0: placed 3/3 pieces
+  VN1003002 Op90.0: placed 3/3 pieces
+  VN1003002 Op100.0: placed 3/3 pieces
+  VN1003186 Op50.0: placed 1/1 pieces
+  VN1003186 Op60.0: placed 1/1 pieces
+  VN1003186 Op90.0: placed 1/1 pieces
+  VN1003186 Op100.0: placed 1/1 pieces
+  VN1003394 Op50.0: placed 2/2 pieces
+  VN1003394 Op60.0: placed 2/2 pieces
+  VN1003394 Op80.0: placed 2/2 pieces
+  VN1003396 Op50.0: placed 1/1 pieces
+  VN1003396 Op60.0: placed 1/1 pieces
+  VN1003396 Op90.0: placed 1/1 pieces
+  VN1003396 Op100.0: placed 1/1 pieces
+  VN1003400 Op60.0: placed 1/1 pieces
+  VN1003400 Op65.0: placed 1/1 pieces
+  VN1003400 Op70.0: placed 1/1 pieces
+  VN1003401 Op60.0: placed 1/1 pieces
+  VN1003401 Op65.0: placed 1/1 pieces
+  VN1003401 Op80.0: placed 1/1 pieces
+  VN1003401 Op90.0: placed 1/1 pieces
+  VN1003410 Op80.0: placed 1/1 pieces
+  VN1003410 Op90.0: placed 1/1 pieces
+  VN1003412 Op60.0: placed 1/1 pieces
+  VN1003412 Op65.0: placed 2/2 pieces
+  VN1003412 Op80.0: placed 2/2 pieces
+  VN1003412 Op90.0: placed 5/5 pieces
+  VN1003193 Op10.0: placed 15/15 pieces
+  VN1003193 Op20.0: placed 15/15 pieces
+  VN1003193 Op50.0: placed 15/15 pieces
+  VN1003193 Op60.0: placed 15/15 pieces
+  VN1003193 Op90.0: placed 15/15 pieces
+  VN1003193 Op100.0: placed 15/15 pieces
+  VN1003194 Op50.0: placed 1/1 pieces
+  VN1003194 Op60.0: placed 14/14 pieces
+  VN1003194 Op90.0: placed 1/1 pieces
+  VN1003194 Op100.0: placed 14/14 pieces
+  VN1003457 Op10.0: placed 3/3 pieces
+  VN1003457 Op20.0: placed 4/4 pieces
+  VN1003457 Op60.0: placed 4/4 pieces
+  VN1003457 Op65.0: placed 4/4 pieces
+  VN1003457 Op70.0: placed 4/4 pieces
+  VN1003458 Op10.0: placed 1/1 pieces
+  VN1003458 Op20.0: placed 1/1 pieces
+  VN1003458 Op60.0: placed 1/1 pieces
+  VN1003458 Op65.0: placed 1/1 pieces
+  VN1003458 Op70.0: placed 1/1 pieces
+  VN1003503 Op10.0: placed 1/1 pieces
+  VN1003503 Op20.0: placed 1/1 pieces
+  VN1003503 Op50.0: placed 1/1 pieces
+  VN1003503 Op60.0: placed 1/1 pieces
+  VN1003503 Op90.0: placed 1/1 pieces
+  VN1003503 Op100.0: placed 1/1 pieces
+  VN1003506 Op10.0: placed 6/6 pieces
+  VN1003506 Op20.0: placed 6/6 pieces
+  VN1003506 Op50.0: placed 6/6 pieces
+  VN1003506 Op60.0: placed 6/6 pieces
+  VN1003506 Op90.0: placed 6/6 pieces
+  VN1003506 Op100.0: placed 6/6 pieces
+  VN1003507 Op10.0: placed 9/9 pieces
+  VN1003507 Op20.0: placed 9/9 pieces
+  VN1003507 Op50.0: placed 9/9 pieces
+  VN1003507 Op60.0: placed 9/9 pieces
+  VN1003507 Op90.0: placed 9/9 pieces
+  VN1003507 Op100.0: placed 9/9 pieces
+  VN1003508 Op60.0: placed 1/1 pieces
+  VN1003508 Op65.0: placed 1/1 pieces
+  VN1003508 Op80.0: placed 1/1 pieces
+  VN1003508 Op90.0: placed 1/1 pieces
+  VN1003511 Op10.0: placed 3/3 pieces
+  VN1003511 Op20.0: placed 3/3 pieces
+  VN1003511 Op60.0: placed 3/3 pieces
+  VN1003511 Op80.0: placed 3/3 pieces
+  VN1003213 Op10.0: placed 1/1 pieces
+  VN1003213 Op20.0: placed 1/1 pieces
+  VN1003213 Op50.0: placed 1/1 pieces
+  VN1003213 Op60.0: placed 1/1 pieces
+  VN1003213 Op80.0: placed 1/1 pieces
+  VN1003365 Op60.0: placed 2/2 pieces
+  VN1003365 Op80.0: placed 5/5 pieces
+  VN1003365 Op90.0: placed 6/6 pieces
+  VN1003291 Op10.0: placed 1/1 pieces
+  VN1003291 Op20.0: placed 1/1 pieces
+  VN1003291 Op60.0: placed 1/1 pieces
+  VN1003291 Op70.0: placed 1/1 pieces
+  VN1003328 Op20.0: placed 1/1 pieces
+  VN1003328 Op60.0: placed 3/3 pieces
+  VN1003328 Op80.0: placed 4/4 pieces
+  VN1003328 Op90.0: placed 5/5 pieces
+  VN1003415 Op65.0: placed 1/1 pieces
+  VN1003415 Op80.0: placed 1/1 pieces
+  VN1003420 Op60.0: placed 6/6 pieces
+  VN1003420 Op65.0: placed 6/6 pieces
+  VN1003420 Op80.0: placed 6/6 pieces
+  VN1003420 Op90.0: placed 6/6 pieces
+  VN1003111 Op10.0: placed 3/3 pieces
+  VN1003111 Op20.0: placed 3/3 pieces
+  VN1003111 Op60.0: placed 4/4 pieces
+  VN1003111 Op70.0: placed 4/4 pieces
+  VN1003308 Op10.0: placed 2/2 pieces
+  VN1003308 Op20.0: placed 2/2 pieces
+  VN1003308 Op50.0: placed 2/2 pieces
+  VN1003308 Op60.0: placed 2/2 pieces
+  VN1003308 Op90.0: placed 2/2 pieces
+  VN1003308 Op100.0: placed 2/2 pieces
+  VN1003309 Op10.0: placed 4/4 pieces
+  VN1003309 Op20.0: placed 4/4 pieces
+  VN1003309 Op50.0: placed 4/4 pieces
+  VN1003309 Op60.0: placed 4/4 pieces
+  VN1003309 Op90.0: placed 4/4 pieces
+  VN1003309 Op100.0: placed 4/4 pieces
+  VN1003313 Op10.0: placed 1/1 pieces
+  VN1003313 Op20.0: placed 1/1 pieces
+  VN1003313 Op60.0: placed 1/1 pieces
+  VN1003313 Op80.0: placed 1/1 pieces
+  VN1003313 Op90.0: placed 1/1 pieces
+  VN1003435 Op60.0: placed 2/2 pieces
+  VN1003435 Op65.0: placed 2/2 pieces
+  VN1003435 Op80.0: placed 2/2 pieces
+  VN1003435 Op90.0: placed 2/2 pieces
+  VN1003269 Op20.0: placed 3/3 pieces
+  VN1003269 Op60.0: placed 3/3 pieces
+  VN1003269 Op90.0: placed 3/3 pieces
+  VN1003269 Op100.0: placed 3/3 pieces
+  VN1003279 Op60.0: placed 8/8 pieces
+  VN1003279 Op80.0: placed 8/8 pieces
+  VN1003279 Op90.0: placed 8/8 pieces
+  VN1003160 Op60.0: placed 1/1 pieces
+  VN1003160 Op70.0: placed 1/1 pieces
+  VN1003165 Op10.0: placed 1/1 pieces
+  VN1003165 Op20.0: placed 1/1 pieces
+  VN1003165 Op60.0: placed 1/1 pieces
+  VN1003165 Op80.0: placed 1/1 pieces
+  VN1003370 Op60.0: placed 3/3 pieces
+  VN1003370 Op65.0: placed 4/4 pieces
+  VN1003370 Op80.0: placed 4/4 pieces
+  VN1003370 Op90.0: placed 4/4 pieces
+  VN1003376 Op20.0: placed 1/1 pieces
+  VN1003376 Op60.0: placed 2/2 pieces
+  VN1003376 Op65.0: placed 2/2 pieces
+  VN1003376 Op80.0: placed 2/2 pieces
+  VN1003376 Op90.0: placed 2/2 pieces
+  VN1003381 Op80.0: placed 1/1 pieces
+  VN1003445 Op65.0: placed 2/2 pieces
+  VN1003448 Op60.0: placed 4/4 pieces
+  VN1003448 Op65.0: placed 4/4 pieces
+  VN1003448 Op80.0: placed 4/4 pieces
+  VN1003448 Op90.0: placed 4/4 pieces
+  VN1003465 Op50.0: placed 1/1 pieces
+  VN1003465 Op60.0: placed 1/1 pieces
+  VN1003465 Op80.0: placed 1/1 pieces
+  VN1003466 Op10.0: placed 4/4 pieces
+  VN1003466 Op20.0: placed 4/4 pieces
+  VN1003466 Op50.0: placed 4/4 pieces
+  VN1003466 Op60.0: placed 4/4 pieces
+  VN1003466 Op80.0: placed 4/4 pieces
+  VN1003148 Op60.0: placed 1/1 pieces
+  VN1003148 Op90.0: placed 1/1 pieces
+  VN1003148 Op100.0: placed 1/1 pieces
+  VN1003491 Op20.0: placed 3/3 pieces
+  VN1003491 Op60.0: placed 3/3 pieces
+  VN1003491 Op65.0: placed 3/3 pieces
+  VN1003491 Op70.0: placed 3/3 pieces
+  VN1003131 Op60.0: placed 1/1 pieces
+  VN1003131 Op80.0: placed 1/1 pieces
+  VN1003131 Op90.0: placed 1/1 pieces
+  VN1003470 Op10.0: placed 1/1 pieces
+  VN1003470 Op20.0: placed 1/1 pieces
+  VN1003470 Op60.0: placed 1/1 pieces
+  VN1003470 Op65.0: placed 1/1 pieces
+  VN1003470 Op70.0: placed 1/1 pieces
+  VN1003475 Op60.0: placed 4/4 pieces
+  VN1003475 Op65.0: placed 4/4 pieces
+  VN1003475 Op80.0: placed 4/4 pieces
+  VN1003475 Op90.0: placed 4/4 pieces
+  VN1003128 Op10.0: placed 4/4 pieces
+  VN1003128 Op20.0: placed 4/4 pieces
+  VN1003128 Op50.0: placed 4/4 pieces
+  VN1003128 Op60.0: placed 4/4 pieces
+  VN1003128 Op90.0: placed 4/4 pieces
+  VN1003128 Op100.0: placed 4/4 pieces
+  VN1003479 Op20.0: placed 3/3 pieces
+  VN1003479 Op60.0: placed 3/3 pieces
+  VN1003479 Op65.0: placed 3/3 pieces
+  VN1003479 Op70.0: placed 3/3 pieces
+  VN1003481 Op10.0: placed 2/2 pieces
+  VN1003481 Op20.0: placed 2/2 pieces
+  VN1003481 Op50.0: placed 5/5 pieces
+  VN1003481 Op60.0: placed 5/5 pieces
+  VN1003481 Op90.0: placed 5/5 pieces
+  VN1003481 Op100.0: placed 5/5 pieces
+  VN1003482 Op10.0: placed 1/1 pieces
+  VN1003482 Op20.0: placed 1/1 pieces
+  VN1003482 Op60.0: placed 1/1 pieces
+  VN1003482 Op90.0: placed 1/1 pieces
+  VN1003482 Op100.0: placed 1/1 pieces
+  VN1003221 Op80.0: placed 2/2 pieces
+  VN1003221 Op90.0: placed 2/2 pieces
+  VN1003089 Op60.0: placed 1/1 pieces
+  VN1003089 Op100.0: placed 1/1 pieces
+  VN1003092 Op60.0: placed 1/1 pieces
+  VN1003092 Op90.0: placed 1/1 pieces
+  VN1003202 Op10.0: placed 6/6 pieces
+  VN1003202 Op60.0: placed 9/9 pieces
+  VN1003202 Op70.0: placed 9/9 pieces
+  VN1003300 Op60.0: placed 1/1 pieces
+  VN1003300 Op80.0: placed 1/1 pieces
+  VN1003300 Op90.0: placed 1/1 pieces
+  VN1003529 Op10.0: placed 3/3 pieces
+  VN1003529 Op20.0: placed 3/3 pieces
+  VN1003529 Op60.0: placed 3/3 pieces
+  VN1003529 Op65.0: placed 3/3 pieces
+  VN1003529 Op80.0: placed 3/3 pieces
+  VN1003529 Op90.0: placed 3/3 pieces
+  VN1003533 Op10.0: placed 1/1 pieces
+  VN1003533 Op20.0: placed 1/1 pieces
+  VN1003533 Op50.0: placed 1/1 pieces
+  VN1003533 Op60.0: placed 1/1 pieces
+  VN1003533 Op90.0: placed 1/1 pieces
+  VN1003533 Op100.0: placed 1/1 pieces
+  VN1003534 Op60.0: placed 8/8 pieces
+  VN1003534 Op65.0: placed 8/8 pieces
+  VN1003534 Op80.0: placed 8/8 pieces
+  VN1003534 Op90.0: placed 8/8 pieces
+  VN1003592 Op10.0: placed 1/1 pieces
+  VN1003592 Op20.0: placed 1/1 pieces
+  VN1003592 Op60.0: placed 1/1 pieces
+  VN1003592 Op65.0: placed 1/1 pieces
+  VN1003592 Op80.0: placed 1/1 pieces
+  VN1003592 Op90.0: placed 1/1 pieces
+  VN1003594 Op10.0: placed 3/3 pieces
+  VN1003594 Op20.0: placed 3/3 pieces
+  VN1003594 Op60.0: placed 3/3 pieces
+  VN1003594 Op65.0: placed 3/3 pieces
+  VN1003594 Op80.0: placed 3/3 pieces
+  VN1003594 Op90.0: placed 3/3 pieces
+  VN1003579 Op10.0: placed 1/1 pieces
+  VN1003579 Op20.0: placed 1/1 pieces
+  VN1003579 Op50.0: placed 1/1 pieces
+  VN1003579 Op60.0: placed 1/1 pieces
+  VN1003579 Op90.0: placed 1/1 pieces
+  VN1003579 Op100.0: placed 1/1 pieces
+  VN1003580 Op10.0: placed 3/3 pieces
+  VN1003580 Op20.0: placed 3/3 pieces
+  VN1003580 Op50.0: placed 3/3 pieces
+  VN1003580 Op60.0: placed 3/3 pieces
+  VN1003580 Op90.0: placed 3/3 pieces
+  VN1003580 Op100.0: placed 3/3 pieces
+  VN1003581 Op10.0: placed 2/2 pieces
+  VN1003581 Op20.0: placed 2/2 pieces
+  VN1003581 Op50.0: placed 2/2 pieces
+  VN1003581 Op60.0: placed 2/2 pieces
+  VN1003581 Op90.0: placed 2/2 pieces
+  VN1003581 Op100.0: placed 2/2 pieces
+  VN1003536 Op10.0: placed 10/10 pieces
+  VN1003536 Op20.0: placed 10/10 pieces
+  VN1003536 Op50.0: placed 10/10 pieces
+  VN1003536 Op60.0: placed 10/10 pieces
+  VN1003536 Op90.0: placed 10/10 pieces
+  VN1003536 Op100.0: placed 10/10 pieces
+  VN1003523 Op10.0: placed 1/1 pieces
+  VN1003523 Op20.0: placed 1/1 pieces
+  VN1003523 Op50.0: placed 1/1 pieces
+  VN1003523 Op60.0: placed 1/1 pieces
+  VN1003523 Op90.0: placed 1/1 pieces
+  VN1003523 Op100.0: placed 1/1 pieces
+
+Greedy result: 4570/4651 pieces placed
+Failed to place 56 tasks:
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1001960 Op60.0: 3 pieces left — no capable machine has open slot ≥ slot 0 with 68300 mins free'
+Arguments: ()
+  VN1001960 Op60.0: 3 pieces left — no capable machine has open slot ≥ slot 0 with 68300 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1002091 Op20.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 35100 mins free'
+Arguments: ()
+  VN1002091 Op20.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 35100 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1002091 Op60.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 45800 mins free'
+Arguments: ()
+  VN1002091 Op60.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 45800 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1002098 Op60.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 68300 mins free'
+Arguments: ()
+  VN1002098 Op60.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 68300 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1003366 Op20.0: 2 pieces left — no capable machine has open slot ≥ slot 0 with 35100 mins free'
+Arguments: ()
+  VN1003366 Op20.0: 2 pieces left — no capable machine has open slot ≥ slot 0 with 35100 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1003385 Op20.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 35100 mins free'
+Arguments: ()
+  VN1003385 Op20.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 35100 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1003385 Op60.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 27480 mins free'
+Arguments: ()
+  VN1003385 Op60.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 27480 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1003432 Op20.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 49200 mins free'
+Arguments: ()
+  VN1003432 Op20.0: 1 pieces left — no capable machine has open slot ≥ slot 0 with 49200 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1002689 Op20.0: 1 pieces left — no capable machine has open slot ≥ slot 1 with 52000 mins free'
+Arguments: ()
+  VN1002689 Op20.0: 1 pieces left — no capable machine has open slot ≥ slot 1 with 52000 mins free
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2265' in position 102: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 547, in solve
+    greedy = self.greedy_schedule()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 532, in greedy_schedule
+    self.logger.info(f"  {pid[0]} Op{pid[1]}: {remaining} pieces left — {reason}")
+Message: '  VN1002689 Op60.0: 1 pieces left — no capable machine has open slot ≥ slot 1 with 68300 mins free'
+Arguments: ()
+  VN1002689 Op60.0: 1 pieces left — no capable machine has open slot ≥ slot 1 with 68300 mins free
+  ... and 46 more
+======================================================================
+--- Logging error ---
+Traceback (most recent call last):
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\logging\__init__.py", line 1113, in emit
+    stream.write(msg + self.terminator)
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2717' in position 34: character maps to <undefined>
+Call stack:
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1002, in _bootstrap
+    self._bootstrap_inner()
+  File "C:\Users\E1558411\AppData\Local\Programs\Python\Python311\Lib\threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\venv\Lib\site-packages\anyio\_backends\_asyncio.py", line 1033, in run
+    result = context.run(func, *args)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\main.py", line 147, in generate_schedule
+    result = schedule_all_orders(config, run_date)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\pipeline.py", line 92, in schedule_all_orders
+    result = run_engine1(scheduler_input, max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 727, in run_engine1
+    return engine.solve(max_time_in_seconds=max_time_in_seconds)
+  File "C:\Users\E1558411\OneDrive - Emerson\Desktop\Machine Loading Project\Machine_Load_Prj\backend\engine1_scheduler.py", line 610, in solve
+    self.logger.error(f"✗ CP-SAT {solve_status.value} AND greedy fallback incomplete — no schedule possible")
+Message: '✗ CP-SAT INFEASIBLE AND greedy fallback incomplete — no schedule possible'
+Arguments: ()
+✗ CP-SAT INFEASIBLE AND greedy fallback incomplete — no schedule possible
+  Greedy placed 4570 pieces out of 4651 needed
+[3/4] Building & solving CP-SAT model... ✓
+      Status: INFEASIBLE
+[4/4] Solve was INFEASIBLE; skipping write.
+
+======================================================================
+✗ SCHEDULING FAILED: INFEASIBLE
+======================================================================
+
+INFO:     127.0.0.1:49361 - "POST /schedule/generate HTTP/1.1" 200 OK

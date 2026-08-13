@@ -38,7 +38,7 @@ Every time-related value in every table is always in minutes:
 - AVAILABLE_MINS → minutes (pre-computed in the ERP views — use directly)
 - start_offset_min, end_offset_min (in MCH_SCHEDULE_OUTPUT) → minutes
 
-**start_offset_min / end_offset_min are REAL minutes into the shift (0 … WORKING_MINS of that shift), NOT productive/OEE minutes.** They are a POST-SOLVE display layout only — never a solver constraint. `AVAILABLE_MINS` (the OEE-haircut capacity) governs how much work fits in a slot; `WORKING_MINS` is only the wall-clock canvas the display offsets are drawn on. See **Time-Mapping Strategy (Model B)** below.
+**start_offset_min / end_offset_min are REAL minutes into the shift (0 … WORKING_MINS of that shift), NOT productive/OEE minutes.** They are a POST-SOLVE display layout only — never a solver constraint. `AVAILABLE_MINS` (the OEE-haircut capacity) governs how much work fits in a slot; `WORKING_MINS` is only the wall-clock canvas the display offsets are drawn on. See **Time-Mapping Strategy (Model C)** below.
 
 Never apply any unit conversion. All values arrive as minutes from Oracle.
 
@@ -203,11 +203,19 @@ Runtime parameters editable via UI. Stored as a JSON file at `backend/config.jso
   "risk_safe_threshold_days": 5,
   "engine2_time_limit_seconds": 10,
   "scheduling_horizon_safety_factor": 2,
-  "scheduling_horizon_buffer_days": 7
+  "scheduling_horizon_buffer_days": 7,
+  "dev_max_orders": 0,
+  "solver_workers": 0,
+  "solver_time_limit_seconds": 300,
+  "setup_penalty_weight": 0.05
 }
 ```
 
 - `scheduling_horizon_safety_factor` / `scheduling_horizon_buffer_days` size the scheduling horizon (see **Horizon derivation** in the Time-Mapping Strategy). They guarantee the horizon is long enough that every task is placeable (an infeasible-by-deadline order still gets scheduled — just tardy — rather than making the whole model infeasible).
+- `dev_max_orders` — dev knob: limit scheduling to the top-N most urgent orders for fast iteration. **0 = full dataset (production).**
+- `solver_workers` — CP-SAT parallel search workers. **0 = use ALL CPU cores** (the engine sets `num_workers = os.cpu_count()`); set a positive number only to cap it.
+- `solver_time_limit_seconds` — Engine 1 time budget. Because a greedy fallback guarantees a schedule, this is a *quality* budget (more time → closer to optimal), not a correctness requirement. The run never fails if it expires.
+- `setup_penalty_weight` — mild objective cost per setup event; encourages batching same valve sizes together (utilisation) without ever delaying a delivery. 0 disables it.
 
 FastAPI exposes `GET /config` and `PUT /config` to read and update this file.
 The UI's Machine Availability & Settings view provides a settings panel to change `batch_bonus_months` (and other params) without touching any Oracle table.
@@ -228,9 +236,17 @@ Execute in this order before building the CP-SAT model:
 6. **Normalize shifts:** `SHIFT = SHIFT.str.lower()` in both machine views
 7. **Resolve capacity:** Call `resolve_capacity()` for each scheduling date to produce capacity_resolved
 
-### Time-Mapping Strategy — Model B (global slot index + capacity buckets)
+### Time-Mapping Strategy — Model C (global slot index + capacity buckets, flexible routing)
 
 Engine 1 models time as **discrete `(date, shift)` slots**, not a continuous minute clock. This is the foundation every constraint builds on. It replaces the earlier "per-machine absolute-minute axis" idea, which broke precedence and tardiness (those are cross-machine, but a per-machine compressed minute axis drifts apart between machines with different AVAILABLE_MINS).
+
+> **Model C vs. the retired Model B.** Model B assigned each batch to ONE machine
+> (`AddExactlyOne(assign[t,m])`) and forced every open slot between the batch's start and end to
+> be occupied (a circular contiguity reification). When that one machine hit a closed slot the
+> batch was trapped → INFEASIBLE even at ~5 % utilisation. **Model C deletes both `assign` and the
+> contiguity constraint.** Pieces are allocated as quantities into `(machine, slot)` buckets on
+> ANY capable machine; setup economics (not a hard lock) keep a batch together, and a greedy
+> fallback guarantees a schedule. This is simpler, correct, and never gets stuck.
 
 **Slot = one `(date, shift)` pair.** Shifts are ordered `SHIFT_ORDER = [first, second, third]`. Every horizon date carries all three shifts. A shift that is closed (holiday, festival, breakdown, maintenance) is represented by `AVAILABLE_MINS = 0` for that machine+shift+date in machine_daily — the slot still exists in the lattice, it just holds no work. The slot lattice is never edited to remove dates or shifts.
 
@@ -278,12 +294,15 @@ cap[m, k] = AVAILABLE_MINS for machine m in the shift & date of slot k
 
 **5. Closed slots (AVAILABLE_MINS = 0)**
 - Stay in the lattice so the date/shift mapping remains uniform.
-- `cap = 0` forces all `qty` in that (machine, slot) to 0 (Hard Rule 7).
-- Batch overflow steps OVER them to the next open slot on the same machine (Hard Rule 4):
+- A closed `(machine, slot)` has NO variables at all — nothing can be placed there (Hard Rule 7).
+- Overflow auto-routes around closed slots to the next open `(machine, slot)` (Hard Rule 4):
 ```
-next_open(m, k) = smallest k' > k with cap[m, k'] > 0     # closed slots skipped
+next_open(m, k) = smallest k' > k with cap[m, k'] > 0     # closed slots skipped (same machine)
 ```
-A task occupies EXACTLY the OPEN slots of its assigned machine between its `start_slot` and `end_slot` (inclusive); closed slots inside that range are transparently skipped, with no gaps of idle open slots — this is the contiguity guarantee.
+Pieces prefer the same machine's next open slot (setup carries over = free) but move to another
+capable machine when this one is closed/full. There is NO contiguity requirement in Model C —
+a task's occupied slots need not be adjacent; setup economics, not a hard constraint, keep a
+batch together.
 
 **6. Integer scaling (CP-SAT is integer-only; AVAILABLE_MINS is fractional, e.g. 365.5)**
 All minute quantities are scaled to integers by fixed factors before entering the model; piece quantities stay unscaled integers:
@@ -307,16 +326,52 @@ horizon_dates = [run_date + i days  for i in range(horizon_days)]
 ```
 Consecutive calendar days from the run date. Closures within the horizon come from machine_daily as `cap = 0` slots — never by removing dates.
 
-### Hard Rules (enforced by CP-SAT model)
+### Guiding principle — PRODUCTION SHOULD NEVER STOP
+The single overriding design rule (from the plant owner): **work must never get stuck
+waiting on a specific machine.** Maximum machine AND manpower utilisation is a must.
+Every constraint below is subordinate to this: if the "preferred" choice would idle a
+batch, the batch flows to whatever capable machine is open next. Setup time is always a
+real cost when a *new valve size* (ITEM_CATEGORY) joins a machine — it shapes the choice,
+it never blocks production.
+
+### Hard Rules (enforced by CP-SAT model — Model C)
 1. Operations scheduled in strictly ascending OPERATION_NO order (precedence via slot index)
 2. Each scheduling unit is one `(PRODUCTION_ORDER, OPERATION_NO)` pair — quantity = balance_qty
-3. A batch stays on ONE assigned machine throughout — no mid-batch machine switching
-4. If `balance_qty × CYCLE_TIME` exceeds `AVAILABLE_MINS` in a slot, the remainder schedules on the **same machine in the next immediate OPEN shift** (`next_open(m, k)` — closed slots are skipped), spanning arbitrarily many shifts/days until the batch completes
-5. SETUP_TIME is only a factor during initial machine selection, never a reason to switch machines mid-batch; it is charged at **slot granularity** (see Setup logic below)
-6. Non-routed operations are transparent to the CP-SAT model: precedence connects the last schedulable Op_n directly to the next schedulable Op_n+k, skipping all unrouted operations in between
-7. If AVAILABLE_MINS = 0 for a machine+shift → no task assigned to that machine for that slot
+3. **Flexible per-slot routing (no single-machine lock):** a batch's pieces may be placed on
+   ANY capable machine (from routing_master) in ANY open slot. Splitting a batch across two
+   capable machines is allowed. There is NO `assign[t,m]` "one machine for the whole operation"
+   variable — that lock was the cause of spurious INFEASIBILITY and has been removed.
+4. **Auto-route / overflow:** if a batch does not fit in a slot, the remainder flows to the
+   next OPEN `(machine, slot)` — preferring the SAME machine (setup carries over, so it is
+   free) but moving to another capable machine when the current one is closed/full. A closed
+   slot (`AVAILABLE_MINS = 0`) simply has no variable, so pieces route around it automatically.
+   Production never waits for a down machine.
+5. **Setup is always a cost on a new size:** SETUP_TIME is charged whenever an ITEM_CATEGORY
+   (valve size) newly appears on a machine in a slot — this covers both "a new order/size
+   joins the machine" and "the batch switched machines". It is WAIVED only when the same size
+   carried over from that machine's previous OPEN slot (so continuing across a shift boundary,
+   e.g. shift 3 → shift 1 next day, on the same machine and same size is free). Charged at slot
+   granularity inside the capacity bucket, and additionally penalised (mildly) in the objective
+   so the solver batches same-size work together to maximise utilisation.
+6. Non-routed operations are transparent to the CP-SAT model: precedence connects the last
+   schedulable Op_n directly to the next schedulable Op_n+k, skipping unrouted ops in between.
+7. If AVAILABLE_MINS = 0 for a machine+shift → that `(machine, slot)` has no variables; no work
+   is placed there and pieces route to the next open slot.
 
-**No-overlap note (Model B):** there is no continuous timeline to overlap on. A machine is never over-committed because the per-slot capacity constraint (`Σ work + setup ≤ AVAILABLE_MINS`) already caps total load in each `(machine, slot)` bucket. The old `AddNoOverlap` is therefore subsumed by the capacity constraint — it is not a separate constraint in Model B.
+**Preference vs. feasibility (Scenario 3 rule):** MACHINE_PRIORITY (1 = most preferred) is only
+a *tiny objective tiebreaker*. The solver keeps a batch on the priority-1 machine only while
+doing so still meets the deadline; the moment waiting for it would cause tardiness, the batch
+goes to an earlier-available capable machine instead — even a lower-priority one — because
+production must not stop or slip for a mere preference.
+
+**No-overlap note:** there is no continuous timeline to overlap on. A machine is never
+over-committed because the per-slot capacity constraint (`Σ work + setup ≤ AVAILABLE_MINS`)
+already caps total load in each `(machine, slot)` bucket. `AddNoOverlap` is subsumed by it.
+
+**Guaranteed feasibility (greedy fallback):** an earliest-slot, carryover-aware greedy pass
+always produces a complete, valid schedule. It warm-starts CP-SAT (instant feasible point) and
+is returned verbatim if CP-SAT cannot improve on it within the time budget. `/schedule/generate`
+therefore ALWAYS returns a runnable plan — it never fails with INFEASIBLE/UNKNOWN on real data.
 
 ### urgency_weight formula
 ```
@@ -356,15 +411,22 @@ Safety stock orders (CDD = NULL): urgency_weight = 0 (always scheduled last, nev
 ```
 Minimize:
     Σ_i [ urgency_weight_i × max(0, completion_day_i − pdd_day_i) ]     ← primary: weighted tardiness
-  + Σ_j [ config.machine_priority_epsilon × (MACHINE_PRIORITY_j − 1) × is_assigned_j ]
-                                                                          ← secondary: machine priority tiebreaker
+  + Σ [ config.setup_penalty_weight × setup_charged[c,m,k] ]           ← secondary: batch same sizes
+  + Σ_j [ config.machine_priority_epsilon × (MACHINE_PRIORITY_j − 1) × used[t,m]_j ]
+                                                                          ← tertiary: machine priority tiebreaker
 ```
 
-The machine priority term uses epsilon = 0.001 (or `config.machine_priority_epsilon`).
-This weight is small enough that it never overrides the tardiness objective — it only resolves ties
-between machine candidates that have equal tardiness impact.
+Weight ordering (all scaled by URGENCY_SCALE = 1000):
+- **Tardiness** dominates — one tardy day costs `urgency_weight × 1000` (hundreds to thousands).
+- **setup_penalty_weight = 0.05** → ~50 units per avoidable setup: enough to make the solver batch
+  same-size work together (maximising machine utilisation) but far too small to ever delay a
+  delivery to save a setup. Set to 0 to disable. Setup is *also* charged as real minutes inside the
+  capacity bucket — this objective term only adds a mild "prefer fewer setups" nudge on top.
+- **machine_priority_epsilon = 0.001** → 1 unit per priority level on `used[t,m]` (a per-task,
+  per-machine "this machine was used" bool). Pure tiebreaker: prefer the priority-1 machine only
+  when it costs no tardiness. `used[t,m]` replaces Model B's `assign[t,m]`, which no longer exists.
 
-**Day resolution + integer scaling (Model B).** `completion_day` and `pdd_day` are DAY indices, not minutes:
+**Day resolution + integer scaling (Model C).** `completion_day` and `pdd_day` are DAY indices, not minutes:
 ```
 completion_day[order] = end_slot[last routable op] // 3      # slot index → day (3 shifts/day)
 pdd_day[order]        = (CDD − D[0]).days                    # days from horizon origin
@@ -372,68 +434,75 @@ pdd_day[order]        = (CDD − D[0]).days                    # days from horiz
 Because CP-SAT is integer-only, the objective is evaluated in scaled integers:
 ```
 urgency_s[order] = round(urgency_weight[order] × URGENCY_SCALE)      # URGENCY_SCALE = 1000
+setup_pen_s      = round(config.setup_penalty_weight × URGENCY_SCALE)      # 0.05 × 1000 = 50
 eps_s            = round(config.machine_priority_epsilon × URGENCY_SCALE)   # 0.001 × 1000 = 1
 
 Minimize:  Σ_order urgency_s[order] × tardiness_days[order]
-         + Σ_{t,m}  eps_s × (MACHINE_PRIORITY[t,m] − 1) × assign[t,m]
+         + Σ_{c,m,k} setup_pen_s × setup_charged[c,m,k]
+         + Σ_{t,m}  eps_s × (MACHINE_PRIORITY[t,m] − 1) × used[t,m]
 ```
 With `URGENCY_SCALE = 1000`, one tardy day costs at least a few hundred units while the priority
 tiebreaker costs 1 per priority level — so priority can only break ties among equal-tardiness solutions,
 never override tardiness.
 
-### CP-SAT model structure (engine1_scheduler.py) — Model B (quantity-in-slot)
+### CP-SAT model structure (engine1_scheduler.py) — Model C (flexible quantity-in-slot)
 
-Model B allocates integer **quantities into `(machine, slot)` buckets** rather than placing
-`OptionalIntervalVar`s on a minute clock. Every hard rule maps to a bucket/slot-index constraint.
+Model C allocates integer **quantities into `(machine, slot)` buckets**, on any capable machine.
+There is no `assign` lock and no contiguity constraint — the two most complex, buggy parts of
+Model B are simply gone. What remains is small and provably correct.
 
 ```
 Notation:
   t   = schedulable task = (PRODUCTION_ORDER, OPERATION_NO), quantity q_t = balance_qty
-  M_t = capable machines for t   (routing_master rows for t.OPERATION × t.ITEM_CATEGORY)
+  M_t = capable machines for t   (routing_master rows for t.TASK × t.ITEM_CATEGORY)
   K   = all slot indices in the horizon   (|horizon_dates| × 3)
-  c_t = t.ITEM_CATEGORY
+  c_t = t.ITEM_CATEGORY (valve size)
+  open_slots[m] = slots where cap_s[m,k] > 0  (closed slots get NO variables at all)
 
-Decision variables:
-  assign[t,m] ∈ {0,1}      one per m ∈ M_t            # machine chosen for the batch
-  qty[t,m,k]  ∈ [0, q_t]   integer                    # pieces of t done on m in slot k
-  occ[t,m,k]  ∈ {0,1}                                 # 1 iff qty[t,m,k] > 0
-  start_slot[t], end_slot[t] ∈ [0, |K|−1]  integer    # first / last occupied slot of t
+Decision variables (created only for capable m and OPEN slots k):
+  qty[t,m,k]  ∈ [0, q_t]   integer     # pieces of t done on m in slot k — ANY capable machine
+  occ[t,m,k]  ∈ {0,1}                   # 1 iff qty[t,m,k] > 0
+  occ_any[t,k]∈ {0,1}                   # OR over machines: t does any work in slot k
+  start_slot[t], end_slot[t] ∈ integer  # first / last occupied slot of t (for precedence)
 
-── Machine selection (Hard Rules 2, 3) ──
-  AddExactlyOne(assign[t,m] for m ∈ M_t)              # exactly one machine per batch
-  Σ_{m,k} qty[t,m,k] = q_t                            # every piece scheduled
-  qty[t,m,k] ≤ q_t × assign[t,m]                      # work only on the chosen machine
-  qty[t,m,k] ≤ q_t × occ[t,m,k]                       # occ = 0 ⇒ qty = 0
-  occ[t,m,k] ≤ qty[t,m,k]                             # qty = 0 ⇒ occ = 0
+── Quantity accounting (Hard Rules 2, 3 — flexible routing) ──
+  Σ_{m,k} qty[t,m,k] = q_t             # every piece scheduled somewhere (never stops)
+  qty[t,m,k] ≤ q_t × occ[t,m,k]        # occ = 0 ⇒ qty = 0
+  occ[t,m,k] ≤ qty[t,m,k]              # qty = 0 ⇒ occ = 0
+  # NO assign[t,m], NO AddExactlyOne — pieces may split across any capable machines.
 
-── Capacity + setup per (machine, slot)  (Hard Rules 4, 7; setup at slot granularity) ──
-  Σ_t qty[t,m,k] × ct_s[t]  +  setup_s_total[m,k]  ≤  cap_s[m,k]
+── Capacity + setup per (machine, slot)  (Hard Rules 4, 5, 7; setup at slot granularity) ──
+  Σ_t qty[t,m,k] × ct_s[t]  +  Σ_c setup_s[c,m] × setup_charged[c,m,k]  ≤  cap_s[m,k]
       cat_present[c,m,k]   = OR of occ[t,m,k] over tasks t with c_t = c
       carried[c,m,k]       = cat_present[c,m,k] AND cat_present[c,m, prev_open(m,k)]
-      setup_charged[c,m,k] = cat_present[c,m,k] AND NOT carried[c,m,k]
-      setup_s_total[m,k]   = Σ_c setup_s[c,m] × setup_charged[c,m,k]
-  # cap_s = 0 (closed slot) ⇒ every qty in the bucket is forced to 0.
-  # One SETUP_TIME per distinct ITEM_CATEGORY a machine touches in a slot, WAIVED when the
-  # same category carried over from that machine's previous OPEN slot (prev_open).
+      setup_charged[c,m,k] = cat_present[c,m,k] − carried[c,m,k]        (∈ {0,1})
+  # Closed slot (cap_s = 0) has no variables ⇒ nothing placed there; pieces route elsewhere.
+  # One SETUP_TIME per distinct valve size a machine newly touches in a slot, WAIVED when the
+  # same size carried over from that machine's previous OPEN slot (prev_open) — so continuing on
+  # one machine across a shift boundary is free, switching machines / sizes costs a setup.
 
-── Occupancy window + contiguity (Hard Rules 3, 4 — one machine, skip closed slots) ──
-  occ_any[t,k] = OR_m occ[t,m,k]  (AddMaxEquality)    # true OR, 0/1; single machine ⇒ ≤1 active term
-  end_slot[t]   = MaxEquality( k · occ_any[t,k] )                      over k ∈ K
-  start_slot[t] = MinEquality( k · occ_any[t,k] + |K| · (1 − occ_any[t,k]) )
-  For the chosen machine m:
-      occ[t,m,k] = 1  ⟺  cap[m,k] > 0  AND  start_slot[t] ≤ k ≤ end_slot[t]
-  # ⇒ occupied slots are EXACTLY m's OPEN slots in [start_slot, end_slot]; closed slots skipped,
-  #   no idle-open gaps → contiguity + "next immediate open shift" overflow for free.
+── Occupancy window (for precedence only — NO contiguity forcing) ──
+  occ_any[t,k]  = MaxEquality( occ[t,m,k] over m )
+  end_slot[t]   = MaxEquality( k · occ_any[t,k] )                       over achievable k
+  start_slot[t] = MinEquality( k · occ_any[t,k] + BIG · (1 − occ_any[t,k]) )
+  # One-directional (derived FROM occ). No constraint forces occ back from start/end, so there
+  # is no circular reification — this is the key difference from Model B.
 
 ── Precedence, skipping non-routed ops (Hard Rules 1, 6) ──
   Within each order, sort schedulable ops ascending OPERATION_NO: o_1 < o_2 < ...
   For each consecutive pair:  start_slot[o_{i+1}] ≥ end_slot[o_i]
-  # Non-routed ops were dropped in preprocessing, so consecutive survivors chain directly.
 
 ── Objective (see Objective function section) ──
   completion_day[order] = end_slot[last routable op] // 3
-  Minimize Σ urgency_s × tardiness_days + Σ eps_s × (MACHINE_PRIORITY − 1) × assign
+  Minimize   Σ urgency_s × tardiness_days                         (primary)
+           + Σ setup_pen_s × setup_charged[c,m,k]                 (mild — batch same sizes)
+           + Σ eps_s × (MACHINE_PRIORITY − 1) × used[t,m]         (tiny — prefer priority-1)
 ```
+
+**Greedy warm-start + fallback.** Before solving, an earliest-slot, carryover-aware greedy pass
+places every piece (preferring earliest slot, then a slot already set up for the size, then lowest
+priority). It hints CP-SAT (instant feasible point) and is returned as-is if CP-SAT does not beat
+it in time — so a valid schedule is guaranteed.
 
 **Post-solve extraction → MCH_SCHEDULE_OUTPUT** (see Output): for each `(t, m, k)` with `qty > 0`,
 emit one row `(order, op, m, shift = S[k%3], date = D[k//3], balance_qty = qty)`, then lay the slot's
@@ -688,10 +757,13 @@ tov-mlo/
 - v1 scheduling scope: only the 7 operations present in routing_master.
 - Routing-extensible: new routing entries automatically extend CP-SAT scope without code changes.
 - Shift names: always normalize to lowercase ("first", "second", "third") on read.
-- Batch stays on one assigned machine throughout — no mid-batch machine switching.
-- Overflow: if batch doesn't fit in a slot, remainder goes to the same machine in the next immediate OPEN shift (closed slots skipped), spanning arbitrarily many days until complete.
-- SETUP_TIME: applies only when ITEM_CATEGORY changes on a machine. Same ITEM_CATEGORY = zero setup. Charged at slot granularity (waived when the category carried over from the machine's previous open slot).
-- **Time model = Model B**: discrete `(date, shift)` slots with a global, machine-independent slot index (`3 × day_pos + shift_pos`); capacity is a per-`(machine, slot)` scalar bucket = AVAILABLE_MINS. No continuous minute axis, no OptionalIntervalVar, no AddNoOverlap (capacity bucket subsumes it).
+- **PRODUCTION SHOULD NEVER STOP** — the overriding rule. A batch is never locked to one machine.
+- **Flexible per-slot routing:** a batch's pieces may run on ANY capable machine in ANY open slot, and may split across capable machines. If a machine is down/full, pieces auto-route to the next open `(machine, slot)`.
+- **Overflow / auto-route:** remainder prefers the SAME machine's next open shift (setup carries over = free), but moves to another capable machine when the current one is closed/full. Closed slots have no variables, so routing around a breakdown is automatic.
+- **SETUP_TIME is always a cost on a NEW valve size:** charged whenever an ITEM_CATEGORY newly appears on a machine in a slot (new order joining, or a machine switch). Same size back-to-back on the same machine (carried over from its previous OPEN slot) = zero setup. Charged at slot granularity inside the capacity bucket, and mildly penalised in the objective to encourage batching.
+- **MACHINE_PRIORITY is a soft tiebreaker only:** prefer priority-1 when it still meets the deadline; abandon it for an earlier-available capable machine the moment waiting would cause tardiness.
+- **Guaranteed schedule:** a greedy fallback always returns a complete valid plan; `/schedule/generate` never fails with INFEASIBLE/UNKNOWN on real data.
+- **Time model = Model C**: discrete `(date, shift)` slots with a global, machine-independent slot index (`3 × day_pos + shift_pos`); capacity is a per-`(machine, slot)` scalar bucket = AVAILABLE_MINS. No continuous minute axis, no OptionalIntervalVar, no `assign` lock, no contiguity constraint, no AddNoOverlap (capacity bucket subsumes it).
 - Scheduling is at DAY/SHIFT resolution; `start_offset_min/end_offset_min` are post-solve display only, in real minutes into the shift (0 … WORKING_MINS).
 - CP-SAT is integer-only: scale minutes by `TIME_SCALE = 100` and objective weights by `URGENCY_SCALE = 1000` (AVAILABLE_MINS can be fractional, e.g. 365.5).
 - Horizon: `horizon_dates` = consecutive days from run date, sized feasibility-first (see Horizon derivation); closures come from machine_daily (cap = 0), never by removing dates.

@@ -37,7 +37,12 @@
       "Bash(npm run *)",
       "Bash(\"./venv/Scripts/python.exe\" \"C:\\\\Users\\\\E1558411\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-E1558411-OneDrive---Emerson-Desktop-Machine-Loading-Project-Machine-Load-Prj\\\\8424d66a-00d2-45f3-9d3d-19131d82ce80\\\\scratchpad\\\\mock_server.py\")",
       "Bash(powershell -Command \"Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force\")",
-      "PowerShell($python311 = Get-Command python3.11 -ErrorAction SilentlyContinue; if \\($python311\\) { Write-Output \"Found: $\\($python311.Source\\)\" } else { Write-Output \"Not found as python3.11\" }; py -3.11 --version)"
+      "PowerShell($python311 = Get-Command python3.11 -ErrorAction SilentlyContinue; if \\($python311\\) { Write-Output \"Found: $\\($python311.Source\\)\" } else { Write-Output \"Not found as python3.11\" }; py -3.11 --version)",
+      "Bash(./venv/Scripts/python.exe _smoke_modelc.py)",
+      "Bash(timeout 90 ./venv/Scripts/python.exe test_engine1_e2e.py)",
+      "Bash(PYTHONIOENCODING=utf-8 timeout 90 ./venv/Scripts/python.exe test_engine1_e2e.py)",
+      "Bash(./venv/Scripts/python.exe -m py_compile engine1_scheduler.py)",
+      "Bash(xargs cat)"
     ]
   }
 }

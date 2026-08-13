@@ -1,0 +1,45 @@
+# TOV Scheduling Specification — Clarified Design
+
+## A. Manufacturing Reality
+1. Can pieces of a single operation split across two capable machines? (YES/NO)
+Answer: YES
+
+2. If an assigned machine breaks down mid-batch, what happens? (auto-route / wait / manual intervention)
+Answer: Auto Route should happen (PRODUCTION SHOULD WAIT FOR NO ONE)
+
+3. Can a batch move between machines, or is machine assignment permanent once the operation starts?
+Answer: See if there are extreme cases of machine breakdown or maintance issue., always change or split the batch to next prioritised or available machine (BUT ALWAYS THERE INVOLVES A COST OF SET UP TIME). But if it is just in between two shifts like shift 3 to shift 1 of next working day keep it in the same machine.
+
+
+## B. Scheduling Model  
+1. Should the optimizer assign a batch to a machine for the ENTIRE operation, or PER-SLOT?
+Answer: The optimizer should assign a batch to a machine PER-SLOT
+
+2. Can the optimizer override a machine assignment to avoid infeasibility?
+Answer: YES
+
+3. What about setup cost when moving batches between machines?
+Answer: Simple if we insert a valve of different size (different than the valve size of the ongoing process in that machine or even in case of assigning a new order for an operation in that machine) to a machine, if it is of different size we should always keep set up cost as factor in mind, for both assigning desicion as well as calculation of time.
+
+## C. Hard vs Soft Rules
+- Keep "batch stays on one machine" as HARD? (may cause infeasibility)
+- Or relax it to SOFT? (allow switches with penalty)
+Answer: Keep it SOFT., In case of maintance or break the production should not stop and the order should be assigned to the next available machine (By keeping in Mind the setup cost and the batching logic (if in some machine same size and same operation is carried out it should be prioritized (batch bonus is something to look at)). But if it is just shift (slot) change like Day 1 shift 3 to Day 2 shift., keep it in same machine
+ 
+ 
+## D. Test Scenario
+100 pieces, Operation VB02 (Cone Oversize).
+Capable machines: MACHINE_A, MACHINE_B.
+
+Scenario 1: MACHINE_A has full capacity
+  → Batch assigned to MACHINE_A ✓
+Answer: Scenario 1 correct!
+
+Scenario 2: MACHINE_A is broken, MACHINE_B has capacity
+  → Batch assigned to MACHINE_B? Or STUCK?
+Answer: Batch assigned to MACHINE_B
+
+Scenario 3: Both machines unavailable for 3 days, both reopen on Day 4
+  → Batch waits until Day 4? Or scheduled immediately to next available future slot?
+Answer: See in this case Scheduled immediately to next available future slot (Day 4 will be the next available slot for both machine A and B). But, if Machine A is prioritisedover machine B, but in case Machine A is not available for 5 Days but Machine be is available after the third day., the batch should be assigned to Machine B only even if Machine A is of Priority no 1 (BECAUSE PRODUCTION SHOULD NEVER STOP).
+REMEMBER: ALWAYS CONSIDER SETUP COST AND BATCHBONUS (similar size and similar operations should be batched together) AS MAIN ASPECTS.
