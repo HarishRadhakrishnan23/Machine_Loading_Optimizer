@@ -194,6 +194,55 @@ class Engine1Scheduler:
         self.model.Add(b >= sum(terms) - (len(terms) - 1))
         return b
 
+    # ── diagnostics ──────────────────────────────────────────────────────────
+    def diagnose_feasibility(self) -> None:
+        """
+        Print pre-solve diagnostics to identify why a model might be infeasible.
+        Checks: total work vs capacity, routing availability, precedence chains.
+        """
+        print("\n" + "="*70)
+        print("PRE-SOLVE DIAGNOSTICS")
+        print("="*70)
+
+        # Total work required (piece-minutes)
+        total_work_mins = sum(task.balance_qty * task.cycle_time for task in self.input.tasks)
+        print(f"\nWork load:")
+        print(f"  Total piece-minutes: {total_work_mins:,.0f} min ({total_work_mins/60/480:.1f} machine-days)")
+
+        # Available capacity (sum across all slots)
+        total_available = sum(self.cap_s.values()) / TIME_SCALE
+        print(f"  Total available: {total_available:,.0f} min ({total_available/60/480:.1f} machine-days)")
+        print(f"  Capacity ratio: {total_work_mins/total_available:.1%} (1.0 = perfectly tight)")
+
+        # Routing coverage
+        unroutable = [t for t in self.input.tasks if not self.candidates.get(
+            (t.production_order, t.operation_no), []
+        )]
+        if unroutable:
+            print(f"\n⚠️  {len(unroutable)} tasks have no capable machines:")
+            for t in unroutable[:5]:
+                print(f"     {t.production_order} Op{t.operation_no}: TASK={t.task}")
+        else:
+            print(f"\n✓ All {len(self.input.tasks)} tasks have routing coverage")
+
+        # Precedence depth (longest chain per order)
+        from collections import defaultdict
+        tasks_by_order = defaultdict(list)
+        for task in self.input.tasks:
+            tasks_by_order[task.production_order].append(task)
+
+        max_ops = max(len(tasks) for tasks in tasks_by_order.values()) if tasks_by_order else 0
+        print(f"\nOrders:")
+        print(f"  Unique production orders: {len(tasks_by_order)}")
+        print(f"  Max operations per order: {max_ops}")
+        print(f"  Total tasks: {len(self.input.tasks)}")
+
+        # Category diversity
+        categories = set(t.item_category for t in self.input.tasks)
+        print(f"\nCategories: {len(categories)}")
+
+        print("="*70 + "\n")
+
     # ── model construction ───────────────────────────────────────────────────
     def build_model(self) -> None:
         """Assemble the full CP-SAT model. Order matters: variables, then constraints."""
@@ -551,5 +600,6 @@ def run_engine1(
 ) -> SchedulerResult:
     """Build + solve in one call. Engine 2 reuses this with a time limit."""
     engine = Engine1Scheduler(scheduler_input)
+    engine.diagnose_feasibility()
     engine.build_model()
     return engine.solve(max_time_in_seconds=max_time_in_seconds)
