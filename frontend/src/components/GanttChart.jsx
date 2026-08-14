@@ -114,39 +114,44 @@ export default function GanttChart({ assignments }) {
                     return (
                       <td
                         key={key}
-                        className="border-l border-b border-slate-100 p-1 align-top"
-                        style={{ minWidth: 50 }}
+                        className="border-l border-b border-slate-100 p-1.5 align-top"
+                        style={{ minWidth: 90 }}
                       >
-                        <div className="relative h-9 rounded bg-slate-100 overflow-hidden flex">
+                        <div className="relative rounded bg-slate-50 overflow-hidden flex flex-col gap-1">
                           {tasks.length === 0 ? (
-                            <span className="w-full flex items-center justify-center text-slate-300 text-[10px]">
+                            <div className="h-12 flex items-center justify-center text-slate-300 text-[10px]">
                               idle
-                            </span>
+                            </div>
                           ) : (
-                            tasks.map((t, i) => {
-                              const widthPct = Math.max(
-                                6,
-                                ((t.end_offset_min - t.start_offset_min) / SHIFT_WORKING_MINS) * 100,
-                              )
-                              const color = colorFor(t.task || t.production_order)
-                              const cellKey = `${key}-${i}`
-                              return (
-                                <div
-                                  key={cellKey}
-                                  className="h-full flex items-center justify-center text-white text-[9px] font-semibold cursor-default transition-transform"
-                                  style={{
-                                    width: `${widthPct}%`,
-                                    backgroundColor: color,
-                                    opacity: hovered && hovered !== cellKey ? 0.35 : 1,
-                                  }}
-                                  onMouseEnter={() => setHovered(cellKey)}
-                                  onMouseLeave={() => setHovered(null)}
-                                  title={`${t.production_order} · Op ${t.operation_no} · ${t.task}\n${t.balance_qty} pcs · ${t.start_offset_min}–${t.end_offset_min} min`}
-                                >
-                                  {widthPct > 14 ? t.production_order.replace('ORD', '') : ''}
-                                </div>
-                              )
-                            })
+                            <div className="space-y-0.5 p-1">
+                              {tasks.map((t, i) => {
+                                const widthPct = Math.max(
+                                  12,
+                                  ((t.end_offset_min - t.start_offset_min) / SHIFT_WORKING_MINS) * 100,
+                                )
+                                const color = colorFor(t.task || t.production_order)
+                                const cellKey = `${key}-${i}`
+                                // Abbreviate: show task code if available, else last 6 chars of order
+                                const label = t.task ? t.task : t.production_order.slice(-6)
+                                return (
+                                  <div
+                                    key={cellKey}
+                                    className="rounded flex items-center justify-center text-slate-700 text-[10px] font-bold cursor-pointer hover:shadow-md transition-all"
+                                    style={{
+                                      backgroundColor: color,
+                                      height: '20px',
+                                      minWidth: '100%',
+                                      opacity: hovered && hovered !== cellKey ? 0.45 : 0.9,
+                                    }}
+                                    onMouseEnter={() => setHovered(cellKey)}
+                                    onMouseLeave={() => setHovered(null)}
+                                    title={`${t.production_order} · Op ${t.operation_no}\n${t.balance_qty} pcs · ${Math.round((t.end_offset_min - t.start_offset_min) / 60)}m`}
+                                  >
+                                    <span className="truncate px-1 text-white drop-shadow-sm">{label}</span>
+                                  </div>
+                                )
+                              })}
+                            </div>
                           )}
                         </div>
                         <div className="mt-0.5 flex items-center gap-1">
