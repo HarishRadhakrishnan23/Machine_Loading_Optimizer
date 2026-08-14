@@ -188,13 +188,15 @@ class Engine1Scheduler:
         self.tasks_by_order: dict[str, list[SchedulableTask]] = {}
 
         # Reverse index: which task keys have a (qty, occ) var at a given (machine, slot).
-        self.pids_by_machine_slot: dict[tuple[str, int], list[TaskKey]] = {}
+        # Use set (converted to list for iteration) to prevent duplicate pids.
+        self.pids_by_machine_slot: dict[tuple[str, int], set[TaskKey]] = {}
 
         for task in self.input.tasks:
             pid: TaskKey = (task.production_order, task.operation_no)
             self.task_of[pid] = task
             self.ct_s[pid] = round(task.cycle_time * TIME_SCALE)
-            self.candidates[pid] = [c.machine_name for c in task.candidates]
+            # Deduplicate candidate machines (routing may have duplicates)
+            self.candidates[pid] = list(dict.fromkeys(c.machine_name for c in task.candidates))
             self.tasks_by_order.setdefault(task.production_order, []).append(task)
 
             for c in task.candidates:
@@ -275,7 +277,7 @@ class Engine1Scheduler:
                     self.occ[(pid, m, k)] = ov
                     model.Add(qv <= q_t * ov)  # occ = 0 ⇒ qty = 0
                     model.Add(ov <= qv)        # qty = 0 ⇒ occ = 0
-                    self.pids_by_machine_slot.setdefault((m, k), []).append(pid)
+                    self.pids_by_machine_slot.setdefault((m, k), set()).add(pid)
 
             # Every piece of the batch is scheduled somewhere (production never stops).
             model.Add(
@@ -356,7 +358,7 @@ class Engine1Scheduler:
 
                 work_terms = [
                     self.qty[(pid, m, k)] * self.ct_s[pid]
-                    for pid in self.pids_by_machine_slot.get((m, k), [])
+                    for pid in self.pids_by_machine_slot.get((m, k), set())
                 ]
                 model.Add(sum(work_terms) + sum(setup_terms) <= self.cap_s[(m, k)])
 
@@ -646,7 +648,7 @@ class Engine1Scheduler:
         cat_present: dict[tuple[str, int], set[str]] = defaultdict(set)
         for m, k_list in self.open_slots.items():
             for k in k_list:
-                for pid in self.pids_by_machine_slot.get((m, k), []):
+                for pid in self.pids_by_machine_slot.get((m, k), set()):
                     if get_qty(pid, m, k) > 0:
                         cat_present[(m, k)].add(self.task_of[pid].item_category)
 
@@ -654,7 +656,7 @@ class Engine1Scheduler:
         for m, k_list in self.open_slots.items():
             for k in k_list:
                 pids_here = [
-                    pid for pid in self.pids_by_machine_slot.get((m, k), [])
+                    pid for pid in self.pids_by_machine_slot.get((m, k), set())
                     if get_qty(pid, m, k) > 0
                 ]
                 if not pids_here:

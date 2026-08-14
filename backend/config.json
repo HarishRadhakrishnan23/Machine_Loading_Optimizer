@@ -9,7 +9,7 @@
   "scheduling_horizon_safety_factor": 2,
   "scheduling_horizon_buffer_days": 7,
   "dev_max_orders": 0,
-  "solver_workers": 2,
+  "solver_workers": 1,
   "solver_time_limit_seconds": 300,
   "setup_penalty_weight": 0.05
 }
