@@ -97,7 +97,7 @@ def schedule_all_orders(
 
     # Step 4: Persist results
     if result.is_success:
-        print(f"[4/4] Writing MCH_SCHEDULE_OUTPUT ({len(result.assignments)} rows)...", end=" ")
+        print(f"[4/4] Clearing old schedule and writing MCH_SCHEDULE_OUTPUT ({len(result.assignments)} rows)...", end=" ")
         _persist_schedule_output(result.assignments, result.run_id)
         print(f"✓")
         print(f"\n{'='*70}")
@@ -119,11 +119,26 @@ def schedule_all_orders(
 def _persist_schedule_output(assignments: list[ScheduleOutputRow], run_id: str) -> None:
     """
     Write ScheduleOutputRow list to MCH_SCHEDULE_OUTPUT.
+    Clears all old schedule rows first to prevent accumulation.
 
     Args:
         assignments: list of ScheduleOutputRow (from engine1_scheduler.py).
         run_id: unique identifier for this scheduling run (e.g., UUID hex).
     """
+    import oracledb
+    import os
+
+    # Delete all old schedule data first
+    con = oracledb.connect(
+        user=os.getenv("ORACLE_USER"),
+        password=os.getenv("ORACLE_PASSWORD"),
+        dsn=os.getenv("ORACLE_DSN")
+    )
+    cur = con.cursor()
+    cur.execute("DELETE FROM MCH_SCHEDULE_OUTPUT")
+    con.commit()
+    con.close()
+
     # Convert Pydantic model to dict for db.write_schedule_output
     rows_dicts = [
         {
