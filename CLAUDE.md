@@ -337,10 +337,13 @@ it never blocks production.
 ### Hard Rules (enforced by CP-SAT model — Model C)
 1. Operations scheduled in strictly ascending OPERATION_NO order (precedence via slot index)
 2. Each scheduling unit is one `(PRODUCTION_ORDER, OPERATION_NO)` pair — quantity = balance_qty
-3. **Flexible per-slot routing (no single-machine lock):** a batch's pieces may be placed on
-   ANY capable machine (from routing_master) in ANY open slot. Splitting a batch across two
-   capable machines is allowed. There is NO `assign[t,m]` "one machine for the whole operation"
-   variable — that lock was the cause of spurious INFEASIBILITY and has been removed.
+3. **Flexible per-slot routing (no single-machine lock):** a task's pieces may be placed on
+   ANY capable machine (from routing_master) in ANY open slot. There is NO `assign[t,m]`
+   "one machine for the whole operation" variable — that lock was the cause of spurious
+   INFEASIBILITY and has been removed. Splitting across machines is still possible when
+   capacity/deadline genuinely requires it, but see **Batch-Aware Scheduling** below — orders
+   sharing the same valve SIZE~CLASS~DESIGN are additionally constrained to consolidate onto
+   ONE common machine per operation, so splitting is now the exception, not the default.
 4. **Auto-route / overflow:** if a batch does not fit in a slot, the remainder flows to the
    next OPEN `(machine, slot)` — preferring the SAME machine (setup carries over, so it is
    free) but moving to another capable machine when the current one is closed/full. A closed
@@ -372,6 +375,66 @@ already caps total load in each `(machine, slot)` bucket. `AddNoOverlap` is subs
 always produces a complete, valid schedule. It warm-starts CP-SAT (instant feasible point) and
 is returned verbatim if CP-SAT cannot improve on it within the time budget. `/schedule/generate`
 therefore ALWAYS returns a runnable plan — it never fails with INFEASIBLE/UNKNOWN on real data.
+
+### Batch-Aware Scheduling — orders queued together to save setups
+
+**Why this exists:** a production planning engineer clubs orders of similar valves before their
+first operation and keeps that batch together through every operation that follows, so the
+machine pays ONE setup for the whole group instead of one setup per order. Model C's original
+per-piece flexible routing (Hard Rule 3) had no concept of this — it could freely fragment a
+single order's pieces, let alone a batch's, across every capable machine, which is not how the
+shop floor actually runs.
+
+**Batch key — `SIZE_INCH~CLASS~DESIGN` (excludes MOC).** Two production orders belong to the same
+batch at a given operation when their valve SIZE, CLASS, and DESIGN match — MOC does NOT need to
+match (a Carbon Steel and a Stainless Steel order of the same size/class/design still batch
+together). Grouping is evaluated independently **per operation** (per TASK code, e.g. VB02): a
+batch formed at Op10 is free to split apart at Op20 if the orders' downstream routing diverges —
+there is no requirement that a batch stays intact for an order's whole routing, only that *at any
+given operation*, same-batch orders consolidate onto one machine for that operation.
+
+> **Critical implementation detail — where `batch_key` must come from.** `batch_key` is computed
+> directly from the raw, typed WIP columns (`SIZE_INCH`, `CLASS`, `DESIGN`) — see
+> `preprocess.py::build_scheduler_input` and `batch_grouping.py::compute_batch_key`. It must
+> **never** be derived by string-splitting `ITEM_CATEGORY` (`SIZE~CLASS~DESIGN~MOC`). When DESIGN
+> is blank for a row, the ERP's concatenated `ITEM_CATEGORY` string silently drops that segment,
+> shifting MOC into the position DESIGN would have occupied — a real bug that once merged orders
+> with genuinely different DESIGN values into the same nominal batch, causing spurious machine
+> splits with a completely different (and misleading) explanation each time it was investigated.
+> `SchedulableTask.batch_key` (models.py) exists specifically so callers never re-derive this from
+> `item_category`.
+
+**Safety stock rides along, flagged separately.** Orders with `CDD = NULL` participate in
+batching exactly like any other order — excluding them would defeat the setup-sharing purpose.
+Each output row carries `IS_SAFETY_STOCK` (`Y`/`N`) so the UI can render them in a distinct
+colour; a planner can then manually decide whether to include a flagged batch member for a quick
+operation (e.g. Cone Oversize) or exclude it for a slower one (e.g. Stem Boring / Cone Finishing).
+
+**Enforcement — CP-SAT (hard constraint) + greedy (sticky machine), both paths, because greedy is
+often the one actually used:**
+- CP-SAT (`Engine1Scheduler._add_batch_continuity`): for every batch group with more than one
+  order, compute the **intersection** of all members' candidate machines. If non-empty, add one
+  boolean `chosen[m]` per machine in that intersection with `Σ chosen == 1`, and constrain every
+  member's `occ[pid, m, k] ≤ chosen[m]` for `m` in the intersection. If the intersection is empty
+  (routing genuinely diverges — see escape hatch below), no constraint is added for that group.
+- Greedy (`Engine1Scheduler.greedy_schedule`): the first order processed within a batch group
+  picks a machine normally; every other member is then forced onto that same machine (with
+  overflow onto further open slots on it, per Hard Rule 4). If that machine genuinely has no
+  room left for a later member (a real capacity/timing conflict), that member falls back to a
+  free search for its own remainder — logged as a "batch override" — rather than blocking
+  production to preserve the grouping. Orders are also walked in **batch-clustered order**
+  (same-batch orders adjacent in the urgency-sorted queue, not scattered) to minimise the chance
+  of an unrelated order consuming the group's chosen machine in between placements.
+
+**Escape hatch — divergent routing.** MOC is excluded from the batch key, but `MCH_MACHINE_PRIORITY`
+does key on MOC, so two orders with identical SIZE/CLASS/DESIGN but different MOC can legitimately
+have non-overlapping candidate machine sets. When that happens, batching is simply not enforced for
+that specific group (CP-SAT skips the constraint; greedy's override path fires immediately) — this
+is a real routing difference, not a bug, and production is never blocked over a batching preference.
+
+**No historical retention / no archiving.** A prior design archived `MCH_SCHEDULE_OUTPUT` and
+`MCH_SIM_RESULTS` rows older than 90 days into `_ARCHIVE` tables. This was removed: each
+`/schedule/generate` run now deletes all rows and writes fresh (see Write tables section below).
 
 ### urgency_weight formula
 ```
@@ -557,6 +620,8 @@ CREATE TABLE MCH_SCHEDULE_OUTPUT (
     BALANCE_QTY       NUMBER        NOT NULL,   -- pieces placed in THIS slot
     START_OFFSET_MIN  NUMBER        NOT NULL,   -- display: minutes into shift (0 … WORKING_MINS)
     END_OFFSET_MIN    NUMBER        NOT NULL,   -- display: minutes into shift
+    BATCH_KEY         VARCHAR2(100),            -- SIZE_INCH~CLASS~DESIGN (excl. MOC) — see Batch-Aware Scheduling
+    IS_SAFETY_STOCK   CHAR(1)       DEFAULT 'N',-- Y when the order's CDD is NULL — UI flags these distinctly
     GENERATED_AT      TIMESTAMP     NOT NULL,
     CONSTRAINT PK_MCH_SCHEDULE_OUTPUT
         PRIMARY KEY (RUN_ID, PRODUCTION_ORDER, OPERATION_NO, WORK_CENTER, SHIFT, SCHEDULED_DATE)
@@ -564,8 +629,14 @@ CREATE TABLE MCH_SCHEDULE_OUTPUT (
 ```
 Model mapping (models.py `ScheduleOutputRow`): production_order→PRODUCTION_ORDER, operation_no→OPERATION_NO,
 machine_name→WORK_CENTER, shift→SHIFT, scheduled_date→SCHEDULED_DATE, balance_qty→BALANCE_QTY,
-start_offset_min→START_OFFSET_MIN, end_offset_min→END_OFFSET_MIN, run_id→RUN_ID, generated_at→GENERATED_AT.
+start_offset_min→START_OFFSET_MIN, end_offset_min→END_OFFSET_MIN, batch_key→BATCH_KEY,
+is_safety_stock→IS_SAFETY_STOCK ('Y'/'N' in Oracle, bool in Pydantic), run_id→RUN_ID, generated_at→GENERATED_AT.
 (TASK is an extra display-only column not currently in the Pydantic model — populate it or leave NULL.)
+
+**No historical retention.** Each `/schedule/generate` run DELETEs all existing rows from
+`MCH_SCHEDULE_OUTPUT` before writing the new schedule (see `pipeline.py::_persist_schedule_output`).
+There is no archive table for this data — a prior design that moved rows older than 90 days to
+`MCH_SCHEDULE_OUTPUT_ARCHIVE` was removed; the table always holds exactly one run's worth of rows.
 
 ### sim_results → MCH_SIM_RESULTS (Engine 2 writes)
 ```sql
@@ -757,8 +828,18 @@ tov-mlo/
 - v1 scheduling scope: only the 7 operations present in routing_master.
 - Routing-extensible: new routing entries automatically extend CP-SAT scope without code changes.
 - Shift names: always normalize to lowercase ("first", "second", "third") on read.
-- **PRODUCTION SHOULD NEVER STOP** — the overriding rule. A batch is never locked to one machine.
-- **Flexible per-slot routing:** a batch's pieces may run on ANY capable machine in ANY open slot, and may split across capable machines. If a machine is down/full, pieces auto-route to the next open `(machine, slot)`.
+- **PRODUCTION SHOULD NEVER STOP** — the overriding rule. A task is never locked to one machine
+  by the base model; batch continuity (below) adds a preference for ONE machine per batch, but
+  always with an escape hatch back to free routing rather than ever blocking production.
+- **Flexible per-slot routing (base capability):** a task's pieces may run on ANY capable machine
+  in ANY open slot. If a machine is down/full, pieces auto-route to the next open `(machine, slot)`.
+- **Batch-Aware Scheduling (layered on top):** orders sharing `SIZE_INCH~CLASS~DESIGN` (excludes
+  MOC) consolidate onto ONE common machine per operation — enforced as a hard CP-SAT constraint
+  AND in the greedy fallback (the path actually used when CP-SAT times out on real data). Batches
+  may diverge after any single operation; safety stock orders (CDD=NULL) batch normally but are
+  flagged via `IS_SAFETY_STOCK` for the UI. See **Batch-Aware Scheduling** section above.
+  `batch_key` MUST come from the typed SIZE_INCH/CLASS/DESIGN columns, never parsed from the
+  concatenated `ITEM_CATEGORY` string (blank DESIGN silently shifts MOC into that position).
 - **Overflow / auto-route:** remainder prefers the SAME machine's next open shift (setup carries over = free), but moves to another capable machine when the current one is closed/full. Closed slots have no variables, so routing around a breakdown is automatic.
 - **SETUP_TIME is always a cost on a NEW valve size:** charged whenever an ITEM_CATEGORY newly appears on a machine in a slot (new order joining, or a machine switch). Same size back-to-back on the same machine (carried over from its previous OPEN slot) = zero setup. Charged at slot granularity inside the capacity bucket, and mildly penalised in the objective to encourage batching.
 - **MACHINE_PRIORITY is a soft tiebreaker only:** prefer priority-1 when it still meets the deadline; abandon it for an earlier-available capable machine the moment waiting would cause tardiness.
@@ -775,6 +856,9 @@ tov-mlo/
 - Maximum utilization: guiding principle, not a hard constraint.
 - capacity_resolved: computed in memory only, never stored to any table.
 - Schedule regeneration: manual trigger only in v1. No background timer.
+- **No historical retention:** each `/schedule/generate` run DELETEs all `MCH_SCHEDULE_OUTPUT` rows
+  before writing the fresh schedule. There is no archive table — a prior 90-day archiving design
+  (`MCH_SCHEDULE_OUTPUT_ARCHIVE` / `MCH_SIM_RESULTS_ARCHIVE`) was removed entirely.
 - Writes: only MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2) are written by this application.
 - All four ERP sources — MCH_WIP, MCH_MACHINE_AVAILABILITY, MCH_MACHINE_AVAILABILITY_BY_DATE, MCH_MACHINE_PRIORITY — are read-only views (machine_daily is NOT written; there is no UI edit path).
 - ERP column names: machine identifier = WORK_CENTER (not machine_name); shift = SHIFT; machine_daily date = WORKING_DATE; MCH_WIP op-sequence number = OPERATION (this doc's "OPERATION_NO"); op/task code = TASK (this doc's old "OPERATION"). No DOWNTIME column — AVAILABLE_MINS comes straight from the views.

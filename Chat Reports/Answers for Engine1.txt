@@ -1,0 +1,82 @@
+Clarification Questions:
+1. Batching Key Definition
+
+In your example:
+
+XX0000001: 3~300~Carbon Steel~DFS (5 qty)
+XX0000002: 3~300~Stainless Steel~DFS (10 qty) ← Different MOC
+
+You say they're batched together because of "similar SIZE, CLASS, DESIGN". So the batching key is SIZE~CLASS~DESIGN (excluding MOC), correct?
+
+Question: Should the batching key be:
+
+SIZE~CLASS~DESIGN (what you described), or
+SIZE~CLASS~DESIGN~MOC (the full ITEM_CATEGORY)?
+
+Answer: Yes the batching key should be SIZE~CLASS~DESIGN (excluding MOC).
+
+2. When Are Batches Created?
+
+Should batching happen:
+
+Option A: In preprocessing (before Engine 1 runs) - group orders, then Engine 1 schedules batches as units
+Option B: During Engine 1 solving - Engine 1 is aware of which orders can batch and enforces they stay together
+
+Answer: Option B: During Engine 1 solving - Engine 1 is aware of which orders can batch and enforces they stay together, Engine1(CPSAT) should batch the orders according to SIZE~CLASS~DESIGN
+
+3. Safety Stock Handling in Batches
+
+If an urgent order (CDD=2026-08-27) and a safety-stock order (CDD=NULL) have same SIZE~CLASS~DESIGN, should they:
+
+Option A: Batch together (safety stock rides along with urgent order)
+Option B: Keep separate (safety stock never batches with urgent orders)
+
+Answer: Option A: Batch together (safety stock rides along with urgent order). BUT FLAG THE SAFETY STOCK ORDER SEPARATELY (like differentiate it with a different colour like yellow or something). Just flag the safety stock and make it different so while working with manual operation., a production engineer will be able to decide whether to use it or not. Simple for less time consuming operations like Cone oversize (Op10) the operator will include it (safety stock) and for complex time requiring operations like stem boring or cone finish the operator will exclude it.
+
+4. Batch Precedence Logic
+
+If two orders in a batch diverge into different operations:
+
+XX0000001: Op10 → Op20 → Op90
+XX0000002: Op10 → Op30 → Op90 (same batch)
+
+At Op10, they're batched (same machine). But Op20 ≠ Op30. How do we handle this?
+
+Keep them on the same machine through Op20/Op30, then rejoin at Op90?
+Allow them to split after Op10?
+
+Answer: Yes allow them to split after Op10.
+
+5. Batch Size / Composition Rules
+
+Are there limits on:
+
+Max pieces per batch?
+Max number of orders per batch?
+Or just "group all orders with same SIZE~CLASS~DESIGN"?
+
+Answer: Group all orders with same SIZE~CLASS~DESIGN., but in that just flag the safety stock orders separately.
+
+Understanding Check
+
+Let me confirm I understand the core principle correctly:
+
+BEFORE (Current - WRONG):
+
+QS1000575 Op10 (10 pieces, 10~150~CS~DFS):
+  → 3 pcs on 2PMT14 (first available slot)
+  → 2 pcs on 2PMC17 (next available slot)
+  → 1 pc on 2PMC16 (next available)
+  → 4 pcs on 2PMT16 (next available)
+Result: 4 different machines = 3 setups wasted ✗
+
+AFTER (What You Want - RIGHT):
+
+QS1000575 Op10 (10 pieces, 10~150~CS~DFS) + other 10~150~CS~DFS orders = BATCH of 25 pieces:
+  → All 25 pcs on ONE capable machine (e.g., 2PMT14)
+  → Then Op20 on same machine or next, but batch stays together
+Result: 1 machine, 1 setup for the entire batch ✓
+
+Is this understanding correct?
+
+Answer: Yes, the understanding is correct.

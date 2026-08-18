@@ -42,7 +42,11 @@
       "Bash(timeout 90 ./venv/Scripts/python.exe test_engine1_e2e.py)",
       "Bash(PYTHONIOENCODING=utf-8 timeout 90 ./venv/Scripts/python.exe test_engine1_e2e.py)",
       "Bash(./venv/Scripts/python.exe -m py_compile engine1_scheduler.py)",
-      "Bash(xargs cat)"
+      "Bash(xargs cat)",
+      "Bash(bash -c 'source venv/Scripts/activate && python -c \" *)",
+      "Bash(break)",
+      "Bash(ps -W)",
+      "Bash(tasklist)"
     ]
   }
 }

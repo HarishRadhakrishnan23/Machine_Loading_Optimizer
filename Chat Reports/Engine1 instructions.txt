@@ -1,0 +1,45 @@
+The Root Cause: Model C is TOO Flexible
+
+The current CP-SAT model allows pieces to be allocated to ANY capable machine in ANY slot with NO constraint to keep a batch together. This causes:
+
+QS1000575 Op10 (10 pieces total):
+  → 3 pieces on 2PMT14
+  → 2 pieces on 2PMC17
+  → 1 piece on 2PMC16
+  → 4 pieces on 2PMT16
+
+Why this happens:
+
+Slot 1 on 2PMT14 has capacity for 3 pieces → place 3
+Slot 1 on 2PMC17 has capacity for 2 pieces → place 2
+Slot 1 on 2PMC16 has capacity for 1 piece → place 1
+Slot 1 on 2PMT16 has capacity for 4 pieces → place 4
+Total: 10 pieces across 4 machines ✗ WRONG
+
+What SHOULD happen:
+
+Find ONE capable machine with enough capacity for all 10 pieces
+Schedule all 10 on that machine → SETUP ONCE, then continuous work
+Save setup time cost, keep batch together ✓ CORRECT
+
+See this logic is correct but along with this I will tell you how the exact shop floor plan (assignment) is happening:
+Lets take this imaginary example that I am creating for better understanding:
+
+There are five Production Orders :
+1. XX0000001: 5 - Total Quantity of 3~300~Carbon Steel~DFS (Size~Class~MOC~Design)
+2. XX0000002: 10 - Total Quantity of 3~300~Stainless Steel~DFS (Size~Class~MOC~Design) - safety-stock (CDD = null)
+3. XX0000003: 5 - Total Quantity of 3~300~Carbon Steel~LUG (Size~Class~MOC~Design)
+4. XX0000004: 15 - Total Quantity of 6~150~Carbon Steel~LUG (Size~Class~MOC~Design)
+5. XX0000005: 8 - Total Quantity of 6~150~Stainless Steel~LUG (Size~Class~MOC~Design) - safety-stock (CDD = null)
+Ready for assignment.
+
+What My Production Planning Engineer does while planning has two important things to be followed:
+1. Production Planning Engineer will look for Production Orders with Similar "SIZE, CLASS AND DESIGN" to club together before the start of very first operation (Op10), in this case XX0000001 and XX0000002(Flag it as safety stock but assign it in the batch) because they have similar "SIZE, CLASS AND DESIGN". They club both these orders together and make a single batch of 15 Quantities (5 +10) to Op10 and consider this as a batch for every operation that follows Op10 in the pipeline (like Op20, Op30, etc.,). Always a BATCH stays together for every operation.
+2. Production Planning Engineer will not split any quantity of a particular Production order into different machines., That is the 5 quantities in XX0000001 or the 10 quantities of XX0000002 will not be split across machine in ideal case scenario.
+
+My conclusion to claude:
+I want you to do two things:
+1. BATCH should be of Similar "SIZE, CLASS AND DESIGN" going to an operation. The SIZE, CLASS, MOC (not required for batching), DESIGN are given as individual columns in MCH_WIP for your convenience of calculation. So consider that and make the initial grouping perfect so the rest of the planning is perfect.
+2. Understand this batch logic at initial stage and its importance in Engine1 accordingly and help me to update this logic in claude.md and respective files where the core logic should revolve around this concept.
+3. Flag safety-stock orders separately everywhere, while showing Gant Schedule Chart in UI., Flag Safety-Stock Orders separately and priority orders separately. So that it will be easier for Production engineers to manually remove those orders from pipeline in any operation if necessary.
+4. We have decided previously to save results less than 90 days in MCH_SCHEDULE_OUTPUT., and greater than 90 days in MCH_SCHEDULE_OUTPUT_ARCHIVE, BUT now I don't want to save historical data. When I run Engine1 again the next time, I want it to delete the previous data in MCH_SCHEDULE_OUTPUT and store the newly generated data of Engine1 in MCH_SCHEDULE_OUTPUT itself. No requirement of MCH_SCHEDULE_OUTPUT_ARCHIVE.

@@ -1,0 +1,52 @@
+Q1: Which Operations Need Batching?
+
+Should batching enforce ONE MACHINE constraint on:
+
+Only Op10 (Cone Oversize - quick operation, operators more likely to include safety stock)
+All Operations (Op10, Op20, Op30, etc. - full batch continuity)
+Operations 10-70 (stops before QA/Phosphating which are simple operations)
+
+My Recommendation: Start with all operations (most conservative) - if one operation has same batch on same machine, it's good for consistency.
+
+Answer: Start with all Operations (Op10, Op20, Op30, etc. - full batch continuity). 
+
+Q2: Batch Overflow Across Slots
+
+If a batch of 50 pieces needs one machine but one slot only has capacity for 30:
+
+Should overflow to NEXT SLOT on SAME machine (batch stays together across shifts/days)?
+Or must fit entirely in ONE slot (split batch if doesn't fit)?
+
+My Recommendation: Overflow to next slot on SAME machine (batch continuity across slots).
+
+Answer: Batch should overflow to NEXT SLOT on SAME machine (batch stays together across shifts/days because, it will reduce the setup cost to greater extent)
+
+Q3: MCH_SCHEDULE_OUTPUT Schema
+
+To flag safety stock and identify batches in UI, should we add:
+
+New column BATCH_KEY = SIZE~CLASS~DESIGN (to group rows in UI)
+New column IS_SAFETY_STOCK = TRUE/FALSE (to color-code in Gantt chart)
+
+My Recommendation: YES - both columns help UI flagging.
+
+Answer: YES add those two new columns in MCH_SCHEDULE_OUTPUT
+
+Q4: Data Archiving
+
+You said delete previous MCH_SCHEDULE_OUTPUT when Engine 1 runs. Should we also:
+
+Delete MCH_SCHEDULE_OUTPUT_ARCHIVE tables (no longer needed)?
+Delete the archiving logic entirely from the code?
+Implementation Scope
+
+Answer: YES, Delete MCH_SCHEDULE_OUTPUT_ARCHIVE tables and the archiving logic entirely from the code
+
+Once you confirm Q1-Q4, I will:
+
+Modify Engine 1 (_create_variables): Add batch grouping constraints
+Update MCH_SCHEDULE_OUTPUT schema: Add BATCH_KEY and IS_SAFETY_STOCK columns
+Modify _rows_from_assignment: Compute batch key for each row
+Update pipeline.py: Remove archiving logic (keep only DELETE)
+Update CLAUDE.md: Document batch-aware scheduling (new section)
+Create UI flagging logic: Mark safety stock with color in Gantt chart (later, but plan for it)
