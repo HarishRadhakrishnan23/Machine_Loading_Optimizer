@@ -166,7 +166,7 @@ def get_current_schedule():
                 """
                 SELECT RUN_ID, PRODUCTION_ORDER, OPERATION_NO, TASK, WORK_CENTER,
                        SHIFT, SCHEDULED_DATE, BALANCE_QTY, START_OFFSET_MIN, END_OFFSET_MIN,
-                       GENERATED_AT
+                       BATCH_KEY, IS_SAFETY_STOCK, GENERATED_AT
                 FROM MCH_SCHEDULE_OUTPUT
                 ORDER BY GENERATED_AT DESC, WORK_CENTER, SCHEDULED_DATE, START_OFFSET_MIN
                 FETCH FIRST 1000 ROWS ONLY
@@ -189,6 +189,8 @@ def get_current_schedule():
                 "balance_qty": int(row["BALANCE_QTY"]),
                 "start_offset_min": int(row["START_OFFSET_MIN"]),
                 "end_offset_min": int(row["END_OFFSET_MIN"]),
+                "batch_key": row["BATCH_KEY"],
+                "is_safety_stock": row["IS_SAFETY_STOCK"] == "Y",
             }
             for _, row in df.iterrows()
         ]

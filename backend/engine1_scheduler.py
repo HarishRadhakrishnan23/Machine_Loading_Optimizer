@@ -191,6 +191,15 @@ class Engine1Scheduler:
         # Use set (converted to list for iteration) to prevent duplicate pids.
         self.pids_by_machine_slot: dict[tuple[str, int], set[TaskKey]] = {}
 
+        # Batch grouping: orders with the same SIZE~CLASS~DESIGN (excluding MOC) going
+        # through the SAME operation (TASK code) are queued together on one machine to
+        # minimise setups — mirrors how the production planning engineer clubs orders
+        # before Op10 and every operation thereafter. Safety-stock orders (CDD=NULL)
+        # are included in their batch like any other order (flagged separately downstream).
+        self.batch_key_of: dict[TaskKey, str] = {}
+        self.batch_group_of: dict[TaskKey, tuple[str, str]] = {}
+        self.tasks_in_batch_group: dict[tuple[str, str], list[TaskKey]] = {}
+
         for task in self.input.tasks:
             pid: TaskKey = (task.production_order, task.operation_no)
             self.task_of[pid] = task
@@ -198,6 +207,15 @@ class Engine1Scheduler:
             # Deduplicate candidate machines (routing may have duplicates)
             self.candidates[pid] = list(dict.fromkeys(c.machine_name for c in task.candidates))
             self.tasks_by_order.setdefault(task.production_order, []).append(task)
+
+            # task.batch_key is computed straight from the typed SIZE_INCH/CLASS/DESIGN
+            # WIP columns in preprocess.py — NOT parsed from item_category, whose segment
+            # order shifts when DESIGN is blank in the ERP data.
+            batch_key = task.batch_key
+            group_key = (batch_key, task.operation)
+            self.batch_key_of[pid] = batch_key
+            self.batch_group_of[pid] = group_key
+            self.tasks_in_batch_group.setdefault(group_key, []).append(pid)
 
             for c in task.candidates:
                 self.machine_priority[(pid, c.machine_name)] = c.machine_priority
@@ -246,6 +264,7 @@ class Engine1Scheduler:
     def build_model(self) -> None:
         """Assemble the full CP-SAT model. Order matters: variables, then constraints."""
         self._create_variables()
+        self._add_batch_continuity()
         self._add_capacity_and_setup()
         self._add_precedence()
         self._build_objective()
@@ -306,6 +325,49 @@ class Engine1Scheduler:
             )
             self.end_slot[pid] = end_v
             self.start_slot[pid] = start_v
+
+    def _add_batch_continuity(self) -> None:
+        """
+        Hard constraint: for each batch group — orders sharing SIZE~CLASS~DESIGN
+        (excluding MOC) at the SAME operation (TASK code) — all member tasks must
+        place every piece on ONE common machine. Overflow to further OPEN slots on
+        that same machine is unrestricted (batch continuity across shift/day
+        boundaries), matching how a production planning engineer queues similar
+        valves through an operation together to avoid repeated setups.
+
+        Only machines capable of EVERY task in the group are eligible. If the group
+        has no common machine (routing diverges — typically because MOC affects
+        candidate machines even though MOC is excluded from the batch key), no
+        constraint is added for that group: those tasks fall back to fully flexible
+        per-slot routing rather than blocking production over a batching preference.
+
+        A batch may split after this operation — grouping is evaluated independently
+        per (batch_key, TASK), not carried across an order's whole routing.
+        """
+        model = self.model
+        for group_key, pids in self.tasks_in_batch_group.items():
+            if len(pids) <= 1:
+                continue  # single order at this batch+operation — nothing to consolidate
+
+            # Common machines = intersection of every member task's candidate machines.
+            common = set(self.candidates[pids[0]])
+            for pid in pids[1:]:
+                common &= set(self.candidates[pid])
+            if not common:
+                continue  # divergent routing (e.g. MOC-specific machines) — stay flexible
+
+            common = sorted(common)
+            batch_key, task_code = group_key
+            tag = f"batch[{batch_key}|{task_code}]"
+
+            chosen = {m: model.NewBoolVar(f"{tag}|chosen|{m}") for m in common}
+            model.Add(sum(chosen.values()) == 1)
+
+            for pid in pids:
+                for m in common:
+                    for k in self.open_slots.get(m, []):
+                        if (pid, m, k) in self.occ:
+                            model.Add(self.occ[(pid, m, k)] <= chosen[m])
 
     def _add_capacity_and_setup(self) -> None:
         """
@@ -444,18 +506,29 @@ class Engine1Scheduler:
     # ── greedy warm-start / fallback (guarantees production never stops) ──────
     def greedy_schedule(self) -> dict[tuple[TaskKey, str, int], int]:
         """
-        Earliest-slot, carryover-aware greedy. Places every piece of every task on
-        a capable machine's open slot, preferring (in order): the EARLIEST slot,
-        then a slot where the size is already set up (setup = 0), then the lowest
-        MACHINE_PRIORITY. Respects precedence (an op cannot start before the
-        previous op of its order has finished). Always returns a full assignment
-        as long as total open capacity ≥ total work (the horizon guarantees this).
+        Earliest-slot, carryover-aware, BATCH-aware greedy. Places every piece of
+        every task on a capable machine's open slot, preferring (in order): the
+        EARLIEST slot, then a slot where the size is already set up (setup = 0),
+        then the lowest MACHINE_PRIORITY. Respects precedence (an op cannot start
+        before the previous op of its order has finished). Always returns a full
+        assignment as long as total open capacity ≥ total work (the horizon
+        guarantees this).
+
+        Batch continuity: the FIRST task processed within a batch group (same
+        SIZE~CLASS~DESIGN, same TASK code, across different orders — see
+        _index_tasks) picks a machine normally; every OTHER task in that group is
+        then FORCED onto that same machine (overflowing to further open slots on
+        it as needed), so the whole batch queues through one setup instead of
+        fragmenting across machines. If the forced machine genuinely has no room
+        left for a later member (precedence floor pushed it too late, or capacity
+        ran out), that member falls back to a free machine search for its
+        remainder — production is never blocked to preserve a batching preference.
 
         Returned dict: {(task_key, machine, slot) -> pieces}. Used as a CP-SAT hint
         AND as the fallback schedule if CP-SAT finds nothing better in time.
         """
         self.logger.info("\n" + "=" * 70)
-        self.logger.info("GREEDY WARM-START / FALLBACK PASS")
+        self.logger.info("GREEDY WARM-START / FALLBACK PASS (batch-aware)")
         self.logger.info("=" * 70)
 
         remaining = {(m, k): self.cap_s[(m, k)] for m, ks in self.open_slots.items() for k in ks}
@@ -463,10 +536,34 @@ class Engine1Scheduler:
         assign: dict[tuple[TaskKey, str, int], int] = defaultdict(int)
         failed_tasks: list[tuple[TaskKey, int, str]] = []  # (task_key, balance_qty, reason)
 
-        # Process orders most-urgent first; ops within an order ascending.
+        # Sticky machine choice per batch group: (batch_key, TASK) -> machine name.
+        # Set once, by whichever order in the group is placed first.
+        batch_machine: dict[tuple[str, str], str] = {}
+        batch_overrides = 0
+
+        # Process orders clustered by batch (same SIZE~CLASS~DESIGN), most-urgent
+        # batch first, then most-urgent order within that batch; ops within an
+        # order ascending. An order's batch_key is constant across all of its own
+        # operations (SIZE/CLASS/DESIGN are valve attributes, not per-operation),
+        # so clustering here keeps every family member's placement close together
+        # in the walk — closing the window for an unrelated order to consume the
+        # batch's chosen machine capacity in between (see Phase 3b discussion).
+        order_batch_key: dict[str, str] = {}
+        for order, tasks in self.tasks_by_order.items():
+            sample_pid: TaskKey = (tasks[0].production_order, tasks[0].operation_no)
+            order_batch_key[order] = self.batch_key_of.get(sample_pid, "")
+
+        batch_max_urgency: dict[str, float] = defaultdict(float)
+        for order, tasks in self.tasks_by_order.items():
+            bkey = order_batch_key[order]
+            batch_max_urgency[bkey] = max(batch_max_urgency[bkey], max(t.urgency_weight for t in tasks))
+
         orders_sorted = sorted(
             self.tasks_by_order.items(),
-            key=lambda kv: -max(t.urgency_weight for t in kv[1]),
+            key=lambda kv: (
+                -batch_max_urgency[order_batch_key[kv[0]]],
+                -max(t.urgency_weight for t in kv[1]),
+            ),
         )
         for _order, tasks in orders_sorted:
             ordered = sorted(tasks, key=lambda t: t.operation_no)
@@ -479,15 +576,12 @@ class Engine1Scheduler:
                 remaining_pieces = t.balance_qty
                 op_end_k = prev_end_k
 
-                guard = 0
-                placed_on_op = 0
-                while remaining_pieces > 0:
-                    guard += 1
-                    if guard > 500_000:
-                        failed_tasks.append((pid, t.balance_qty, "guard limit (likely no open capacity)"))
-                        break
+                group_key = self.batch_group_of.get(pid)
+                is_batched = group_key is not None and len(self.tasks_in_batch_group.get(group_key, [])) > 1
+
+                def find_best(search_machines):
                     best = None  # (sort_key, m, k, setup_cost)
-                    for m in machines:
+                    for m in search_machines:
                         prio = self.machine_priority[(pid, m)]
                         for k in self.open_slots.get(m, []):
                             if k < prev_end_k:
@@ -504,6 +598,34 @@ class Engine1Scheduler:
                                 if best is None or sort_key < best[0]:
                                     best = (sort_key, m, k, setup_cost)
                                 break  # smallest usable k for this machine
+                    return best
+
+                guard = 0
+                placed_on_op = 0
+                while remaining_pieces > 0:
+                    guard += 1
+                    if guard > 500_000:
+                        failed_tasks.append((pid, t.balance_qty, "guard limit (likely no open capacity)"))
+                        break
+
+                    forced_m = batch_machine.get(group_key) if is_batched else None
+                    if forced_m is not None and forced_m in machines:
+                        best = find_best([forced_m])
+                        if best is None:
+                            # Batch machine has no room right now — deviate for this
+                            # remainder only; the group's sticky choice is unchanged.
+                            best = find_best(machines)
+                            if best is not None:
+                                batch_overrides += 1
+                                self.logger.debug(
+                                    f"  Batch override: {pid[0]} Op{pid[1]} "
+                                    f"({group_key}) deviates from {forced_m} -> {best[1]}"
+                                )
+                    else:
+                        best = find_best(machines)
+                        if best is not None and is_batched and group_key not in batch_machine:
+                            batch_machine[group_key] = best[1]
+
                     if best is None:
                         reason = f"no capable machine has open slot ≥ slot {prev_end_k} with {ct} mins free"
                         failed_tasks.append((pid, remaining_pieces, reason))
@@ -529,6 +651,9 @@ class Engine1Scheduler:
         placed_total = sum(assign.values())
         needed_total = sum(t.balance_qty for t in self.input.tasks)
         self.logger.info(f"\nGreedy result: {placed_total}/{needed_total} pieces placed")
+        self.logger.info(f"Batch groups formed: {len(batch_machine)} (each consolidated onto one machine)")
+        if batch_overrides:
+            self.logger.info(f"Batch overrides (capacity/timing forced a deviation): {batch_overrides}")
         if failed_tasks:
             self.logger.info(f"Failed to place {len(failed_tasks)} tasks:")
             for pid, remaining, reason in failed_tasks[:10]:  # show first 10
@@ -690,6 +815,8 @@ class Engine1Scheduler:
                                 balance_qty=qty_val,
                                 start_offset_min=int(round(start)),
                                 end_offset_min=int(round(running)),
+                                batch_key=task.batch_key,
+                                is_safety_stock=task.cdd is None,
                                 run_id=run_id,
                                 generated_at=generated_at,
                             )

@@ -151,6 +151,8 @@ def _persist_schedule_output(assignments: list[ScheduleOutputRow], run_id: str) 
             "BALANCE_QTY": row.balance_qty,
             "START_OFFSET_MIN": row.start_offset_min,
             "END_OFFSET_MIN": row.end_offset_min,
+            "BATCH_KEY": row.batch_key,
+            "IS_SAFETY_STOCK": "Y" if row.is_safety_stock else "N",
             "generated_at": row.generated_at,
         }
         for row in assignments

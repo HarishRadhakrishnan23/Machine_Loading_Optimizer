@@ -110,6 +110,12 @@ class SchedulableTask(BaseModel):
     operation_no: float = Field(description="OPERATION_NO ascending; may be a midpoint like 35")
     operation: str = Field(description="Task code, e.g. VB02, VB03, R002")
     item_category: str = Field(description="concatenation_key Size~Class~Design~MOC")
+    batch_key: str = Field(
+        description="SIZE_INCH~CLASS~DESIGN, computed directly from the raw WIP columns "
+        "(NOT parsed from item_category — that string's segment order shifts when DESIGN "
+        "is blank in the ERP data, which would silently pull MOC into the batch key). "
+        "Orders sharing a batch_key are queued together on one machine per operation."
+    )
 
     balance_qty: int = Field(gt=0, description="ORDERED − COMPLETED − REJECTED; the quantity to schedule")
     cycle_time: float = Field(gt=0, description="CYCLE_TIME per piece, in minutes")
@@ -188,6 +194,12 @@ class ScheduleOutputRow(BaseModel):
     balance_qty: int = Field(description="Pieces placed in THIS row's slot")
     start_offset_min: int = Field(ge=0, description="Minutes from shift start")
     end_offset_min: int = Field(ge=0, description="Minutes from shift start")
+
+    batch_key: str = Field(description="SIZE_INCH~CLASS~DESIGN — groups this row's order with "
+                                        "others queued through the same operation on this machine")
+    is_safety_stock: bool = Field(description="True when the order's CDD is NULL — UI should flag "
+                                                "this distinctly so planners can judge whether to "
+                                                "include it in a manual run")
 
     run_id: str
     generated_at: datetime

@@ -122,7 +122,7 @@ def write_schedule_output(schedule_rows: list[dict], run_id: str) -> int:
     Args:
         schedule_rows: list of dicts with keys (PRODUCTION_ORDER, OPERATION_NO, TASK,
                        WORK_CENTER, SHIFT, SCHEDULED_DATE, BALANCE_QTY, START_OFFSET_MIN,
-                       END_OFFSET_MIN, generated_at).
+                       END_OFFSET_MIN, BATCH_KEY, IS_SAFETY_STOCK, generated_at).
         run_id: unique identifier for this scheduling run (e.g., UUID).
 
     Returns: number of rows inserted.
@@ -135,10 +135,11 @@ def write_schedule_output(schedule_rows: list[dict], run_id: str) -> int:
         insert_sql = """
             INSERT INTO MCH_SCHEDULE_OUTPUT
             (RUN_ID, PRODUCTION_ORDER, OPERATION_NO, TASK, WORK_CENTER, SHIFT,
-             SCHEDULED_DATE, BALANCE_QTY, START_OFFSET_MIN, END_OFFSET_MIN, GENERATED_AT)
+             SCHEDULED_DATE, BALANCE_QTY, START_OFFSET_MIN, END_OFFSET_MIN,
+             BATCH_KEY, IS_SAFETY_STOCK, GENERATED_AT)
             VALUES (:run_id, :production_order, :operation_no, :task, :work_center,
                     :shift, :scheduled_date, :balance_qty, :start_offset_min,
-                    :end_offset_min, :generated_at)
+                    :end_offset_min, :batch_key, :is_safety_stock, :generated_at)
         """
 
         rows_inserted = 0
@@ -154,6 +155,8 @@ def write_schedule_output(schedule_rows: list[dict], run_id: str) -> int:
                 "balance_qty": row["BALANCE_QTY"],
                 "start_offset_min": row["START_OFFSET_MIN"],
                 "end_offset_min": row["END_OFFSET_MIN"],
+                "batch_key": row["BATCH_KEY"],
+                "is_safety_stock": row["IS_SAFETY_STOCK"],
                 "generated_at": row["generated_at"],
             })
             rows_inserted += 1

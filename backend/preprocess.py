@@ -37,6 +37,7 @@ from typing import Optional
 
 import pandas as pd
 
+from batch_grouping import compute_batch_key
 from models import (
     CapacitySlot,
     Config,
@@ -429,6 +430,10 @@ def build_scheduler_input(
                 operation_no=float(row["OPERATION"]),
                 operation=str(row["TASK"]),
                 item_category=str(row["ITEM_CATEGORY"]),
+                # Computed straight from the typed WIP columns, NOT parsed out of
+                # item_category — that string's segment order shifts when DESIGN is
+                # blank in the ERP data (see SchedulableTask.batch_key docstring).
+                batch_key=compute_batch_key(str(row["SIZE_INCH"]), str(row["CLASS"]), str(row["DESIGN"])),
                 balance_qty=int(row["balance_qty"]),
                 cycle_time=float(row["CYCLE_TIME"]),
                 cdd=cdd,
