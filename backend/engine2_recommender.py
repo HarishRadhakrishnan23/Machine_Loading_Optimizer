@@ -86,21 +86,15 @@ def _elevate_task(task: SchedulableTask, elevated_order_ids: set[str]) -> Schedu
 
     The elevated weight (ELEVATED_URGENCY_WEIGHT = 999_999) is so large that
     CP-SAT floats the order to the top of the scheduling queue.
+
+    Uses model_copy(update=...) rather than re-listing every field: SchedulableTask
+    has grown fields over time (e.g. batch_key), and a manual field-by-field
+    reconstruction here silently goes stale — missing a newly-required field raises
+    a validation error on every elevate call, which is exactly what happened when
+    batch_key was added without updating this function.
     """
     if task.production_order in elevated_order_ids:
-        # Mutate a copy: elevation only; all other fields unchanged.
-        return SchedulableTask(
-            production_order=task.production_order,
-            operation_no=task.operation_no,
-            operation=task.operation,
-            item_category=task.item_category,
-            balance_qty=task.balance_qty,
-            cycle_time=task.cycle_time,
-            cdd=task.cdd,
-            order_date=task.order_date,
-            urgency_weight=ELEVATED_URGENCY_WEIGHT,  # ← The only change
-            candidates=task.candidates,
-        )
+        return task.model_copy(update={"urgency_weight": ELEVATED_URGENCY_WEIGHT})
     return task
 
 
