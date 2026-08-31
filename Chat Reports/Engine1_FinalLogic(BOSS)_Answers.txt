@@ -1,0 +1,98 @@
+A. The foundational tension: "infinite capacity" vs. AVAILABLE_MINS:
+
+1. Point 3.2 says no capacity restrictions, infinite capacity and time — but 3.3 says use AVAILABLE_MINS, and 2.2 keeps MCH_MACHINE_AVAILABILITY_BY_DATE for breakdowns. My reading: "infinite capacity" means no fixed horizon cutoff and no "slot is full, refuse work" — but AVAILABLE_MINS still defines the rate (how many productive minutes exist per shift), and work simply spills forward in continuous time into the next shift/day. Correct? Or do you literally mean a machine runs 24×7 and AVAILABLE_MINS is ignored except for breakdown days?
+Answer: Your Understanding is correct!., "infinite capacity" means no fixed horizon cutoff and no "slot is full, refuse work" — but AVAILABLE_MINS still defines the rate (how many productive minutes exist per shift), and work simply spills forward in continuous time into the next shift/day.
+
+2. Related and critical: does actual machining only progress during a shift's AVAILABLE_MINS window? i.e., if a batch needs 600 min and the current shift has 200 productive minutes left, does it do 200 now, pause overnight, and resume next working shift? Or does it run straight through the closed hours? "Production should never be idle" (3.1) suggests continuous, but a machine with no manpower at 2 AM physically can't cut metal. I need the exact rule for how the continuous clock treats non-working hours.
+Answer: Actual machining only progress during a shift's AVAILABLE_MINS window. i.e., if a batch needs 600 min and the current shift has 200 productive minutes left, it does 200 now, pause overnight, and resume next working shift.
+
+3. The 20-minute cooling rule (3.1): is 20 a fixed constant or a config knob? Does it apply after every batch on every machine, or only after thermally-heavy ops (welding/boring)? And does the 20 min consume machine availability or is it pure dead time that doesn't count against anything?
+Answer: the 20 minute cooling rule is fixed, it applies after every batch on every machine.
+
+
+B. Output representation under continuous time:
+
+4. MCH_SCHEDULE_OUTPUT still has SHIFT and SCHEDULED_DATE. If planning is continuous and a single batch spans, say, third shift into the next day's first shift — do we emit one row per shift-segment (like today), or one row with an absolute start/end? And what is START_OFFSET_MIN measured from now — shift start, day start, or absolute run origin? I need a precise definition or the Gantt/UI breaks.
+Answer: See here the answer is tricky., ideally the answer is to omit one row per shift-segment (like today), or one row with an absolute start/end., i.e, In the Gant chart only show the Production order on which date it is completed not started. BUT HERE I WANT TO CHANGE THE OUTPUT REPRESENTATION., I want to change the UI as whole.
+
+Plan for Change on UI:
+	1. In opening Web Page I want Overview UI, which contains Visualized Graphical Representation of the Data We have mainly WIP.
+	2. In Page 2 I want a Bubble chart which contains information of orders by Valves SIZE~CLASS~DESIGN (bubble = Order count) with Priority Bar indicator beside. Follwed by which below I should have have Tabulated data where I need the information of two things Operation end date (Date at which the Operation assigned for that production Order ends at) and PRoduction Completion Date ( Date ate which the Production (i.e) the Last operation for that Production Order completes at ( calculate it accordingly )) and the CDD of that Production Order
+	3. In Page 3 I want Four things, 3 charts and a table.
+		3.1. Orders Qued per Machine Chart
+		3.2. Machine Utilization % ( Calculate the averation Utilization Rate Per Machine )
+		3.3. Load Share by Operation (Each operation has how many Load)
+		3.4. A Machine Detail Tabled
+	4. In page 4 I need the Engine 2 Order board and Impact analyser combine
+	5. In page 5, we will have a new order delivery Forcast
+
+Leave all the UI changes for later but I am just Providing you my Vision for this Project so that you plan accordingly. So leave UI and Engine 2 for later phase of the Project lets get Engine1 right. We can Modify MCH_SCHEDULE_OUTPUT however we need, if required even new tables can be created no worries.
+
+5. The two new columns for Fixture ID and Locator ID — confirm exact names/types (I'll propose FIXTURE_ID VARCHAR2(40), LOCATOR_ID VARCHAR2(40), holding the DEVICE_NAME). And does BATCH_KEY stay as SIZE~CLASS~DESIGN, or should it now become fixture-based (see C below)?
+Answer: I confirm that we can go ahead with FIXTURE_ID VARCHAR2(40), LOCATOR_ID VARCHAR2(40), holding the DEVICE_NAME and Batch key should be fixture based (I will answer in C)
+
+
+C. The new batching unit — fixture vs. locator vs. size
+
+6. Your worked example is the key. Orders 1, 5 (10·150·DF, loc 1), then 4 (10·300·DF, loc 3), then 6 (10·150·LUG, loc 2) all run consecutively on one machine under Fixture A, with only locator changes between the sub-groups. That tells me the batch unit is now the FIXTURE, not SIZE~CLASS~DESIGN — one fixture mount, multiple locator sub-groups inside it. Confirm: the primary grouping key is FIXTURE, and within it we order by locator to minimize locator changes?
+Answer: Yes, the primary grouping key is FIXTURE, and within it we order by locator to minimize locator changes
+
+7. MCH_ITEMWISE_FIXTURE_LOCATOR is keyed by (SIZE, CLASS, DESIGN, TASK, WORK_CENTER) — so FIXTURE and LOCATOR can differ per operation and per machine. Is fixture/locator therefore re-evaluated per operation (a batch formed at VB02 may regroup at VB03)? And for the same SIZE~CLASS~DESIGN~TASK, is the FIXTURE guaranteed identical across every WORK_CENTER row, or can the same item need a different fixture on different machines?
+Answer: See a Batch formed at VB02 will be of same SIZE~CLASS~DESIGN., so after completing VB02., when the batch moves to VB03 the whole batch will be assigned to a new TASK and New WORK_CENTER so the Fixture and Locator will be constant, if the batching logic is correct and constant., if you want to disagree prove to me with an anology or example. I think there is no need to split a batch once formulated correctly. And for the same SIZE~CLASS~DESIGN~TASK, the FIXTURE guaranteed identical across every WORK_CENTER row.
+
+8. Routing vs. fixture conflict: a fixture batch spans multiple SIZE~CLASS~DESIGN (10·150·DF, 10·300·DF, 10·150·LUG under Fixture A). But MCH_MACHINE_PRIORITY routes by full ITEM_CATEGORY+TASK, and those three items may not all be capable on the same machine. When a fixture group's members route to different machines, what wins — keep the fixture group intact on one common machine (and drop members that can't run there), or split the fixture group? This is the single biggest correctness risk in the batching logic.
+Answer: See mostly items with SIZE~CLASS and similar design can always run on same machines, so I dont think so there will be problem of three items may not all be capable on the same machine. but ebven in rare case if those problems occur, keep the fixture group intact on one common machine (and drop members that can't run there). 
+
+
+D. The finite fixture/locator pool (the hard part)
+
+9. MCH_FIXTURE_LOCATOR gives a count of each fixture/locator. Is this a hard, plant-wide constraint — i.e., if only 1 of Fixture B exists, then a 14·150 batch and a 16·150 batch (both Fixture B) cannot run on two machines at the same time, even though both machines are free? This turns fixtures into a shared cumulative resource across the whole plant and is the thing that limits parallelism. Confirm it's hard, not advisory.
+Answer: Yes,it is a hard, plant-wide constraint, that is the shop floor reality. if only 1 of Fixture B exists, then a 14·150 batch and a 16·150 batch (both Fixture B) cannot run on two machines at the same time, even though both machines are free.
+
+10. Do fixtures/locators have to be returned to the pool when a batch finishes before another batch can claim them (i.e., a mount/dismount lifecycle), and is there any transfer/changeover time when a fixture moves from one machine to another? Or is "available count" simply a cap on concurrent usage with no movement time?
+Answer: Fixtures/Locators have to be returned to the pool when a batch finishes before another batch can claim them (i.e., a mount/dismount lifecycle), no transfer/changeover time is applied. "Available count" simply a cap on concurrent usage.
+
+
+E. Priority, release dates, and how they interact
+
+11. In your example, priority-1 (Fixture A) drags its fixture-mates — including priority 5 and 6 — ahead of priority 2 and 3 (Fixture B). So fixture consolidation overrides pure CDD priority. Confirm that's intended. On a $50M line this means a more-urgent order on a different fixture can be pushed later to keep a fixture batch whole — I want it in writing that that trade-off is deliberate.
+Answer: Yes, fixture consolidation overrides pure CDD priority. That trade-off is deliberate to reduce the setup time cost.
+
+12. Is there a limit on how far batching reaches? If priority 1 and priority 80 share a fixture, do we really pull priority 80 forward next to priority 1 (delaying 2–79 on other fixtures)? Today we have batch_bonus_months as a due-date window. Should fixture batching only pull in orders whose CDD is within some window, or is it unbounded?
+Answer: I think Fixture Batching should pull in Orders whose CDD is within a "3 Month Window".
+
+13. "Planned" orders (material arrives at PRODUCTION_START_DATE_AND_TIME): is that a hard earliest-start for the order's first operation (obviously you can't machine absent metal), with downstream ops just following precedence? And a "Planned" order therefore cannot join a fixture batch that runs before its material-arrival date — confirm the release date gates batchability.
+Answer: Yes, PRODUCTION_START_DATE_AND_TIME is a hard earliest-start for the order's first operation (obviously you can't machine absent metal). "Planned" order therefore cannot join a fixture batch that runs before its material-arrival date.
+
+
+F. Solver architecture (I need your buy-in here)
+
+14. This model — continuous time, no capacity cap, finite shared fixture/locator pool, 20-min idle rule, release dates, fixture-consolidation-over-priority — is structurally a discrete-event dispatch simulation, not a capacity-bucket CP-SAT model. And we already know CP-SAT times out on your data and the greedy pass is what actually runs in production. My strong recommendation: make the primary engine a deterministic greedy/dispatch simulator built exactly around these rules (it's more faithful to the shop-floor logic and more transparent to audit for a $50M plan), and keep CP-SAT, if at all, only as an optional post-optimizer. Are you comfortable with that direction, or do you specifically want CP-SAT to remain the primary solver?
+Answer: I am okay with the primary engine being a deterministic greedy/dispatch simulator built exactly around these rules and keep CP-SAT, if at all, only as an optional post-optimizer.
+
+15. For a change this fundamental with "no room for error," I'd want to phase it with validation gates like we did Phase 1–6 (schema → fixture/locator data load & lookup → batching → continuous timeline → pool constraint → validation), even though you want one clean stretch. I can move fast, but I'd rather gate each layer against real data than big-bang it. Acceptable?
+Answer: Yes Acceptable, I agree with phasing it into validation gates like we did Phase 1–6 (schema → fixture/locator data load & lookup → batching → continuous timeline → pool constraint → validation)
+
+
+Your Point 6 — safety stock in a mixed batch on heavy ops
+
+Here's my proposed rule; tell me where it's wrong.
+
+The economics: appending safety-stock pieces to a batch that already has the fixture+locator mounted costs no fixture/locator change — only LOAD_UNLOAD × qty plus CYCLE_TIME × qty of machine time. On a light op (VB02 Cone Oversize) that machine time is small, so riding safety stock along is nearly free and worth doing. On a heavy op (VB03/04/05/06) that per-piece time is large, so those extra pieces can push a committed order past its CDD.
+
+The policy — split, then protect committed work absolutely:
+
+Within each fixture/locator group, split into a committed sub-batch (CDD not null) and a safety sub-batch (CDD null).
+Light ops: run them together — safety rides along (cheap, builds stock while the fixture is already up).
+Heavy ops (configurable set): schedule the committed sub-batch first. Then attempt to append the safety sub-batch immediately after (zero fixture/locator change) only if doing so delays no committed order — anywhere — past its CDD, accounting for the shared fixture pool. If it would, don't run safety now: release the fixture/locator back to the pool and re-queue the safety sub-batch at the global tail (lowest priority), to be backfilled later only into genuine idle windows where its fixture is free.
+Net effect: a committed order is never delayed by safety stock on a heavy op, but safety stock still gets made whenever it's actually free to make.
+
+To wire this I'd add config: heavy_operations = ["VB03","VB04","VB05","VB06"] and protect_committed_over_safety = true, so the planner controls the heavy-op set and the rule is auditable.
+
+Two things I need from you to finalize it:
+
+(a) Is "never delay a committed order to make safety stock" an absolute rule, or is a small, bounded slip acceptable if it lets a big safety batch ride along?
+Answer: Yes, "never delay a committed order to make safety stock" an absolute rule.
+
+(b) With no capacity cap and infinite horizon, deferred safety stock will always eventually schedule (just very late). Is that what you want, or should safety stock that finds no free window within some horizon simply be left unplanned and flagged, rather than tacked on months out?
+Answer: Yes, With no capacity cap and infinite horizon, deferred safety stock will always eventually schedule (just very late), thats what I want.

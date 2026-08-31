@@ -1,0 +1,59 @@
+Remaining load-bearing questions
+
+Q-A — The atomic batch unit (this is the spine; your Q6 and Q7 answers point slightly different directions).
+My reconciliation: the atomic batch = all orders sharing SIZE~CLASS~DESIGN at a given operation (that's one fixture + one locator, per Q7). The FIXTURE is the consolidation key that chains these atomic batches back-to-back on one machine to avoid fixture changes — a "fixture run." So under Fixture A on one machine:
+
+[10·150·DF, loc 1]  →(locator change)→  [10·300·DF, loc 3]  →(locator change)→  [10·150·LUG, loc 2]
+
+Pool-wise: the run holds 1× Fixture-A for the whole run, and holds 1× locator-1 during the first sub-batch (releasing it before mounting locator-3), etc. Is that the correct structure? (If instead you mean the whole fixture run is itself the atom and locators don't release individually, the pool math changes — so I need this pinned.)
+Answer: Yes, this is correct, the run holds 1× Fixture-A for the whole run, and holds 1× locator-1 during the first sub-batch (releasing it before mounting locator-3)., 
+
+Q-B — Machine selection at each operation. For a fixture run at operation T, among machines capable of all members (per MCH_MACHINE_PRIORITY): pick the one free earliest, breaking ties by best MACHINE_PRIORITY. Is MACHINE_PRIORITY soft (earliest-free machine wins, priority only breaks ties — consistent with "never leave a machine idle") or hard (always wait for the priority-1 machine even if another capable machine is free sooner)? I lean soft.
+Answer: I lean soft too, MACHINE_PRIORITY soft (earliest-free machine wins, priority only breaks ties — consistent with "never leave a machine idle"). 
+
+Q-C — Does same SIZE~CLASS~DESIGN guarantee the same operation sequence? Your Q7 says a batch stays intact across all operations. That only holds if every order sharing an SCD has the identical routing (same op list). If one 10·150·DF order carries an extra rework (R002) another doesn't, the batch would have to diverge there. Do you want me to (a) hard-assume identical routing per SCD and fail loudly in a phase-gate check if the data violates it, or (b) allow a batch to split only at the operation where routings diverge, rejoining after? I recommend (a) with a validation gate — cleaner, and it surfaces bad data instead of hiding it.
+Answer: I will go with (b)., I think it is the best solutionand it is more close to shop floor reality. (b) allow a batch to split only at the operation where routings diverge, rejoining after
+
+Q-D — Scheduling scope. An operation is schedulable only if it has both a routing entry (MCH_MACHINE_PRIORITY) and a fixture/locator entry (MCH_ITEMWISE_FIXTURE_LOCATOR) — otherwise I can't compute its machine or its time. CT=0, QAINSP, and balance≤0 stay dropped as today. For an op that has routing but no fixture/locator row: skip it transparently (precedence bridges over it, like today's unrouted ops), or treat it as a hard data error? And — is the scheduled set still essentially the VB0x machining tasks, or has the scope widened?
+Answer: . For an op that has routing but no fixture/locator row: skip it transparently (precedence bridges over it, like today's unrouted ops) and the scheduled set still essentially the VB0x machining tasks.
+
+Q-E — The 90-day window's reach. Does the window (a) only limit which orders may be pulled forward to join a batch (every eligible order still gets scheduled — just not consolidated with something >90 days away), or (b) also limit which orders are scheduled at all this run? And it's measured from today (run date), correct? Safety stock (CDD null) sits outside the window entirely and is always lowest-priority backfill — confirm.
+Answer: the window (a) only limit which orders may be pulled forward to join a batch (every eligible order still gets scheduled — just not consolidated with something >90 days away). And it's measured from today (run date), Safety stock (CDD null) sits outside the window entirely and is always lowest-priority backfill — I confirm it.
+
+Q-F — Batch duration formula. A batch's machine time at one operation =
+
+[FIXTURE_CHANGE_TIME  if fixture ≠ machine's current mount]
++ [LOCATOR_CHANGE_TIME  if locator ≠ machine's current mount]
++ Σ over pieces ( LOAD_UNLOAD_TIME + CYCLE_TIME )
+
+where CYCLE_TIME is the per-piece cut time from MCH_WIP and LOAD_UNLOAD_TIME is per-piece from the fixture table. This whole duration is then subject to the AVAILABLE_MINS pause/resume across shifts, and the machine takes 20 min cooling before its next batch. Confirm — especially that CYCLE_TIME is still added on top of LOAD_UNLOAD (the BOSS doc dropped SETUP_TIME but didn't restate CYCLE_TIME, so I want it explicit).
+
+Answer: Yes this Logic is exactly correct!, CYCLE_TIME is the per-piece cut time from MCH_WIP and LOAD_UNLOAD_TIME is per-piece from the fixture table. This whole duration is then subject to the AVAILABLE_MINS pause/resume across shifts, and the machine takes 20 min cooling before its next batch.
+
+Q-G — Mount carryover. Change-times are charged relative to whatever is currently mounted on that specific machine, carried across batches and across the overnight pause (a machine keeps its fixture/locator mounted while idle). Cold start: machines mount nothing, so the first batch on each machine always pays fixture + locator change. Confirm.
+Answer: Yes confirm!
+
+Mechanical assumptions I'll lock unless you correct me
+	1. MOC stays irrelevant to batching and fixtures (both the fixture table and the batch key exclude MOC); MOC still only affects routing.
+	Answer: Yes, Confirm!
+	
+	2. No inter-operation WIP transit time — the next operation may start as soon as the previous one ends (subject to machine/fixture/pool availability). The only inter-batch delay is the 20-min cooling on a machine.
+	Answer: Yes, Confirm!
+	
+	3. 20-min cooling is pure machine dead-time after every batch — it delays that machine's next batch but isn't itself work, and it's observed in wall-clock (it can straddle the overnight pause).
+	Answer: Yes, Confirm!
+	
+	4. Output granularity: one row per (production_order, operation) carrying its completion date, chosen machine, and the assigned FIXTURE_ID / LOCATOR_ID. We'll finalize the exact schema in the schema phase (I may add an absolute start/end timestamp so the future Gantt has what it needs, even though the UI currently shows completion date only).
+	Answer: Yes, Confirm!
+	
+	5. Safety-stock heavy-op set = {VB03, VB04, VB05, VB06}; every other op treats safety stock as ride-along (light).
+	Answer: Yes, Confirm!
+Proposed phase plan (for the "no room for error" gate-by-gate approach you agreed to)
+	1. Schema & data load — add FIXTURE_ID/LOCATOR_ID (+ any timestamp cols); loaders + validators for MCH_ITEMWISE_FIXTURE_LOCATOR and MCH_FIXTURE_LOCATOR; prove the fixture/locator lookups resolve for 100% of in-scope tasks.
+	2. Batching — build fixture runs (SCD atoms, locator-ordered, 90-day window, release-date gating, safety-stock split). Validate against your worked 7-order example exactly.
+	3. Continuous timeline — the dispatch simulator: AVAILABLE_MINS pause/resume, 20-min cooling, precedence, per-machine mount carryover & change-times, duration formula.
+	4. Pool constraint — hard fixture/locator concurrency caps with mount/release lifecycle.
+	5. Safety-stock policy — committed-first / heavy-op deferral / backfill, "never delay committed" as absolute.
+	6. Validation — full-run audit (no duplicates, precedence, pool never exceeded, CDD attainment, utilization, worked-example replication).
+
+Answer Q-A through Q-G (even tersely) and correct any locked assumption you don't like, and I'll write the complete Model D spec into a new section of CLAUDE.md for your sign-off before any code — then we execute phase by phase.

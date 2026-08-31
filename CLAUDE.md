@@ -222,7 +222,282 @@ The UI's Machine Availability & Settings view provides a settings panel to chang
 
 ---
 
+## Engine 1 — Model D (Fixture/Locator continuous-time dispatch) — TARGET SPEC
+
+> **STATUS: agreed design, phased implementation pending.** This section is the authoritative
+> target for Engine 1. Until Model D Phase 6 lands, the **currently-running code is still Model C**
+> (documented in the "## Engine 1 — CP-SAT Scheduling Optimizer" section below). Do not assume the
+> code matches Model D until a phase is explicitly marked complete. When Model D is fully shipped,
+> the Model C section becomes historical.
+
+### D.0 — Why Model D (what changes vs Model C)
+
+Model C's spine — discrete `(date, shift)` slots, a **hard per-`(machine, slot)` capacity bucket**,
+and `SETUP_TIME` charged per ITEM_CATEGORY change — is replaced. The plant's real constraints are
+different: machines are **not** minute-capped per slot (work just flows forward in continuous time),
+and the genuinely scarce resources are the **finite physical FIXTURES and LOCATORS** shared across
+the whole shop floor. Model D is therefore a **deterministic, continuous-time discrete-event dispatch
+simulator**, not a CP-SAT capacity model. Everything below supersedes the corresponding Model C rule.
+
+| Concern | Model C (old) | Model D (new) |
+|---|---|---|
+| Time | discrete (date, shift) slots | continuous wall-clock, minutes |
+| Machine capacity | hard bucket = AVAILABLE_MINS per slot | **no cap**; AVAILABLE_MINS is only the *rate/window* |
+| Changeover cost | SETUP_TIME per ITEM_CATEGORY | **FIXTURE_CHANGE + LOCATOR_CHANGE** (dropped SETUP_TIME entirely) |
+| Batch key | SIZE~CLASS~DESIGN | **FIXTURE** (consolidation) over SIZE~CLASS~DESIGN atoms |
+| Scarce resource | machine-minutes | **finite fixture/locator pool** (hard, plant-wide) |
+| Release dates | none | **"Planned" orders** gated by PRODUCTION_START_DATE_AND_TIME |
+| Solver | CP-SAT + greedy fallback | **greedy dispatch is PRIMARY**; CP-SAT at most an optional post-optimizer |
+
+### D.1 — New data sources (read-only, ERP-owned)
+
+**MCH_ITEMWISE_FIXTURE_LOCATOR** — per `(SIZE_INCH, CLASS, DESIGN, TASK, WORK_CENTER)`:
+`FIXTURE`, `LOCATOR`, `FIXTURE_CHANGE_TIME`, `LOCATOR_CHANGE_TIME`, `LOAD_UNLOAD_TIME` (all minutes),
+plus `USER_ID`, `USER_DATE`. Change-times apply once (to the first piece); LOAD_UNLOAD is **per piece**.
+For a given `SIZE~CLASS~DESIGN~TASK`, FIXTURE and LOCATOR are **identical across every WORK_CENTER row**
+(the change-times/load-unload may differ by machine).
+
+**MCH_FIXTURE_LOCATOR** — the physical inventory: `DEVICE_NAME` (Fixture ID or Locator ID),
+`DEVICE_TYPE` (`'F'` = fixture, `'L'` = locator), `QUANTITY` (how many of that device physically exist),
+plus `USER_ID`, `USER_DATE`. QUANTITY is a **hard, plant-wide concurrency cap**.
+
+`SETUP_TIME` in MCH_MACHINE_PRIORITY is **ignored** in Model D. MOC remains irrelevant to batching and
+fixtures (both exclude MOC); MOC still only affects routing (which machines are capable).
+
+### D.2 — Vocabulary
+
+- **Atomic batch** — all in-scope orders sharing the same `SIZE~CLASS~DESIGN` at a given operation
+  (TASK). One atomic batch has exactly one FIXTURE and one LOCATOR. This is the unit that moves
+  through operations and holds pool devices.
+- **Fixture run** — a maximal back-to-back sequence of atomic batches **sharing the same FIXTURE**,
+  placed consecutively on **one machine** so the fixture is mounted once. Inside the run, atomic
+  batches are ordered to group equal locators and minimise locator changes.
+- **Committed order** — `CDD` is not null. **Safety-stock order** — `CDD` is null.
+- **Mount** — the `(fixture, locator)` currently physically on a machine. Carried across batches and
+  across overnight/idle pauses; cold-start machines hold nothing.
+
+### D.3 — Order types (ORDER_STATUS)
+
+- **"Active"** — foundry material is on the floor; schedule normally (priority, batching, machines).
+- **"Planned"** — material arrives at `PRODUCTION_START_DATE_AND_TIME`. That timestamp is a **hard
+  earliest-start for the order's first scheduled operation** (you cannot machine absent metal); its
+  first op may begin at or after that date (that day's first shift onward). A Planned order **cannot
+  join a fixture run that starts before its material-arrival date.** Downstream operations follow
+  ordinary precedence. Every order — Active or Planned — is still targeted to finish **on or before its
+  CDD**.
+
+### D.4 — Time model (continuous, but only working minutes tick)
+
+- Time is a **continuous wall-clock in minutes**, not slots. There is **no capacity cap** on a machine
+  and **no horizon cutoff** — work always flows forward until placed.
+- **Machining progresses only inside a shift's `AVAILABLE_MINS` window.** If a batch needs 600 min and
+  the current shift has 200 productive minutes left, it does 200 now, **pauses**, and **resumes** in
+  that machine's next working shift. AVAILABLE_MINS is the *rate/window*, never a *cap*.
+- **20-minute cooling** after **every** batch on **every** machine: a fixed constant. It is pure
+  machine dead-time (not work), delays that machine's *next* batch, is observed in wall-clock, and may
+  straddle the overnight pause. The machine's next batch may begin at cooling-end (≥ 20 min later).
+- Machine availability comes from `MCH_MACHINE_AVAILABILITY` (baseline, every shift every day) unless
+  overridden for a specific `WORK_CENTER + WORKING_DATE + SHIFT` in `MCH_MACHINE_AVAILABILITY_BY_DATE`
+  (breakdown/maintenance; `AVAILABLE_MINS = 0` ⇒ that window is closed). **No row ⇒ machine is fully
+  available** for that shift's baseline AVAILABLE_MINS. Consider **all** machines every run; never idle
+  a machine that could take work.
+- **No inter-operation WIP transit time** — an order's next operation may start the instant its
+  previous operation ends (subject to machine/fixture/locator/pool availability and cooling).
+
+### D.5 — Batch duration formula (per atomic batch, per operation, on a chosen machine `m`)
+
+```
+duration_minutes =
+    (FIXTURE_CHANGE_TIME[scd, task, m]   if fixture ≠ m.current_mount.fixture  else 0)
+  + (LOCATOR_CHANGE_TIME[scd, task, m]   if locator ≠ m.current_mount.locator  else 0)
+  + Σ over pieces ( LOAD_UNLOAD_TIME[scd, task, m] + CYCLE_TIME[order, op] )
+```
+
+- `CYCLE_TIME` (per piece) comes from **MCH_WIP** and is **still added on top** of LOAD_UNLOAD — it is
+  the actual cut time. `LOAD_UNLOAD_TIME` (per piece) and both change-times come from
+  MCH_ITEMWISE_FIXTURE_LOCATOR (machine-specific).
+- **Mount carryover:** change-times are charged relative to what is **currently mounted on that specific
+  machine**. Same fixture carried over ⇒ no fixture change; same fixture, different locator ⇒ locator
+  change only; different fixture ⇒ both. First batch on a cold machine pays both.
+- The resulting `duration_minutes` is then spread across working windows (D.4 pause/resume), and the
+  machine takes 20-min cooling before its next batch.
+
+### D.6 — Batching logic (how fixture runs are built)
+
+1. **Scope & filters** (D.11) first: keep only schedulable operations.
+2. **Form atomic batches:** group in-scope order-operations by `(SIZE~CLASS~DESIGN, TASK)`. Each group
+   is one atomic batch carrying its FIXTURE and LOCATOR (looked up from MCH_ITEMWISE_FIXTURE_LOCATOR).
+3. **90-day consolidation window (from run date):** atomic batches may only pull in orders whose `CDD`
+   is within **today + 90 days** of each other. The window governs *only which orders may be batched
+   together* — every eligible order is still scheduled; it just isn't consolidated with something more
+   than 90 days away. Safety-stock (CDD null) is **outside** the window and never pulls others forward.
+4. **Fixture runs:** chain atomic batches that share the same FIXTURE onto one machine, ordered by
+   locator to minimise locator changes. **Fixture consolidation deliberately overrides pure CDD
+   priority** — a lower-CDD-priority order on a *different* fixture can be pushed later to keep a
+   fixture run whole (this is the intended setup-saving trade-off).
+5. **Release-date gating:** a Planned order joins a fixture run only if the run's start ≥ its
+   material-arrival date.
+6. **Routing-divergence split (Q-C answer (b)):** a batch normally stays intact across operations
+   (same SCD ⇒ same fixture/locator downstream). But when the orders in a batch have **divergent
+   routings** (e.g. one carries an extra rework op the others don't), the batch **splits only at the
+   operation where routings diverge, and rejoins afterward** where they reconverge. Do not force a
+   whole-routing lock.
+7. **Machine-capability intersection:** a fixture run runs on **one common machine** capable of all its
+   members (per MCH_MACHINE_PRIORITY for each member's ITEM_CATEGORY + TASK). In the rare case a run's
+   members are not all capable on any single machine, **keep the fixture run intact on one common
+   machine and drop the incapable members** (they schedule in their own run).
+
+### D.7 — Machine selection (soft priority)
+
+For a fixture run at operation `T`, among machines capable of **all** its members: pick the machine
+that is **free earliest**; break ties by best (lowest) `MACHINE_PRIORITY`. Priority is **soft** — an
+earlier-free lower-priority machine beats a later-free priority-1 machine. Never wait on a preferred
+machine while another capable machine sits idle. (Maximise machine utilisation; never idle a machine
+that could take work.)
+
+### D.8 — Fixture/Locator pool constraint (hard, plant-wide)
+
+- `MCH_FIXTURE_LOCATOR.QUANTITY` caps **concurrent** usage of each device across the entire plant. If
+  only 1 of Fixture B exists, a 14·150 run and a 16·150 run (both Fixture B) **cannot run at the same
+  time on two machines**, even if both machines are free — one waits.
+- **Mount/release lifecycle, no movement time:** a device is *held* for the duration it is in use and
+  *returned to the pool* the instant it is free; there is **no transfer/changeover time** when a device
+  moves between machines. QUANTITY is purely a concurrency cap.
+- **A fixture run holds 1 unit of its FIXTURE for the whole run** (mounted once, all its atomic
+  sub-batches). It holds **1 unit of a LOCATOR only during that locator's sub-batch**, releasing it
+  before mounting the next locator. So within one run: hold Fixture-A start→end; hold locator-1 during
+  sub-batch-1, release, hold locator-3 during sub-batch-2, release, …
+- The dispatch simulator must, at every instant, keep `concurrent_use(device) ≤ QUANTITY(device)` for
+  every fixture and locator, blocking a batch's start until a unit frees.
+
+### D.9 — Priority & global ordering
+
+- **Priority = lower CDD ⇒ higher priority.** Ties broken by ageing (older order first).
+- **Safety-stock (CDD null) is always lowest priority**, scheduled last / as backfill.
+- Fixture consolidation (D.6.4) overrides pure CDD priority within the 90-day window.
+- Planned-order release dates (D.3) gate when an order may first start.
+
+### D.10 — Safety-stock policy (mixed committed + safety in one fixture/locator group)
+
+Split each fixture/locator group into a **committed sub-batch** (CDD not null) and a **safety sub-batch**
+(CDD null), same fixture + locator.
+
+- **Light operations** (everything **not** in the heavy set): run committed and safety **together** —
+  the safety pieces cost only `LOAD_UNLOAD + CYCLE_TIME` each with **no** extra fixture/locator change,
+  so building stock while the fixture is already mounted is nearly free.
+- **Heavy operations** — `config.heavy_operations = ["VB03","VB04","VB05","VB06"]` (Weld Overlay, Stem
+  Boring, Cone Finishing, Stem Boring + Cone Finishing): schedule the **committed sub-batch first**.
+  Then attempt to **append the safety sub-batch immediately after** (zero fixture/locator change)
+  **only if doing so delays no committed order — anywhere, accounting for the shared pool — past its
+  CDD.** If it would cause any committed slip, **do not run safety now:** release the fixture/locator
+  back to the pool and re-queue the safety sub-batch at the **global tail** (lowest priority),
+  backfilled later only into genuine idle windows where its fixture is free.
+- **"Never delay a committed order to make safety stock" is ABSOLUTE** (`config.protect_committed_over_safety = true`).
+- With no capacity cap and an open horizon, deferred safety stock **always eventually schedules** (just
+  late) — that is intended; it is never dropped.
+
+### D.11 — Scheduling scope & preprocessing filters
+
+An operation is scheduled iff **all** hold:
+- `CYCLE_TIME > 0` (drop CT=0 rows as today),
+- `balance_qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED(null→0) > 0`,
+- `WORK_CENTER` does **not** contain `'QAINSP'` (QA gates excluded from scheduling, shown in UI),
+- it has a **routing** entry in MCH_MACHINE_PRIORITY (TASK present), **and**
+- it has a **fixture/locator** entry in MCH_ITEMWISE_FIXTURE_LOCATOR.
+
+An operation that has routing but **no fixture/locator row** is **skipped transparently** — precedence
+bridges over it (the previous scheduled op connects to the next scheduled op), exactly like today's
+unrouted-op handling. The scheduled set remains essentially the **VB0x machining tasks**. Shifts
+normalised to lowercase on read.
+
+### D.12 — Solver architecture
+
+- **Primary engine: a deterministic greedy / discrete-event dispatch simulator** built exactly around
+  D.3–D.11. It is more faithful to shop-floor logic and fully auditable for a $50M plan.
+- **CP-SAT is at most an optional post-optimizer** (not required, not the primary path). The dispatch
+  simulator's output is the schedule of record.
+- The simulator is deterministic: same inputs ⇒ same schedule (essential for auditability).
+
+### D.13 — Output
+
+- MCH_SCHEDULE_OUTPUT (or a revised table — schema is finalised in Phase 1; we may add tables freely):
+  **one row per `(PRODUCTION_ORDER, OPERATION)`** carrying its completion date, chosen `WORK_CENTER`,
+  `BALANCE_QTY`, and the two new columns **`FIXTURE_ID VARCHAR2(40)`** and
+  **`LOCATOR_ID VARCHAR2(40)`** (holding the `DEVICE_NAME` actually assigned, so the finite pool stays
+  auditable). `BATCH_KEY` becomes **fixture-based**. An absolute start/end timestamp may be added so a
+  future Gantt has what it needs.
+- The Gantt shows the operation's **completion date** (when it ends), not its start.
+- **No historical retention:** each run deletes prior rows and writes fresh (unchanged from Model C).
+
+### D.14 — Config additions
+
+```
+heavy_operations              = ["VB03","VB04","VB05","VB06"]
+protect_committed_over_safety = true
+batch_consolidation_window_days = 90     # fixture-run pull-forward window (from run date)
+cooling_minutes               = 20       # fixed machine cooling after every batch
+```
+
+### D.15 — Worked example (the 7-order batching trace — MUST replicate exactly)
+
+Orders (priority = lower CDD ⇒ higher):
+
+| Prio | SIZE | CLASS | DESIGN | QTY | FIXTURE | LOCATOR |
+|---|---|---|---|---|---|---|
+| 1 | 10 | 150 | DF  | 5 | A | 1 |
+| 5 | 10 | 150 | DF  | 4 | A | 1 |
+| 4 | 10 | 300 | DF  | 3 | A | 3 |
+| 6 | 10 | 150 | LUG | 3 | A | 2 |
+| 2 | 14 | 150 | DF  | 5 | B | 8 |
+| 7 | 14 | 150 | DF  | 5 | B | 8 |
+| 3 | 16 | 150 | DF  | 3 | B | 9 |
+
+Expected dispatch order on the machines (Fixture A run, then Fixture B run):
+
+1. **Prio 1** (10·150·DF, A/1) — first piece: **FIXTURE_CHANGE + LOCATOR_CHANGE** charged.
+2. **Prio 5** (10·150·DF, A/1) — same fixture **and** locator ⇒ **no change**; batched with #1.
+3. **Prio 4** (10·300·DF, A/3) — same fixture, new locator ⇒ **LOCATOR_CHANGE only**.
+4. **Prio 6** (10·150·LUG, A/2) — same fixture, new locator ⇒ **LOCATOR_CHANGE only**.
+5. **Prio 2** (14·150·DF, B/8) — new fixture ⇒ **FIXTURE_CHANGE + LOCATOR_CHANGE**.
+6. **Prio 7** (14·150·DF, B/8) — same fixture and locator ⇒ **no change**; batched with #5.
+7. **Prio 3** (16·150·DF, B/9) — same fixture, new locator ⇒ **LOCATOR_CHANGE only**.
+
+Note how fixture consolidation pulled prio 4, 5, 6 ahead of prio 2, 3 (different fixture). Every batch
+also adds `LOAD_UNLOAD_TIME × its own QTY`. The Fixture-A run holds 1×A for steps 1–4; locator-1 during
+1–2, then locator-3 during 3, then locator-2 during 4. The pool must permit each fixture/locator held.
+
+### D.16 — Phase plan (gate-by-gate; each phase validated before the next)
+
+1. **Schema & data load** — add FIXTURE_ID/LOCATOR_ID (+ optional timestamps); loaders + validators for
+   MCH_ITEMWISE_FIXTURE_LOCATOR and MCH_FIXTURE_LOCATOR; prove fixture/locator lookups resolve for 100%
+   of in-scope tasks, and that FIXTURE/LOCATOR are constant across WORK_CENTER for each SCD~TASK.
+2. **Batching** — atomic batches, fixture runs (locator-ordered), 90-day window, release-date gating,
+   routing-divergence split, safety-stock split. **Validate against D.15 exactly.**
+3. **Continuous timeline** — the dispatch simulator: AVAILABLE_MINS pause/resume, 20-min cooling,
+   precedence, per-machine mount carryover & change-times, duration formula (D.5).
+4. **Pool constraint** — hard fixture/locator concurrency caps with mount/release lifecycle (D.8).
+5. **Safety-stock policy** — committed-first / heavy-op deferral / backfill; "never delay committed"
+   absolute (D.10).
+6. **Validation** — full-run audit: no duplicates, precedence intact, pool never exceeded, per-order
+   CDD attainment, machine utilisation, and D.15 replication.
+
+### D.17 — Invariants (must hold in every run)
+
+- No `(PRODUCTION_ORDER, OPERATION)` appears on two machines for the same pieces (no double-count).
+- Operation precedence: an order's op_{n+1} never starts before op_n ends.
+- Every fixture/locator: `concurrent_use ≤ QUANTITY` at all times.
+- Machining minutes only accrue inside AVAILABLE_MINS windows; ≥ 20-min cooling between a machine's
+  consecutive batches.
+- No committed order is ever delayed by safety stock (D.10).
+- Planned orders never start before their material-arrival date.
+- Every in-scope piece is eventually scheduled (production never stops).
+
+---
+
 ## Engine 1 — CP-SAT Scheduling Optimizer
+
+> **Model C — CURRENT IMPLEMENTATION, being superseded by Model D (above).** This describes the engine
+> as it runs today; it remains accurate until the Model D phases land. Do not delete until Model D ships.
 
 Library: Google OR-Tools (`pip install ortools`), Apache 2.0 license, fully free.
 
