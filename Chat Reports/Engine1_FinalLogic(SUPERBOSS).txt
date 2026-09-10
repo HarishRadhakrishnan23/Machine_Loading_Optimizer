@@ -1,0 +1,60 @@
+They have changed the structural configuration for one last time. I need you to understand this small change in BATCHING LOGIC and incorporate it in Claude.md and all the necessary structural changes.
+They have included 2 new Columns MOC and CLEANING_TIME., When ever the MOC changes the cleaning_time is added for the first piece. Thats it simple!
+And for a same SIZE~CLASS~MOC~DESIGN there will be one typr of Fixture and Locator combination in MCH_ITEMWISE_FIXTURE_LOCATOR
+
+This is the updated MCH_ITEMWISE_FIXTURE_LOCATOR
+
+Name                Null?    Type         
+------------------- -------- ------------ 
+SIZE_INCH           NOT NULL NUMBER       
+CLASS               NOT NULL VARCHAR2(10) 
+MOC                 NOT NULL VARCHAR2(25) 
+DESIGN              NOT NULL VARCHAR2(25) 
+TASK                NOT NULL VARCHAR2(8)  
+WORK_CENTER         NOT NULL VARCHAR2(6)  
+FIXTURE                      VARCHAR2(20) 
+LOCATOR                      VARCHAR2(40) 
+FIXTURE_CHANGE_TIME          NUMBER       
+LOCATOR_CHANGE_TIME          NUMBER       
+LOAD_UNLOAD_TIME             NUMBER       
+CLEANING_TIME                NUMBER       
+USER_ID                      VARCHAR2(20) 
+USER_DATE                    DATE    
+
+
+This is the revised batching logic
+
+2. BATCHING Logic
+	I will explain the Batching Logic with more specfic Example down below, but try to understand from this explanation and correlate it with the logic.
+		1. Now the Whole concept of adding SETUP_TIME before every First Piece is lost and rather we add a Concept of Fixture and Locator. See, every SIZE~CLASS~MOC~DESIGN will have Locator attached to a Fixture. See every PARTICULAR SIZE~CLASS~MOC~DESIGN will have Fixed Fixture and Locator and every similar SIZE~CLASS will have Fixture same but only the Locator change.
+		2. When the Fixture is changed, both the FIXTURE_CHANGE_TIME (Time taken to change the Fixture) and LOCATOR_CHANGE_TIME (Time taken to change the Locator) from the MCH_ITEMWISE_FIXTURE_LOCATOR table, is added before the first piece of that batch.
+		3. When only the Locator is changed, the LOCATOR_CHANGE_TIME from the MCH_ITEMWISE_FIXTURE_LOCATOR table, is added.
+		4. Apart from this LOAD_UNLOAD_TIME is added for every piece in that batch so LOAD_UNLOAD_TIME should be multiplied with total quantity of that Batch which Engine1 has grouped.
+		5. Whenever we change the MOC (both when inbetween two batches or within the batch), at the first piece we add CLEANING_TIME. Its a small time taken to clean between MOC changes.
+		6. Same SIZE~CLASS~MOC~DESIGN and Same operation should not be ideally carried out in different machine at same time or instance ., For Example if an 10~150~Carbon Steel~DF order is planned for Op10 today., I want the algorithm to combine all the orders of same 10~150~Carbon Steel~DF on operation 10 with same Fixture and Locator (or) same Fixture but different Locator to be grouped together on the same day at maximum cases.
+		7. A fixed SIZE~CLASS~DESIGN will have fixed FIXTURE and LOCATOR in MCH_ITEMWISE_FIXTURE_LOCATOR., in cases where orders of batch may consist of both Priority orders (CDD is not null) and Safety Stock order (where CDD is null) and when these batches go through higher time consuming Task like VB03 (Weld overlay), Stemboring, Cone Finish and StemBore + Cone Finish (VB04, VB05, VB06), It is usually better to go with batch without Safety stock. In those case u might consider safety stock as last priority., but I still need your help on how to handle this situation. 
+		   7.1. But An important thing is in MCH_FIXTURE_LOCATOR table you will give you information on how many fixture (DEVICE_NAME = (Fixture ID) and DEVICE_TYPE = "F") are available on that particular Fixture ID in our shop floor material stock and simililarly No of Locators (DEVICE_NAME = (Locator ID) and DEVICE_TYPE = "L") of that particular Locator ID in our shop floor material stock. We HAVE TO add two new columns in MCH_SCHEDULE_OUTPUT (Engine1 result) in such a way that every time we assign a production order of an operation to a Machine we have to record the Fixture ID and Locator ID from DEVICE_NAME of MCH_FIXTURE_LOCATOR and record it in the two new columns created in MCH_SCHEDULE_OUTPUT, this is done because there are only a fixed no of Fixtures and Locators., and the batching should take that into consideration.
+
+
+Revised Example:
+	
+| Priority no (Lower the CDD, Higher the Priority) | SIZE | CLASS | MOC | DESIGN | QTY | FIXTURE ID | LOCATOR ID |
+|:---|:---|:---|:---|:---|:---|:---|
+| 1 | 10 | 150 | Carbon Steel | DF | 5 | A | 1 |
+| 6 | 10 | 150 | Stainless Steel | LUG | 3 | A | 2 |
+| 5 | 10 | 150 | Carbon Steel | DF | 4 | A | 1 |
+| 4 | 10 | 300 | Stainless Steel | DF | 3 | A | 3 |
+| 7 | 14 | 150 | Carbon Steel | DF | 5 | B | 8 |
+| 2 | 14 | 150 | Carbon Steel | DF | 5 | B | 8 |
+| 3 | 16 | 150 | Stainless Steel | DF | 3 | B | 9 |
+
+Here in this case how would you process or Prioritise the orders., It is simple :
+| 1 | 10 | 150 | Carbon Steel |  DF | 5 | A | 1 | is Priority no 1 (Higher Priority (1) and since it is the first piece both FIXTURE_CHANGE_TIME and LOCATOR_CHANGE_TIME should be Added). If the previously executed order on that machine was of same MOC type then no CLEANING_TIME is required to be added else add CLEANING_TIME and incase if it is the first order assigned to the machine then no CLEANING_TIME is required. Add LOAD_UNLOAD_TIME per piece So it is batched with,
+| 5 | 10 | 150 | Carbon Steel | DF | 4 | A | 1 | so this will be batched with Priority no 1 (Similiar SIZE~CLASS~MOC~DESIGN, FIXTURE and LOCATOR) (Here there is no need of adding FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME, CLEANING_TIME and only LOAD_UNLOAD_TIME per piece is added) and will be no 2,
+| 6 | 10 | 150 | Stainless Steel |  LUG | 3 | A | 2 | followed by this order because it is of same class (150), this is of High importance all similar SIZE~CLASS should be completed in Batched together firstso, here in this order we only have locator change and MOC change ( So only LOCATOR_CHANGE_TIME and CLEANING_TIME are included at first piece) (Add LOAD_UNLOAD_TIME per piece) is required, because of which this will be no 3
+| 4 | 10 | 300 | Stainless Steel | DF | 3 | A | 3 | followed by this because it will be only locator change (only LOCATOR_CHANGE_TIME is included) and (Add LOAD_UNLOAD_TIME per piece), it will be no 4
+| 2 | 14 | 150 | Carbon Steel | DF | 5 | B | 8 | followed by this order, because Higher Priority (2) (here FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME and CLEANING_TIME will be added at first piece) and (Add LOAD_UNLOAD_TIME per piece),so it will be no 5 and which is batched with,
+| 7 | 14 | 150 | Carbon Steel | DF | 5 | B | 8 | same fixture, locator type and MOC (so no extra time is added) but (Add LOAD_UNLOAD_TIME per piece), so it will be at no 6,
+| 3 | 16 | 150 | Stainless Steel | DF | 3 | B | 9 | at last this orders is scheduled at no 7 (same fixture so only LOCATOR_CHANGE_TIME and CLEANING_TIME is included) but add LOAD_UNLOAD_TIME per piece
+
+Ask me about anything you are not certain about before working on developing this logic to a code structure and updating Claude.md

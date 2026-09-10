@@ -321,12 +321,24 @@ duration_minutes =
   change only; different fixture ⇒ both. First batch on a cold machine pays both.
 - The resulting `duration_minutes` is then spread across working windows (D.4 pause/resume), and the
   machine takes 20-min cooling before its next batch.
+- **No fixture/locator match (D.11 fallback):** if `(SIZE_INCH, CLASS, DESIGN, TASK)` has no row in
+  MCH_ITEMWISE_FIXTURE_LOCATOR for any candidate machine, the fixture/locator terms drop out entirely:
+  `duration_minutes = Σ over pieces ( CYCLE_TIME[order, op] )`. No change-time, no load/unload, no
+  fixture-run membership, no pool involvement — see D.11.
+- **Per-order completion within a shared atomic batch:** pieces inside one atomic batch are processed
+  **sequentially in priority order** (committed sub-batch before safety, CDD-ascending within
+  committed — D.9/D.10), not as one indivisible blob credited to every member at once. Each order's
+  `end_timestamp` for that operation is when **its own** contiguous slice of pieces finishes — even
+  though the whole batch shared one fixture mount with zero changeover between members.
 
 ### D.6 — Batching logic (how fixture runs are built)
 
 1. **Scope & filters** (D.11) first: keep only schedulable operations.
-2. **Form atomic batches:** group in-scope order-operations by `(SIZE~CLASS~DESIGN, TASK)`. Each group
-   is one atomic batch carrying its FIXTURE and LOCATOR (looked up from MCH_ITEMWISE_FIXTURE_LOCATOR).
+2. **Form atomic batches — fixture-having ops only:** group in-scope order-operations that HAVE a
+   fixture/locator match by `(SIZE~CLASS~DESIGN, TASK)`. Each group is one atomic batch carrying its
+   FIXTURE and LOCATOR (looked up from MCH_ITEMWISE_FIXTURE_LOCATOR). Ops with **no** fixture/locator
+   match (D.11) skip this whole section — they are dispatched individually via D.7 machine selection
+   and the D.5 no-fixture duration formula, never grouped into a fixture run.
 3. **90-day consolidation window (from run date):** atomic batches may only pull in orders whose `CDD`
    is within **today + 90 days** of each other. The window governs *only which orders may be batched
    together* — every eligible order is still scheduled; it just isn't consolidated with something more
@@ -398,17 +410,31 @@ Split each fixture/locator group into a **committed sub-batch** (CDD not null) a
 
 ### D.11 — Scheduling scope & preprocessing filters
 
-An operation is scheduled iff **all** hold:
+An operation is **scheduled** (appears on the output, consumes real machine time) iff **all** hold:
 - `CYCLE_TIME > 0` (drop CT=0 rows as today),
 - `balance_qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED(null→0) > 0`,
 - `WORK_CENTER` does **not** contain `'QAINSP'` (QA gates excluded from scheduling, shown in UI),
-- it has a **routing** entry in MCH_MACHINE_PRIORITY (TASK present), **and**
-- it has a **fixture/locator** entry in MCH_ITEMWISE_FIXTURE_LOCATOR.
+- `CLASS != 'PN10'` (deliberately excluded — no established, complete routing/fixture setup for this
+  class yet; revisit once the ERP side is ready), **and**
+- it has a **routing** entry in MCH_MACHINE_PRIORITY (TASK present).
 
-An operation that has routing but **no fixture/locator row** is **skipped transparently** — precedence
-bridges over it (the previous scheduled op connects to the next scheduled op), exactly like today's
-unrouted-op handling. The scheduled set remains essentially the **VB0x machining tasks**. Shifts
-normalised to lowercase on read.
+**Fixture/locator lookup is optional, not gating.** Whether `(SIZE_INCH, CLASS, DESIGN, TASK)` has a
+matching row in MCH_ITEMWISE_FIXTURE_LOCATOR determines *how* the op is scheduled, not *whether*:
+
+- **Has a fixture/locator match** (on at least one candidate machine): scheduled via the full fixture
+  batching/pool/mount-carryover machinery (D.5–D.8) — this is the **VB0x machining tasks**.
+- **No fixture/locator match** — e.g. a task code absent from the table entirely (`VA03` Blasting,
+  `VB09` Phosphating, and similar non-machining steps are *expected* to have no fixture concept), or a
+  specific machine simply not yet entered for an otherwise-covered task (e.g. `2PMC17` missing rows
+  while `2PMC16` has them): the operation is **still scheduled**, using ordinary routing + soft
+  priority machine selection (D.7) and the no-fixture duration formula (D.5 fallback) — plain
+  `Σ CYCLE_TIME`, no fixture/locator effects, not part of any fixture run, `FIXTURE_ID`/`LOCATOR_ID`
+  left `NULL` on its output row. **Never silently drop or bridge over an op just because fixture data
+  is missing** — only the five bullets above ever cause an op to be skipped entirely.
+
+An op with genuinely **no routing entry at all** is skipped, precedence bridging over it exactly like
+today's unrouted-op handling (this is the only "skip transparently" case left). Shifts normalised to
+lowercase on read.
 
 ### D.12 — Solver architecture
 
@@ -420,12 +446,24 @@ normalised to lowercase on read.
 
 ### D.13 — Output
 
-- MCH_SCHEDULE_OUTPUT (or a revised table — schema is finalised in Phase 1; we may add tables freely):
-  **one row per `(PRODUCTION_ORDER, OPERATION)`** carrying its completion date, chosen `WORK_CENTER`,
-  `BALANCE_QTY`, and the two new columns **`FIXTURE_ID VARCHAR2(40)`** and
-  **`LOCATOR_ID VARCHAR2(40)`** (holding the `DEVICE_NAME` actually assigned, so the finite pool stays
-  auditable). `BATCH_KEY` becomes **fixture-based**. An absolute start/end timestamp may be added so a
-  future Gantt has what it needs.
+- MCH_SCHEDULE_OUTPUT gains exactly **4 new columns** (Phase 1 DDL,
+  `backend/testing/phase_d1_schema_update.sql`): `FIXTURE_ID VARCHAR2(40)`, `LOCATOR_ID VARCHAR2(40)`
+  (the `DEVICE_NAME` actually assigned; `NULL` for a no-fixture-match op per D.11), and
+  `START_TIMESTAMP` / `END_TIMESTAMP TIMESTAMP` (absolute continuous-time bounds for this row —
+  needed because Model D no longer has a clean (date, shift) slot to hang display offsets on).
+  **One row per `(PRODUCTION_ORDER, OPERATION)`**, carrying its completion date, chosen `WORK_CENTER`,
+  and `BALANCE_QTY` as today. `BATCH_KEY` becomes **fixture-based** (holds the FIXTURE value, or
+  `NULL` for a no-fixture-match op) — same column, new meaning.
+- **No separate live fixture/locator tracking table.** The hard pool constraint (D.8) is enforced by
+  the dispatch simulator's **in-memory, transient** state during one run (a `busy_until` map per
+  device) — discarded once the run finishes writing. Post-hoc auditability that the pool was never
+  over-allocated comes from `MCH_SCHEDULE_OUTPUT` itself: group by `FIXTURE_ID`/`LOCATOR_ID`, check no
+  more than `QUANTITY` rows' `START_TIMESTAMP`–`END_TIMESTAMP` ranges overlap at any instant.
+- **Completion-date derivation:** an order's **operation end date** = the `END_TIMESTAMP` of *that
+  order's own* contiguous slice within its atomic batch (D.5 — pieces inside a shared batch are
+  processed sequentially in priority order, not credited to every member at once). An order's
+  **production completion date** = the `END_TIMESTAMP` of its **last schedulable operation**
+  (ascending OPERATION_NO), same definition Model C uses today.
 - The Gantt shows the operation's **completion date** (when it ends), not its start.
 - **No historical retention:** each run deletes prior rows and writes fresh (unchanged from Model C).
 

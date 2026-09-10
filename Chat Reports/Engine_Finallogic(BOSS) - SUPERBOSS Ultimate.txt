@@ -5,7 +5,7 @@ These are the fundamental changes we are going to implement:
 
 1. In MCH_WIP we have two types of Production Orders.,
 	1. ORDER_STATUS is "Active". These are Production orders for which the foundry materials are available in shop floor, assigned to those respective Production Orders for Machining Process to start. These orders should be planned as usual (check the CDD, batch the orders according to batching logic and assign to machines based on the operation and priority.) No external logic constraint is required.
-	2. ORDER_STATUS is "Planned". These are Production Orders for which the foundry materials are C.N.A (Currently Not Available) in the shop floor, but materials assigned for those respective production orders but the date at which the foundry materials will arrive on the shop floor will be on their respective PRODUCTION_START_DATE_AND_TIME column of MCH_WIP. In this case the Engine1 has to plan the production to start for that order at or near the PRODUCTION_START_DATE_AND_TIME (consider that dates first shift also) and to be delivered before its CDD. 
+	2. ORDER_STATUS is "Planned". These are Production Orders for which the foundry materials are C.N.A (Currently Not Available) in the shop floor, but materials assigned for those respective production orders but the date at which the foundry materials will arrive on the shop floor will be on their respective PRODUCTION_START_DATE_AND_TIME column of MCH_WIP. In this case the Engine1 has to plan the production to start for that order at PRODUCTION_START_DATE_AND_TIME + 1 day or near (consider that dates (PRODUCTION_START_DATE_AND_TIME + 1) first shift also) and to be delivered before its CDD. 
 Always EVERY PRODUCTION ORDER SHOULD BE TRIED TO DELIVER ON OR BEFORE ITS CDD.
 
 2. BATCHING Logic

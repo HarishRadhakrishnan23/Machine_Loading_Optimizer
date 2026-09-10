@@ -1,0 +1,25 @@
+Q1 — Can a MOC change ever happen without a locator change?
+Since the locator is now keyed by SCMD, MOC change seems to always imply a locator change (they co-occur in every step of your example). If that's always true, I track MOC only for the cleaning charge but it never stands alone. If there exist two SCMD combos that share the same locator but different MOC (cleaning charged, locator unchanged), I need to know — it changes the carryover bookkeeping.
+Answer: See same SCMD will have same FIXTURE and LOCATOR (No change). Even if the MOC changes the LOCATOR or FIXTURE doesn't change.
+
+Q2 — Is FIXTURE still MOC-independent?
+Your point 1 says "similar SIZE~CLASS will have Fixture same but only the Locator change." I read this as: FIXTURE is fixed by SIZE~CLASS (identical across MOC and DESIGN within that size-class); only the LOCATOR varies by DESIGN/MOC. Confirm — because a "fixture run" deliberately spans multiple SCMD sharing one fixture, so I need fixture guaranteed constant across MOC.
+Answer: See there is a contradiction here., even Similar SIZE~CLASS will have different fixture., so don't try to generalize Fixture and Locator change nature., look at the data and logic., If the FIXTURE from MCH_ITEMWISE_FIXTURE_LOCATOR is same then the fixture is same and the same is applied for LOCATOR.
+
+Q3 — Intra-fixture-run ordering rule.
+In your new example, Fixture A runs as 10-150-CS-DF(loc1) → 10-150-CS-DF(loc1) → 10-150-SS-LUG(loc2) → 10-300-SS-DF(loc3). This is consistent with "group by SIZE~CLASS first, then by locator." (Note: the old D.15 ordered by priority-within-fixture instead — so this genuinely changed.) When these three goals conflict — keep same SIZE~CLASS together, minimize LOCATOR changes, minimize MOC CLEANING — which wins? e.g., within one fixture: CS-DF(loc1), SS-LUG(loc2), CS-WAF(loc4) — do I order CS,CS,SS (1 cleaning, but locator jumps 1→4→2) or CS,SS,CS (2 cleanings, locators 1→2→4)? Your example doesn't disambiguate this.
+Answer: See always try to club similar SIZE~CLASS (with same FIXTURE and LOCATOR) first, then club minimized LOCATOR change orders together, then minimized MOC changes together. In the given example CS-DF(loc1), SS-LUG(loc2), CS-WAF(loc4) — order CS,CS,SS (1 cleaning, and the locator jumps 1→4→2) is the correct option.
+
+Q4 — Constancy granularity + CLEANING_TIME machine-specificity.
+My Phase-1 validator proved FIXTURE/LOCATOR are constant across WORK_CENTER per SIZE~CLASS~DESIGN~TASK. That check now moves to per SIZE~CLASS~MOC~DESIGN~TASK. And is CLEANING_TIME machine-specific (like FIXTURE_CHANGE_TIME etc.), or a single global constant per MOC-change? I'll re-run the validator at the new granularity either way — just confirm the expectation.
+Answer: Yes, that check now moves to per SIZE~CLASS~MOC~DESIGN~TASK. See CLEANING_TIME is globally the same (15mins), but we have given it as a separate data per machine in MCH_ITEMWISE_FIXTURE_LOCATOR like any other time, the reason being it might even change per machine in future. So keep CLEANING_TIME machine specific.
+
+Q5 — Output columns.
+The doc adds no new MCH_SCHEDULE_OUTPUT column for MOC (it's already derivable from MCH_WIP per order). I plan to leave the 4 columns we already added as-is and not add a MOC column — BATCH_KEY stays the FIXTURE value. Confirm, or do you want MOC/CLEANING recorded explicitly on the output row for auditability?
+Answer: No, I dont want MOC/CLEANING recorded explicitly on the output row for auditability
+
+Q6 — Does this reset Phase 1?
+The fixture table schema changed (new columns) and my loader/validator assume the old key. I'll need to: update the loader, re-run the Phase-1 vocabulary + constancy validators at SCMD granularity, then proceed to Phase 2. Just confirming you're OK that this re-opens Phase 1 briefly rather than being purely a Phase-2 change.
+Answer: Yes, Reset phase 1
+
+If you still have any doubts clarify with me first then after confirming proceed making changes in claude.md and restarting phase 1

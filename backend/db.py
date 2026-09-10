@@ -106,9 +106,39 @@ def read_routing_master() -> pd.DataFrame:
     Read capability matrix from MCH_MACHINE_PRIORITY view.
     Returns: DataFrame with columns (COMPANY, SIZE_INCH, CLASS, MOC, DESIGN, ITEM_CATEGORY,
     TASK, MACHINE_PRIORITY, WORK_CENTER, SETUP_TIME).
+
+    Model D note: SETUP_TIME is IGNORED by Model D (replaced by FIXTURE_CHANGE_TIME /
+    LOCATOR_CHANGE_TIME from MCH_ITEMWISE_FIXTURE_LOCATOR). Only used for machine
+    capability/priority lookup.
     """
     with get_connection() as conn:
         return pd.read_sql("SELECT * FROM MCH_MACHINE_PRIORITY", conn)
+
+
+def read_fixture_locator_master() -> pd.DataFrame:
+    """
+    Read itemwise fixture/locator master from MCH_ITEMWISE_FIXTURE_LOCATOR view.
+    Keyed by (SIZE_INCH, CLASS, DESIGN, TASK, WORK_CENTER) — MOC-independent.
+
+    Returns: DataFrame with columns (SIZE_INCH, CLASS, DESIGN, TASK, WORK_CENTER,
+    FIXTURE, LOCATOR, FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME, LOAD_UNLOAD_TIME,
+    USER_ID, USER_DATE). Model D (D.1): change-times apply once (to the batch's first
+    piece); LOAD_UNLOAD_TIME is per piece.
+    """
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM MCH_ITEMWISE_FIXTURE_LOCATOR", conn)
+
+
+def read_fixture_locator_inventory() -> pd.DataFrame:
+    """
+    Read physical fixture/locator inventory counts from MCH_FIXTURE_LOCATOR view.
+
+    Returns: DataFrame with columns (DEVICE_NAME, DEVICE_TYPE, QUANTITY, USER_ID,
+    USER_DATE). DEVICE_TYPE is 'F' (fixture) or 'L' (locator). QUANTITY is a hard,
+    plant-wide concurrency cap (Model D D.8) — never a soft/advisory limit.
+    """
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM MCH_FIXTURE_LOCATOR", conn)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

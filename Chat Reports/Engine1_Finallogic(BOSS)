@@ -1,0 +1,218 @@
+Our team has discussed on a lot of topics to bring the Engine1 to produce results which are "Close to SHOP FLOOR REALITY" and we have decided to make some shift changes that will involve some fundamental structural re-alteration of Engine1 Logic, which I am going to mention below.
+The Plan is simple to make a few fundamental and structural changes which will contain a lot of topics on the core structure of constraints in Engine1. I want you to first understand all the constraints I am going to mention here, understand that, then we will discuss the things you are unclear about and make a desicion together through those discussions and then proceed to make changes in the claude.md and code. Before going through these changes read the current claude.md once and understand to understand these changes better.
+
+These are the fundamental changes we are going to implement:
+
+1. In MCH_WIP we have two types of Production Orders.,
+	1. ORDER_STATUS is "Active". These are Production orders for which the foundry materials are available in shop floor, assigned to those respective Production Orders for Machining Process to start. These orders should be planned as usual (check the CDD, batch the orders according to batching logic and assign to machines based on the operation and priority.) No external logic constraint is required.
+	2. ORDER_STATUS is "Planned". These are Production Orders for which the foundry materials are C.N.A (Currently Not Available) in the shop floor, but materials assigned for those respective production orders but the date at which the foundry materials will arrive on the shop floor will be on their respective PRODUCTION_START_DATE_AND_TIME column of MCH_WIP. In this case the Engine1 has to plan the production to start for that order at PRODUCTION_START_DATE_AND_TIME + 1 day or near that day (consider that dates (PRODUCTION_START_DATE_AND_TIME + 1 day) first shift also) and to be delivered before its CDD. 
+Always EVERY PRODUCTION ORDER SHOULD BE TRIED TO DELIVER ON OR BEFORE ITS CDD.
+
+2. BATCHING Information:
+	I will explain the Batching Information here, there will be clear cut explanation on BATCHING LOGIC and accurate explanation with more specfic Example down below, but try to understand from this explanation and correlate it with the logic.
+		1. Now the Whole concept of adding SETUP_TIME before every First Piece is lost and rather we add a Concept of Fixture and Locator. See, every SIZE~CLASS~MOC~DESIGN will have Locator attached to a Fixture. See every PARTICULAR SIZE~CLASS~MOC~DESIGN will have Fixed Fixture and Locator and every similar SIZE~CLASS will have Fixture same but only the Locator change.
+		2. When the Fixture is changed, both the FIXTURE_CHANGE_TIME (Time taken to change the Fixture) and LOCATOR_CHANGE_TIME (Time taken to change the Locator) from the MCH_ITEMWISE_FIXTURE_LOCATOR table, is added before the first piece of that batch.
+		3. When only the Locator is changed, the LOCATOR_CHANGE_TIME from the MCH_ITEMWISE_FIXTURE_LOCATOR table, is added.
+		4. Apart from this LOAD_UNLOAD_TIME is added for every piece in that batch so LOAD_UNLOAD_TIME should be multiplied with total quantity of that Batch which Engine1 has grouped.
+		5. Same SIZE~CLASS~MOC~DESIGN and Same operation should not be ideally carried out in different machine at same time or instance ., For Example if an 10~150~Carbon steel~DF order is planned for Op10 today., I want the algorithm to combine all the orders of same 10~150~Carbon steel~DF on operation 10 with same Fixture and Locator (or) same Fixture but different Locator to be grouped together on the same day at maximum cases.
+		6. A fixed SIZE~CLASS~MOC~DESIGN will have fixed FIXTURE and LOCATOR in MCH_ITEMWISE_FIXTURE_LOCATOR., in cases where orders of batch may consist of both Priority orders (CDD is not null) and Safety Stock order (where CDD is null) and when these batches go through higher time consuming Task like VB03 (Weld overlay), Stemboring, Cone Finish and StemBore + Cone Finish (VB04, VB05, VB06), It is usually better to go with batch without Safety stock. In those case u might consider safety stock as last priority., but I still need your help on how to handle this situation. 
+		   6.1. But An important thing is in MCH_FIXTURE_LOCATOR table you will give you information on how many fixture (DEVICE_NAME = (Fixture ID) and DEVICE_TYPE = "F") are available on that particular Fixture ID in our shop floor material stock and simililarly No of Locators (DEVICE_NAME = (Locator ID) and DEVICE_TYPE = "L") of that particular Locator ID in our shop floor material stock. We HAVE already added two new columns in MCH_SCHEDULE_OUTPUT (Engine1 result) in such a way that every time we assign a production order of an operation to a Machine we have to record the Fixture ID and Locator ID from DEVICE_NAME of MCH_FIXTURE_LOCATOR and record it in the two new columns created in MCH_SCHEDULE_OUTPUT, this is done because there are only a fixed no of Fixtures and Locators., and the batching should take that into consideration.
+		7. In MCH_SCHEDULE_OUTPUT I want you to help add a column called "REMARK" at the end. See the MCH_SCHEDULE_OUTPUT will have all records of Production Orders that are schedulable (alloted into batches and assigned machine, fixture, locator etc., ) from MCP_WIP. but for some orders there will be no allocation of Machine/Fixture and locator. So update the reason in this remark field that should be human readable / understandable.
+		
+3. Fixture Logic
+    See certain group of SIZE's (valves) will have same fixture, you can even verify this with the data in MCH_ITEMWISE_FIXTURE_LOCATOR. I have mentioned those groups below:
+	3.1. 3" - 6" (" - Inch)
+	3.2. 8" - 14"
+	3.3. 16" - 24"
+	3.4. 26" - 36"
+	3.5. 40" - 48"
+	But there are a few exceptions
+	3.6. If the DESIGN = "DFL" the fixture might change with respect to fixtures of other, same or similar SIZE~CLASS and different DESIGN's (DFS, LUG, WAF)
+	3.7. If the CLASS = "600" the fixture might change with respect to fixtures of other, same or similar SIZE (within those groupes).
+	
+4. TIMING LOGIC:
+	4.1. Whenever a Fixture is changed time calculation should be: FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * QTY (per piece LOAD_UNLOAD_TIME)
+	4.2. Whenever a Locator is changed time calculation should be: LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * QTY
+
+5. BATCHING LOGIC: 
+The Batching should always be done to reduce the overall Production Time of the machines of shop floor (By combining similar type Production Orders together) and maximizing Machine Utilization to produce better results
+	5.1. All the Production Orders which have same Fixtures and are to be assigned to a specfic machine for a specific operation should be combined to create a batch first, to reduce Fixture change time. Within that Batch combine all same SIZE~CLASS~MOC~DESIGN, then go to similar SIZE~CLASS~MOC~DESIGN with same fixture and Locator, then group it with orders where only LOCATOR is changed (here LOCATOR_CHANGE_TIME is added).
+	5.2. In that batch all the Production Orders with same SIZE~CLASS~MOC~DESIGN (exact same) should be combined together at first then combine similar SIZE~CLASS~MOC~DESIGN with same FIXTURE and LOCATOR type, then batch it with same FIXTURE but Different LOCATOR, and then finally go to different batch with different fixture and locator setting. When going to next batch always focus on CDD priority.
+	5.3. First identify the priority by CDD., then start batching that exact same SIZE~CLASS~MOC~DESIGN (within same machine and same task), then similar SIZE~CLASS~MOC~DESIGN with SAME FIXTURE AND LOCATOR for that machine and task, then go with same fixture but just different Locator and then go with a different batch that follows the same procedure.
+
+6. Planning Production Continously :
+	1. DO NOT PLAN SHIFT WISE., the plan should always be continuous. If a batch with a specific operation is completed in a Machine., that Machine should not be left ideal for not more than 20 mins., that is after completion of a Batch activity and 20 mins of cooling period that machine should be given the next task at 21st minute ( > or = 20 mins ). It doesn't matter if the 21st minute falls on same shift (or) the next shift (or) next available shift on a different day. Production should always be not ideal.
+	2. DO NOT have Capacity Restrictions on any Machine. All the Machines can load Infinte Capacity and Time. Production orders of specific Operation is alloted to Machine only based on Batch Priority, Machine Availability, Fixture and Locator availability and Maximum Machine Utilization.
+	3. See always consider all the Machine available into consideration while planning., do not plan only on a few machines and keep some machine ideal. If Machine is breakdown or unavailable then that information will be available on MCH_MACHINE_AVAILABILITY_BY_DATE, with which you can plan accordingly, but if there is no data regarding a machine then always consider that machine is available for all AVAILABLE_MINS (in MCH_MACHINE_AVAILABILITY, for all shifts all day and include it in plan.
+	
+Now I will Provide you a series of example for understanding the Scheduling Process
+BATCHING EXAMPLE 1: (Lets take a few orders and try to understand the Batching Logic concept). Consider these orders are assigned to same machine and same operation.
+
+| Priority no (Lower the CDD, Higher the Priority) | SIZE | CLASS | MOC | DESIGN | QTY | FIXTURE ID | LOCATOR ID |
+|:---|:---|:---|:---|:---|:---|:---|:---|
+| 2 | 10 | 150 | Carbon Steel | DFS | 5 | A | 1 |
+| 1 | 10 | 300 | Carbon Steel | DFS | 4 | A | 2 |
+| 3 | 8 | 150 | Stainless Steel | LUG | 10 | A | 3 |
+| 5 | 12 | 150 | Carbon Steel | DFS | 10 | A | 4 |
+| 4 | 10 | 150 | Carbon Steel | DFS | 21 | A | 1 |
+
+Here in this case how would you process or Prioritize the orders., It is simple :
+
+| 1 | 10 | 300 | Carbon Steel | DFS | 4 | A | 2 | - This will the first order to be pipelined because this it has high priority., Now this is where Batching logic starts., In the order list (in our case WIP), look for similae SIZE~CLASS~MOC~DESIGN with same fixture an locator for same machine and operation (in this case 10~300~CS~DF), we dont have any. So we look for same Fixture, Locator combo in order list (A, 2) we dont have any. So we look for same Fixture but different Locator with higher priority for next micro batch.
+| 2 | 10 | 150 | Carbon Steel | DFS | 5 | A | 1 | - This will be the second order to be pipelined and first order to be batched with previous order due to higher priority and similar fixture but only different locator. In this atomic batching, now look for same SIZE~CLASS~MOC~DESIGN, we have one order. So combine that in this atomic batch.
+| 4 | 10 | 150 | Carbon Steel | DFS | 21 | A | 1 | - This will be the third order to be pipelined and second order to be batched with previous orders due to same SIZE~CLASS~MOC~DESIGN similarity. now again look for same SIZE~CLASS~MOC~DESIGN, we dont have any. So look for same Fixture, Locator combo (A, 1), we dont have any so now go to same Fixture but different locator combo with higher priority.
+| 3 | 8 | 150 | Stainless Steel | LUG | 10 | A | 3 | - This will be the fourth order to be pipelined and third order to be batched with previous orders due to higher priority and similar fixture but only different locator. So now look for same SIZE~CLASS~MOC~DESIGN, we dont have any so go for Fixture, Locator combo (A, 3), we dont have any. So now go for same fixture but different locator combo.
+| 5 | 12 | 150 | Carbon Steel | DFS | 10 | A | 4 | - This will be the Fifth order to pipeline and last order to be batched with previous orders due to higher priority and similar fixture but only different locator.
+
+BATCHING EXAMPLE 2: This example will teach you how to execute a series of similar orders.
+
+| Priority no (Lower the CDD, Higher the Priority) | SIZE | CLASS | MOC | DESIGN | QTY | FIXTURE ID | LOCATOR ID |
+|:---|:---|:---|:---|:---|:---|:---|:---|
+| 1 | 12 | 150 | Carbon Steel | DFS | 5 | A | 1 |
+| 2 | 14 | 150 | Carbon Steel | DFS | 4 | A | 1 |
+| 3 | 12 | 300 | Carbon Steel | LUG | 10 | A | 1 |
+| 4 | 12 | 600 | Carbon Steel | DFS | 5 | A | 1 |
+
+Here in this case how would you process or Prioritize the orders., It is simple :
+
+| 1 | 12 | 150 | Carbon Steel | DFS | 5 | A | 1 | - This will be the First order to be executed (continue from here this for antha similar SIZE~CLASS ah combine pani mudi mothala approach )
+
+But For Every batch and QUANTITY we have to add LOAD_UNLOAD_TIME.
+ 		
+And I am giving Description for these tables for contextual understanding purpose:
+
+1. This is the Description of my MCH_WIP Table. It contains all the data of current Production Orders in pieline.
+
+Name                           Null? Type          
+------------------------------ ----- ------------- 
+COMPANY                              NUMBER        
+PRODUCTION_ORDER                     VARCHAR2(9)   
+PRODUCTION_START_DATE_AND_TIME       DATE          
+ORDER_STATUS                         VARCHAR2(70)  
+ITEM                                 VARCHAR2(47)  
+ITEM_DESCRIPTION                     VARCHAR2(40)  
+SIZE_INCH                            NUMBER        
+CLASS                                VARCHAR2(10)  
+MOC                                  VARCHAR2(25)  
+DESIGN                               VARCHAR2(25)  
+ITEM_CATEGORY                        VARCHAR2(103) 
+REFERENCE                            VARCHAR2(30)  
+QUANTITY_ORDERED                     NUMBER        
+CDD                                  DATE          
+OPERATION                            NUMBER        
+OPERATION_STATUS                     VARCHAR2(70)  
+TASK                                 VARCHAR2(8)   
+WORK_CENTER                          VARCHAR2(6)   
+QUANTITY_COMPLETED                   NUMBER        
+QUANTITY_REJECTED                    NUMBER        
+CYCLE_TIME                           NUMBER        
+  
+2. MCH_MACHINE_PRIORITY: Contains informationon which Machine should be priortized for which ITEM_CATEGORY and Which TASK. Do not Consider this SETUP_TIME at all.
+
+Name             Null?    Type          
+---------------- -------- ------------- 
+COMPANY                   NUMBER        
+SIZE_INCH        NOT NULL NUMBER        
+CLASS            NOT NULL VARCHAR2(10)  
+MOC              NOT NULL VARCHAR2(25)  
+DESIGN           NOT NULL VARCHAR2(25)  
+ITEM_CATEGORY             VARCHAR2(103) 
+TASK             NOT NULL VARCHAR2(8)   
+MACHINE_PRIORITY NOT NULL NUMBER        
+WORK_CENTER      NOT NULL VARCHAR2(6)   
+SETUP_TIME       NOT NULL NUMBER        
+
+3. MCH_MACHINE_AVAILABILITY: Machine Master Table used to identify what are the Available mins we have to work with per machine.
+
+Name           Null?    Type         
+-------------- -------- ------------ 
+COMPANY                 NUMBER       
+WORK_CENTER    NOT NULL VARCHAR2(6)  
+SHIFT          NOT NULL VARCHAR2(10) 
+WORKING_MINS   NOT NULL NUMBER       
+OEE            NOT NULL NUMBER       
+AVAILABLE_MINS NOT NULL NUMBER       
+
+4. MCH_MACHINE_AVAILABILITY_BY_DATE: Information regarding Machine Maintance break and Breakdowns are recorded here., if mention should be taken into consideration while planning.
+
+Name           Null?    Type         
+-------------- -------- ------------ 
+COMPANY                 NUMBER       
+WORK_CENTER    NOT NULL VARCHAR2(6)  
+WORKING_DATE            DATE         
+SHIFT          NOT NULL VARCHAR2(10) 
+WORKING_MINS   NOT NULL NUMBER       
+OEE            NOT NULL NUMBER       
+AVAILABLE_MINS NOT NULL NUMBER 
+
+And I have added two new table in my Oracle SQL Developer
+
+1. MCH_ITEMWISE_FIXTURE_LOCATOR : It contains Itemwise (SIZE~CLASS~MOC~DESIGN) information on Locator and Fixture and the Time details (only aplicable for the First piece change) involed in changing them. It also includes LOAD_UNLOAD_TIME which we have to calculate per piece.
+
+Name                Null?    Type         
+------------------- -------- ------------ 
+SIZE_INCH           NOT NULL NUMBER       
+CLASS               NOT NULL VARCHAR2(10) 
+MOC                 NOT NULL VARCHAR2(25) 
+DESIGN              NOT NULL VARCHAR2(25) 
+TASK                NOT NULL VARCHAR2(8)  
+WORK_CENTER         NOT NULL VARCHAR2(6)  
+FIXTURE                      VARCHAR2(20) 
+LOCATOR                      VARCHAR2(40) 
+FIXTURE_CHANGE_TIME          NUMBER       
+LOCATOR_CHANGE_TIME          NUMBER       
+LOAD_UNLOAD_TIME             NUMBER       
+CLEANING_TIME                NUMBER       
+USER_ID                      VARCHAR2(20) 
+USER_DATE                    DATE         
+      
+
+2. MCH_FIXTURE_LOCATOR: It contains the Quantity of Particular Fixture and Locator available on the shop floor material stock.
+
+Name        Null?    Type          
+----------- -------- ------------- 
+DEVICE_NAME NOT NULL VARCHAR2(40)  
+DEVICE_TYPE NOT NULL VARCHAR2(10)  
+DESCRIPTION          VARCHAR2(100) 
+QUANTITY             NUMBER        
+USER_ID              VARCHAR2(20)  
+USER_DATE            DATE    
+
+
+4. MCH_SCHEDULE_OUTPUT: Output of Engine1., Two new columns to allocate the Fixture ID (DEVICE_NAME from MCH_FIXTURE_LOCATOR) and the Locator ID (DEVICE_NAME from MCH_FIXTURE_LOCATOR). ( To keep track of available fixtures and Locators.
+
+Name             Null?    Type          
+---------------- -------- ------------- 
+RUN_ID           NOT NULL VARCHAR2(36)  
+PRODUCTION_ORDER NOT NULL VARCHAR2(9)   
+OPERATION_NO     NOT NULL NUMBER        
+TASK                      VARCHAR2(51)  
+WORK_CENTER      NOT NULL VARCHAR2(49)  
+SHIFT            NOT NULL VARCHAR2(10)  
+SCHEDULED_DATE   NOT NULL DATE          
+BALANCE_QTY      NOT NULL NUMBER        
+START_OFFSET_MIN NOT NULL NUMBER        
+END_OFFSET_MIN   NOT NULL NUMBER        
+GENERATED_AT     NOT NULL TIMESTAMP(6)  
+BATCH_KEY                 VARCHAR2(100) 
+IS_SAFETY_STOCK           CHAR(1)       
+FIXTURE_ID                VARCHAR2(40)  
+LOCATOR_ID                VARCHAR2(40)  
+START_TIMESTAMP           TIMESTAMP(6)  
+END_TIMESTAMP             TIMESTAMP(6)  
+
+5. MCH_SIM_RESULTS: This the table to store Output of Engine2: Nothing to change here as of now but just giving you information:
+
+Name                Null?    Type          
+------------------- -------- ------------- 
+SIM_ID              NOT NULL VARCHAR2(36)  
+ELEVATED_ORDER      NOT NULL VARCHAR2(200) 
+PRODUCTION_ORDER    NOT NULL VARCHAR2(9)   
+OLD_COMPLETION_DATE          DATE          
+NEW_COMPLETION_DATE          DATE          
+SLIP_DAYS                    NUMBER        
+RISK_FLAG           NOT NULL VARCHAR2(10)  
+CREATED_AT          NOT NULL TIMESTAMP(6)  
+
+
+Ask me about anything you are not certain about before working on developing this logic to a code structure and updating Claude.md
