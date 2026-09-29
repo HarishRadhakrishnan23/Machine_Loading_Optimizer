@@ -13,7 +13,7 @@
 
 **Vision:** A fully automated, ML-driven machine scheduling system that eliminates manual planning bottlenecks in Emerson's TOV valve manufacturing shop floor.
 
-**Mission:** Deliver real-time, optimal shift-level schedules across all machines and orders — minimizing delivery tardiness, maximizing machine utilization, and giving planners instant impact analysis when priorities change.
+**Mission:** Deliver real-time, shop-floor-realistic shift-level schedules across all machines and orders — minimizing delivery tardiness, maximizing machine utilization, respecting the plant's finite fixture/locator inventory, and giving planners instant impact analysis when priorities change.
 
 ---
 
@@ -24,8 +24,19 @@ An ML-based machine loading and scheduling web application for Emerson's Triple 
 Operations are always executed in strict sequential order determined by OPERATION_NO ascending. Operation numbers are normally multiples of 10 (10, 20, 30, 40...). When a new operation is inserted between two existing ones in the ERP, it is assigned the midpoint (e.g., Op35 inserted between Op30 and Op40). Always follow ascending OPERATION_NO — never assume fixed gaps.
 
 The system has two ML engines:
-1. Engine 1 — Scheduling Optimizer: Uses CP-SAT (Google OR-Tools) to generate an optimal shift-level Gantt schedule for all pending orders across all machines.
-2. Engine 2 — Recommendation Engine: Simulates what happens when a planner wants to elevate the priority of one or more orders, and produces a risk report showing impact on promise dates of other orders.
+1. **Engine 1 — Scheduling Optimizer**: a deterministic, continuous-time discrete-event dispatch simulator that produces a shop-floor-realistic schedule for all pending orders across all machines, driven by fixture/locator availability rather than machine-minute capacity. This is **Model E** (see below) — the current and final model.
+2. **Engine 2 — Recommendation Engine**: simulates what happens when a planner wants to elevate the priority of one or more orders, and produces a risk report showing impact on promise dates of other orders.
+
+---
+
+## Model history (trace — do not re-implement these, context only)
+
+The project went through four scheduling-engine designs before arriving at **Model E**, the current and final design:
+
+- **Model B** (retired, never shipped): CP-SAT, one machine locked per whole operation (`assign[t,m]`) plus a hard contiguity constraint forcing every slot between start and end to be occupied. A single closed slot anywhere in that span made the model INFEASIBLE even at ~5% utilisation. Deleted for this reason.
+- **Model C** (shipped, Phases 0–4 complete — see `PHASE2_SUMMARY.md`–`PHASE4_SUMMARY.md`): CP-SAT allocating integer piece-quantities into discrete `(machine, date, shift)` capacity buckets on a global slot index, with `SETUP_TIME`-based setup economics and a guaranteed greedy fallback. This is what is actually running in the codebase today (`engine1_scheduler.py`), pending the Model E rebuild described in this document.
+- **Model D** (target spec, superseded before full implementation — only schema/audit groundwork landed): introduced the core idea Model E keeps — a continuous-time dispatch simulator with no machine-minute cap, driven by a finite plant-wide fixture/locator pool (`MCH_ITEMWISE_FIXTURE_LOCATOR`, `MCH_FIXTURE_LOCATOR`) instead of `SETUP_TIME`. Its batch/fixture key was `SIZE~CLASS~DESIGN` (MOC excluded). Superseded by Model E before its dispatch simulator, batching, or pool-constraint phases were built.
+- **Model E** (current, final): keeps Model D's continuous-time/fixture-pool architecture, but **includes MOC in the batch/fixture key everywhere** (`SIZE~CLASS~MOC~DESIGN`), replaces Model D's abstract "fixture runs, locator-ordered" batching with an explicit, fully-specified priority-walk batching algorithm, adds a `REMARK` column so every WIP row is auditable (scheduled or not), surfaces each order's overall completion date/shift directly on every one of its rows, and fully retires CP-SAT — the dispatch simulator is the only engine, not an optional post-optimizer.
 
 ---
 
@@ -33,22 +44,35 @@ The system has two ML engines:
 
 Every time-related value in every table is always in minutes:
 - CYCLE_TIME (cycle time per piece) → minutes
-- SETUP_TIME (setup time per machine per ITEM_CATEGORY change) → minutes
+- FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME, LOAD_UNLOAD_TIME (MCH_ITEMWISE_FIXTURE_LOCATOR) → minutes
 - WORKING_MINS → minutes (in both MCH_MACHINE_AVAILABILITY and MCH_MACHINE_AVAILABILITY_BY_DATE)
 - AVAILABLE_MINS → minutes (pre-computed in the ERP views — use directly)
-- start_offset_min, end_offset_min (in MCH_SCHEDULE_OUTPUT) → minutes
-
-**start_offset_min / end_offset_min are REAL minutes into the shift (0 … WORKING_MINS of that shift), NOT productive/OEE minutes.** They are a POST-SOLVE display layout only — never a solver constraint. `AVAILABLE_MINS` (the OEE-haircut capacity) governs how much work fits in a slot; `WORKING_MINS` is only the wall-clock canvas the display offsets are drawn on. See **Time-Mapping Strategy (Model C)** below.
 
 Never apply any unit conversion. All values arrive as minutes from Oracle.
+
+`SETUP_TIME` (still present in `MCH_MACHINE_PRIORITY`, ERP-owned) is **ignored by the application** — Model E replaced setup-time economics with fixture/locator change-time economics (see Model E section).
+
+---
+
+## Shift clock-time convention (fixed)
+
+None of the 6 ERP views carry a shift's real clock-time-of-day — only its *duration* (`WORKING_MINS`). The engine's internal clock (`TimePoint`: day + shift + minutes-into-shift) doesn't need one, but converting a `TimePoint` into a real Oracle `TIMESTAMP` (for `START_TIMESTAMP`/`END_TIMESTAMP`) does. This mapping is fixed, plant-wide, identical every day it applies, and does **not** come from Oracle — it's a hardcoded constant:
+
+| Shift | Starts | Ends |
+|---|---|---|
+| first | 07:00 | 15:30 |
+| second | 15:30 | 23:30 |
+| third | 23:30 | 07:00 (next calendar day) |
+
+Applies Monday through Saturday — Monday's first shift starts the week at 07:00, and Saturday's third shift ends Sunday at 07:00. There is no defined shift window for the rest of Sunday (07:00 Sunday → 07:00 Monday): this isn't a rule the engine hardcodes — it falls out naturally from `AVAILABLE_MINS` being 0 for that window in the ERP data (baseline or daily-override), exactly like any other closed shift (CLAUDE.md's existing "no capacity cap, closed shifts are skipped" behavior handles it with no special-casing).
+
+A `TimePoint`'s `minute` offset is assumed to map linearly onto real clock time from the shift's start above — there's no finer-grained break/downtime subdivision in any ERP source to do otherwise.
 
 ---
 
 ## Data sources — Oracle DB
 
-All four upstream data sources are **read-only ERP views** (created and owned in Oracle by the
-ERP team; this application only SELECTs from them). The application writes to exactly **two**
-tables, which it creates and owns: MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2).
+**Six** upstream data sources are **read-only ERP views** (created and owned in Oracle by the ERP team; this application only SELECTs from them). The application writes to exactly **two** tables, which it creates and owns: MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2).
 
 ### Table / view name map (ERP name ⇄ legacy name used in this doc)
 | Role in this doc | Oracle object (real name)         | Kind  | Access |
@@ -57,918 +81,300 @@ tables, which it creates and owns: MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RE
 | machine_daily    | MCH_MACHINE_AVAILABILITY_BY_DATE  | view  | read-only |
 | routing_master   | MCH_MACHINE_PRIORITY              | view  | read-only |
 | wip_orders       | MCH_WIP                           | view  | read-only |
+| fixture_locator_master    | MCH_ITEMWISE_FIXTURE_LOCATOR | view | read-only |
+| fixture_locator_inventory | MCH_FIXTURE_LOCATOR          | view | read-only |
 | schedule_output  | MCH_SCHEDULE_OUTPUT               | table | read + write (Engine 1 writes) |
 | sim_results      | MCH_SIM_RESULTS                   | table | read + write (Engine 2 writes) |
 
-Legacy names (machine_master, wip_orders, schedule_output, …) are kept as readable aliases
-throughout this document; the **real Oracle object names are the MCH_* names above**.
+### Batch / fixture key — used everywhere, all tables (Model E)
 
-### Column-name changes vs. earlier drafts (apply everywhere)
-- machine identifier: **WORK_CENTER** (was `machine_name`) — unified across all views.
-- shift column: **SHIFT** (was `working_shift`) — still normalized to lowercase on read.
-- machine_daily date column: **WORKING_DATE** (was `date`).
-- **No DOWNTIME column** anymore — the views publish AVAILABLE_MINS directly (already OEE-adjusted).
-- In MCH_WIP: the ascending sequence number is the **OPERATION** column (this doc historically
-  calls it `OPERATION_NO` — they are the same thing), and the task/operation code (VB02, R002, …)
-  is the **TASK** column (this doc historically called that `OPERATION`).
-- In MCH_MACHINE_PRIORITY (routing): the operation code is **TASK**, the capable machine is
-  **WORK_CENTER**. Routing ⇄ WIP join is `MCH_MACHINE_PRIORITY.TASK = MCH_WIP.TASK`.
-- **COMPANY** appears in every view — a tenant/company filter; informational, not used by the engine.
+**`SIZE_INCH ~ CLASS ~ MOC ~ DESIGN`** — this exact field order, computed directly from the raw typed columns on every table that needs it. This **replaces** Model D's MOC-excluded `SIZE~CLASS~DESIGN` key.
 
----
+> **Critical implementation detail, carried forward from Model D and still true:** this key must **never** be derived by string-splitting `ITEM_CATEGORY`. `ITEM_CATEGORY`'s own concatenation order is `Size~Class~Design~MOC` (**Design before MOC** — a different order than the batch/fixture key's `MOC` before `DESIGN`), and when DESIGN is blank in the ERP data, `ITEM_CATEGORY`'s concatenated string silently drops that segment, shifting MOC into the position DESIGN would have occupied. Always build the key from the four typed columns (`SIZE_INCH`, `CLASS`, `MOC`, `DESIGN`) directly, in that order, independent of `ITEM_CATEGORY`.
 
 ### machine_master → MCH_MACHINE_AVAILABILITY (read-only view)
 **Exact Oracle columns:** COMPANY, WORK_CENTER, SHIFT, WORKING_MINS, OEE, AVAILABLE_MINS
-- Baseline capacity per machine (WORK_CENTER) per shift (SHIFT).
-- WORK_CENTER is the machine identifier throughout the system (was `machine_name`).
-- AVAILABLE_MINS = WORKING_MINS × OEE, pre-computed in the view — use AVAILABLE_MINS directly.
+- Baseline availability window per machine (WORK_CENTER) per shift (SHIFT). Under Model E this is a **rate/window, not a hard cap** — see Model E §7.
 - SHIFT stored in mixed case in DB; always normalize to lowercase on read: "first", "second", "third".
-- All machines are available for all shifts by default — this view is the universal baseline.
+- All machines are available for all shifts by default — this view is the universal baseline. No row for a machine ⇒ that machine is fully available for all its baseline AVAILABLE_MINS.
 - OEE = 0.85 uniformly across all machines and all shifts (treat as fixed in v1).
-- Used as fallback when MCH_MACHINE_AVAILABILITY_BY_DATE has no row for a WORK_CENTER+shift+date.
 - COMPANY: tenant/company code — informational, not used by the engine.
 
 ### machine_daily → MCH_MACHINE_AVAILABILITY_BY_DATE (read-only view)
 **Exact Oracle columns:** COMPANY, WORK_CENTER, WORKING_DATE, SHIFT, WORKING_MINS, OEE, AVAILABLE_MINS
-- Day-specific capacity overrides, **prepared entirely in the ERP** — this application only reads it.
-- **Read-only.** There is NO UI write layer and NO application write path for this view; the earlier
-  "planner edits machine_daily via a form" requirement is removed. Closures/maintenance days are
-  set upstream in the ERP.
-- **No DOWNTIME column** — the view already publishes AVAILABLE_MINS (OEE-adjusted). Use AVAILABLE_MINS directly.
-- WORKING_DATE is the date column (was `date`); WORK_CENTER is the machine; SHIFT is the shift.
-- If AVAILABLE_MINS = 0 for a WORK_CENTER+shift+WORKING_DATE → that machine does not work that slot.
+- Day-specific availability overrides (breakdown/maintenance), prepared entirely in the ERP — this application only reads it. **Read-only, no UI write path.**
+- `AVAILABLE_MINS = 0` for a WORK_CENTER+shift+WORKING_DATE ⇒ that machine does not work that window.
 - If no row exists for a WORK_CENTER+shift+date → fall back to the MCH_MACHINE_AVAILABILITY baseline.
-- SHIFT normalized to lowercase on read.
-- COMPANY: tenant/company code — informational, not used by the engine.
+- SHIFT normalized to lowercase on read. COMPANY informational only.
 
 ### wip_orders → MCH_WIP (read-only view)
-**Exact Oracle columns:** COMPANY, PRODUCTION_ORDER, PRODUCTION_START_DATE_AND_TIME, ORDER_STATUS,
-ITEM, ITEM_DESCRIPTION, SIZE_INCH, CLASS, MOC, DESIGN, ITEM_CATEGORY, REFERENCE, QUANTITY_ORDERED,
-CDD, OPERATION, OPERATION_STATUS, TASK, WORK_CENTER, QUANTITY_COMPLETED, QUANTITY_REJECTED, CYCLE_TIME
+**Exact Oracle columns:** COMPANY, PRODUCTION_ORDER, PRODUCTION_START_DATE_AND_TIME, ORDER_STATUS, ITEM, ITEM_DESCRIPTION, SIZE_INCH, CLASS, MOC, DESIGN, ITEM_CATEGORY, REFERENCE, QUANTITY_ORDERED, CDD, OPERATION, OPERATION_STATUS, TASK, WORK_CENTER, QUANTITY_COMPLETED, QUANTITY_REJECTED, CYCLE_TIME
 
-**Column meanings:**
-- CDD = Committed Delivery Date = PDD (Promise Delivery Date). Use CDD throughout the codebase.
-- **OPERATION** (NUMBER) = the ascending operation-sequence number (10, 20, 30, 35, …). This is the
-  value this doc historically calls `OPERATION_NO`; the two names refer to the same column.
-- **TASK** (VARCHAR2) = the task/operation code (e.g., VB02, VB03, R002 for rework). This is the value
-  this doc historically called `OPERATION`. Routing capability is matched on TASK.
-- ITEM_CATEGORY = concatenation_key (format: Size~Class~Design~MOC, e.g. "30~150~DF~CS").
-  Its components are also available directly as SIZE_INCH, CLASS, DESIGN, MOC.
-- PRODUCTION_START_DATE_AND_TIME = order_date, used for ageing score calculation.
-- REFERENCE = specification_reference — informational only, not used by the engine.
-- WORK_CENTER = the machine / work center assigned to that operation in ERP.
-- ITEM / ITEM_DESCRIPTION = part number and its description — informational (UI display).
-- ORDER_STATUS / OPERATION_STATUS = ERP status text — informational only. Do NOT use for scheduling
-  decisions (Balance Qty is the sole indicator; see below).
-- QUANTITY_REJECTED is nullable — treat NULL as 0 when computing Balance Qty.
-- COMPANY: tenant/company code — informational, not used by the engine.
+**Column meanings** (unchanged from prior models):
+- CDD = Committed Delivery Date = PDD. Use CDD throughout the codebase. `CDD = NULL` ⇒ safety-stock order.
+- OPERATION (NUMBER) = ascending operation-sequence number (10, 20, 35, …) — this doc's `OPERATION_NO`.
+- TASK (VARCHAR2) = task/operation code (VB02, VB03, R002, …) — routing capability is matched on TASK.
+- PRODUCTION_START_DATE_AND_TIME = the date foundry material for this order lands on the shop floor. Meaning now depends on **ORDER_STATUS** — see Model E §1.
+- ITEM_CATEGORY = ERP's own concatenation (`Size~Class~Design~MOC`) — informational display only; **never** parsed for the batch/fixture key (see warning above).
+- WORK_CENTER (in MCH_WIP) = the machine currently assigned in ERP — informational; Engine 1 makes its own assignment.
+- ORDER_STATUS / OPERATION_STATUS: ERP status text. OPERATION_STATUS is informational only (Balance Qty is the sole scheduling indicator). **ORDER_STATUS is now load-bearing** — see Model E §1 (Active vs. Planned).
+- QUANTITY_REJECTED is nullable — treat NULL as 0.
 
 **Balance Qty — the ONLY scheduling quantity indicator:**
 - Balance Qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED (per operation row)
-- If Balance Qty > 0 → schedule this operation with Balance Qty pieces
-- If Balance Qty ≤ 0 → operation fully accounted for, skip entirely
-- The Balance Qty of Op_n is the maximum input quantity available for Op_n+1
-- Rejected pieces: ERP re-entry as a new production order is a manual process outside this system's scope
-- Do NOT use OPERATION_STATUS to decide scheduling — Balance Qty is the sole indicator
+- Balance Qty > 0 → schedule this operation with Balance Qty pieces. Balance Qty ≤ 0 → fully accounted for, excluded (with a REMARK — see Model E §12).
+- The Balance Qty of Op_n is the maximum input quantity available for Op_n+1.
 
-**Rework operations (R002 task):**
-- Rows whose TASK = R002 are treated as normal operations — schedule exactly like any other operation
-- No special exclusion or detection logic for rework; if it has a valid CYCLE_TIME and positive Balance Qty, it is scheduled
-
-**QA Inspection operations:**
-- Operations where WORK_CENTER contains 'QAINSP' are manual quality gates performed by quality engineers
-- Exclude from CP-SAT scheduling entirely (no machine assignment, no capacity consumption)
-- Include in UI display — they are part of the order flow visible to planners
-
-**Rows to skip entirely (CT = 0 rule):**
-- Skip ALL rows where CYCLE_TIME = 0
-- This covers: external vendor operations, operations with missing cycle time data, and any non-machine work
-- These rows are excluded from both CP-SAT scheduling and UI display
-
-**v1 scheduling scope:**
-- Only 7 TASK codes currently have MCH_MACHINE_PRIORITY (routing) entries and are scheduled by CP-SAT:
-  VB02 (Cone Oversize), VB03 (ST-21 Weld Overlay), VB04 (Stem Boring), VB05 (Cone Finishing),
-  VB06 (Stem Boring & Cone Finishing), VB07 (Serration), VB09 (Phosphating)
-- 15 other operations in WIP have no routing entries — skip them in CP-SAT for v1
-- System is routing-extensible: when routing entries are added for additional operations, they are automatically included in scheduling without code changes
+**Rework (TASK = R002):** scheduled exactly like any other operation, no special logic.
+**QA Inspection** (WORK_CENTER contains 'QAINSP'): excluded from scheduling entirely, shown in UI, REMARK explains the exclusion.
+**CT = 0 rows:** skipped entirely (external vendor ops, missing data, non-machine work), REMARK explains the exclusion.
+**v1 scheduling scope:** only TASK codes with a `MCH_MACHINE_PRIORITY` routing entry are scheduled (currently VB02, VB03, VB04, VB05, VB06, VB07, VB09). Routing-extensible — new routing entries are automatically included without code changes. `CLASS = 'PN10'` is deliberately excluded (no established fixture/routing setup yet).
 
 ### routing_master → MCH_MACHINE_PRIORITY (read-only view)
 **Exact Oracle columns:** COMPANY, SIZE_INCH, CLASS, MOC, DESIGN, ITEM_CATEGORY, TASK, MACHINE_PRIORITY, WORK_CENTER, SETUP_TIME
+- Capability matrix — which machines (WORK_CENTER) can perform each TASK for each SIZE~CLASS~MOC~DESIGN.
+- `MACHINE_PRIORITY`: integer 1 (most preferred) … 4 (least preferred) — a **soft tiebreaker only** among machines free at the same earliest time (Model E §7). Never overrides earliest-availability.
+- `SETUP_TIME`: **present in the view, ignored by the application** (Model E replaced this with fixture/locator change-time economics).
+- COMPANY informational only.
 
-- Capability matrix — defines which machines (WORK_CENTER) can perform each TASK for each ITEM_CATEGORY.
-- TASK is the operation code (VB02, …); it joins to MCH_WIP.TASK. WORK_CENTER is the capable machine
-  (was `machine_name`). SIZE_INCH/CLASS/MOC/DESIGN are the ITEM_CATEGORY components (was size/class/moc/design).
-- A single machine can appear in multiple rows for different tasks and/or different valve types.
-- SETUP_TIME: time required to set up a machine for the FIRST PIECE of a new ITEM_CATEGORY.
-  Same ITEM_CATEGORY back-to-back on the same machine = SETUP_TIME of 0.
-- MACHINE_PRIORITY: integer 1 (most preferred) to 4 (least preferred).
-  Used as a soft tiebreaker in the CP-SAT objective — does not override queue-depth-driven allocation.
-- COMPANY: tenant/company code — informational, not used by the engine.
+### fixture_locator_master → MCH_ITEMWISE_FIXTURE_LOCATOR (read-only view) — Model E
+**Exact Oracle columns:** SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER, FIXTURE, LOCATOR, FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME, LOAD_UNLOAD_TIME, USER_ID, USER_DATE
+- Per `(SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER)`: which FIXTURE and LOCATOR are used, and the minutes to change each (charged once, to the first piece of a batch) plus LOAD_UNLOAD_TIME (charged **per piece**).
+- For a given SIZE~CLASS~MOC~DESIGN~TASK, FIXTURE and LOCATOR are constant across every WORK_CENTER row (only the change-times/load-unload may vary by machine).
+- **Lookup is optional, not gating** — see Model E §11 for the no-match fallback.
+- Background pattern (not a hardcoded rule — the table above is authoritative): fixtures tend to be shared within SIZE bands (3–6", 8–14", 16–24", 26–36", 40–48"), with exceptions when DESIGN = "DFL" or CLASS = "600". The engine never hardcodes these bands; it always looks up FIXTURE/LOCATOR directly from this table.
 
----
-
-## capacity_resolved — NOT a table
-
-The merge of MCH_MACHINE_AVAILABILITY_BY_DATE (override) onto MCH_MACHINE_AVAILABILITY (baseline)
-happens entirely in memory (pandas) every time the engines run. It is never written to any table.
-
-```python
-def resolve_capacity(machine_master_df, machine_daily_df, target_date):
-    resolved = machine_master_df.copy()
-    resolved['SHIFT'] = resolved['SHIFT'].str.lower()
-    daily = machine_daily_df[machine_daily_df['WORKING_DATE'] == target_date].copy()
-    daily['SHIFT'] = daily['SHIFT'].str.lower()
-    for _, row in daily.iterrows():
-        mask = (
-            (resolved['WORK_CENTER'] == row['WORK_CENTER']) &
-            (resolved['SHIFT'] == row['SHIFT'])
-        )
-        resolved.loc[mask, 'AVAILABLE_MINS'] = row['AVAILABLE_MINS']
-    return resolved
-```
+### fixture_locator_inventory → MCH_FIXTURE_LOCATOR (read-only view) — Model E
+**Exact Oracle columns:** DEVICE_NAME, DEVICE_TYPE, DESCRIPTION, QUANTITY, USER_ID, USER_DATE
+- Physical shop-floor inventory: `DEVICE_NAME` = a Fixture ID or Locator ID, `DEVICE_TYPE` = `'F'` (fixture) or `'L'` (locator), `QUANTITY` = how many physically exist.
+- `QUANTITY` is a **hard, plant-wide concurrency cap** — see Model E §9 (pool constraint).
 
 ---
 
-## Configuration — backend/config.json
+## Configuration — backend/config.json (Model E shape)
 
-Runtime parameters editable via UI. Stored as a JSON file at `backend/config.json`. Never stored in Oracle tables.
+Runtime parameters editable via UI, stored as JSON at `backend/config.json`, never in Oracle.
 
 ```json
 {
-  "batch_bonus_months": 2,
-  "batch_bonus_value": 0.5,
-  "downstream_queue_bonus_value": 0.3,
-  "ageing_normalization_days": 180,
-  "machine_priority_epsilon": 0.001,
+  "batch_consolidation_window_days": 60,
+  "cooling_minutes": 20,
+  "heavy_operations": ["VB03", "VB04", "VB05", "VB06"],
+  "protect_committed_over_safety": true,
+  "planned_order_start_buffer_days": 1,
   "risk_safe_threshold_days": 5,
-  "engine2_time_limit_seconds": 10,
-  "scheduling_horizon_safety_factor": 2,
-  "scheduling_horizon_buffer_days": 7,
-  "dev_max_orders": 0,
-  "solver_workers": 0,
-  "solver_time_limit_seconds": 300,
-  "setup_penalty_weight": 0.05
+  "dev_max_orders": 0
 }
 ```
 
-- `scheduling_horizon_safety_factor` / `scheduling_horizon_buffer_days` size the scheduling horizon (see **Horizon derivation** in the Time-Mapping Strategy). They guarantee the horizon is long enough that every task is placeable (an infeasible-by-deadline order still gets scheduled — just tardy — rather than making the whole model infeasible).
-- `dev_max_orders` — dev knob: limit scheduling to the top-N most urgent orders for fast iteration. **0 = full dataset (production).**
-- `solver_workers` — CP-SAT parallel search workers. **0 = use ALL CPU cores** (the engine sets `num_workers = os.cpu_count()`); set a positive number only to cap it.
-- `solver_time_limit_seconds` — Engine 1 time budget. Because a greedy fallback guarantees a schedule, this is a *quality* budget (more time → closer to optimal), not a correctness requirement. The run never fails if it expires.
-- `setup_penalty_weight` — mild objective cost per setup event; encourages batching same valve sizes together (utilisation) without ever delaying a delivery. 0 disables it.
+- `batch_consolidation_window_days` (Model E §6): an order is eligible to be pulled into a fixture-run consolidation only if its CDD is within this many days of **today** (run date). Default 60 (~2 months). **Hard rule, no override** — see §6.
+- `cooling_minutes` (Model E §7): fixed machine dead-time after every batch, before that machine's next batch. Default 20.
+- `heavy_operations` (Model E §10): TASK codes where mixed committed/safety-stock batches get the committed-first policy.
+- `protect_committed_over_safety`: must always be `true` — no committed order may ever slip past its CDD to accommodate safety stock, or to accommodate the §6 consolidation override.
+- `planned_order_start_buffer_days` (Model E §1/§8): days added to a Planned order's `PRODUCTION_START_DATE_AND_TIME` to get its earliest-start date. Default 1.
+- `risk_safe_threshold_days`: Engine 2 SAFE/AT_RISK/BREACH threshold (unchanged from prior models).
+- `dev_max_orders`: dev knob, limit scheduling to top-N most urgent orders for fast iteration. 0 = full dataset (production).
 
-FastAPI exposes `GET /config` and `PUT /config` to read and update this file.
-The UI's Machine Availability & Settings view provides a settings panel to change `batch_bonus_months` (and other params) without touching any Oracle table.
+**Retired with Model C/CP-SAT (no longer meaningful under a deterministic dispatch simulator):** `batch_bonus_months`, `batch_bonus_value`, `downstream_queue_bonus_value`, `ageing_normalization_days`, `machine_priority_epsilon`, `engine2_time_limit_seconds`, `scheduling_horizon_safety_factor`, `scheduling_horizon_buffer_days`, `solver_workers`, `solver_time_limit_seconds`, `setup_penalty_weight` — these existed to shape a CP-SAT objective function or size a CP-SAT horizon; Model E has neither. `backend/config.json` and `models.py::Config` still need to be migrated to this shape (tracked as implementation work, not yet done).
 
----
-
-## Engine 1 — Model D (Fixture/Locator continuous-time dispatch) — TARGET SPEC
-
-> **STATUS: agreed design, phased implementation pending.** This section is the authoritative
-> target for Engine 1. Until Model D Phase 6 lands, the **currently-running code is still Model C**
-> (documented in the "## Engine 1 — CP-SAT Scheduling Optimizer" section below). Do not assume the
-> code matches Model D until a phase is explicitly marked complete. When Model D is fully shipped,
-> the Model C section becomes historical.
-
-### D.0 — Why Model D (what changes vs Model C)
-
-Model C's spine — discrete `(date, shift)` slots, a **hard per-`(machine, slot)` capacity bucket**,
-and `SETUP_TIME` charged per ITEM_CATEGORY change — is replaced. The plant's real constraints are
-different: machines are **not** minute-capped per slot (work just flows forward in continuous time),
-and the genuinely scarce resources are the **finite physical FIXTURES and LOCATORS** shared across
-the whole shop floor. Model D is therefore a **deterministic, continuous-time discrete-event dispatch
-simulator**, not a CP-SAT capacity model. Everything below supersedes the corresponding Model C rule.
-
-| Concern | Model C (old) | Model D (new) |
-|---|---|---|
-| Time | discrete (date, shift) slots | continuous wall-clock, minutes |
-| Machine capacity | hard bucket = AVAILABLE_MINS per slot | **no cap**; AVAILABLE_MINS is only the *rate/window* |
-| Changeover cost | SETUP_TIME per ITEM_CATEGORY | **FIXTURE_CHANGE + LOCATOR_CHANGE** (dropped SETUP_TIME entirely) |
-| Batch key | SIZE~CLASS~DESIGN | **FIXTURE** (consolidation) over SIZE~CLASS~DESIGN atoms |
-| Scarce resource | machine-minutes | **finite fixture/locator pool** (hard, plant-wide) |
-| Release dates | none | **"Planned" orders** gated by PRODUCTION_START_DATE_AND_TIME |
-| Solver | CP-SAT + greedy fallback | **greedy dispatch is PRIMARY**; CP-SAT at most an optional post-optimizer |
-
-### D.1 — New data sources (read-only, ERP-owned)
-
-**MCH_ITEMWISE_FIXTURE_LOCATOR** — per `(SIZE_INCH, CLASS, DESIGN, TASK, WORK_CENTER)`:
-`FIXTURE`, `LOCATOR`, `FIXTURE_CHANGE_TIME`, `LOCATOR_CHANGE_TIME`, `LOAD_UNLOAD_TIME` (all minutes),
-plus `USER_ID`, `USER_DATE`. Change-times apply once (to the first piece); LOAD_UNLOAD is **per piece**.
-For a given `SIZE~CLASS~DESIGN~TASK`, FIXTURE and LOCATOR are **identical across every WORK_CENTER row**
-(the change-times/load-unload may differ by machine).
-
-**MCH_FIXTURE_LOCATOR** — the physical inventory: `DEVICE_NAME` (Fixture ID or Locator ID),
-`DEVICE_TYPE` (`'F'` = fixture, `'L'` = locator), `QUANTITY` (how many of that device physically exist),
-plus `USER_ID`, `USER_DATE`. QUANTITY is a **hard, plant-wide concurrency cap**.
-
-`SETUP_TIME` in MCH_MACHINE_PRIORITY is **ignored** in Model D. MOC remains irrelevant to batching and
-fixtures (both exclude MOC); MOC still only affects routing (which machines are capable).
-
-### D.2 — Vocabulary
-
-- **Atomic batch** — all in-scope orders sharing the same `SIZE~CLASS~DESIGN` at a given operation
-  (TASK). One atomic batch has exactly one FIXTURE and one LOCATOR. This is the unit that moves
-  through operations and holds pool devices.
-- **Fixture run** — a maximal back-to-back sequence of atomic batches **sharing the same FIXTURE**,
-  placed consecutively on **one machine** so the fixture is mounted once. Inside the run, atomic
-  batches are ordered to group equal locators and minimise locator changes.
-- **Committed order** — `CDD` is not null. **Safety-stock order** — `CDD` is null.
-- **Mount** — the `(fixture, locator)` currently physically on a machine. Carried across batches and
-  across overnight/idle pauses; cold-start machines hold nothing.
-
-### D.3 — Order types (ORDER_STATUS)
-
-- **"Active"** — foundry material is on the floor; schedule normally (priority, batching, machines).
-- **"Planned"** — material arrives at `PRODUCTION_START_DATE_AND_TIME`. That timestamp is a **hard
-  earliest-start for the order's first scheduled operation** (you cannot machine absent metal); its
-  first op may begin at or after that date (that day's first shift onward). A Planned order **cannot
-  join a fixture run that starts before its material-arrival date.** Downstream operations follow
-  ordinary precedence. Every order — Active or Planned — is still targeted to finish **on or before its
-  CDD**.
-
-### D.4 — Time model (continuous, but only working minutes tick)
-
-- Time is a **continuous wall-clock in minutes**, not slots. There is **no capacity cap** on a machine
-  and **no horizon cutoff** — work always flows forward until placed.
-- **Machining progresses only inside a shift's `AVAILABLE_MINS` window.** If a batch needs 600 min and
-  the current shift has 200 productive minutes left, it does 200 now, **pauses**, and **resumes** in
-  that machine's next working shift. AVAILABLE_MINS is the *rate/window*, never a *cap*.
-- **20-minute cooling** after **every** batch on **every** machine: a fixed constant. It is pure
-  machine dead-time (not work), delays that machine's *next* batch, is observed in wall-clock, and may
-  straddle the overnight pause. The machine's next batch may begin at cooling-end (≥ 20 min later).
-- Machine availability comes from `MCH_MACHINE_AVAILABILITY` (baseline, every shift every day) unless
-  overridden for a specific `WORK_CENTER + WORKING_DATE + SHIFT` in `MCH_MACHINE_AVAILABILITY_BY_DATE`
-  (breakdown/maintenance; `AVAILABLE_MINS = 0` ⇒ that window is closed). **No row ⇒ machine is fully
-  available** for that shift's baseline AVAILABLE_MINS. Consider **all** machines every run; never idle
-  a machine that could take work.
-- **No inter-operation WIP transit time** — an order's next operation may start the instant its
-  previous operation ends (subject to machine/fixture/locator/pool availability and cooling).
-
-### D.5 — Batch duration formula (per atomic batch, per operation, on a chosen machine `m`)
-
-```
-duration_minutes =
-    (FIXTURE_CHANGE_TIME[scd, task, m]   if fixture ≠ m.current_mount.fixture  else 0)
-  + (LOCATOR_CHANGE_TIME[scd, task, m]   if locator ≠ m.current_mount.locator  else 0)
-  + Σ over pieces ( LOAD_UNLOAD_TIME[scd, task, m] + CYCLE_TIME[order, op] )
-```
-
-- `CYCLE_TIME` (per piece) comes from **MCH_WIP** and is **still added on top** of LOAD_UNLOAD — it is
-  the actual cut time. `LOAD_UNLOAD_TIME` (per piece) and both change-times come from
-  MCH_ITEMWISE_FIXTURE_LOCATOR (machine-specific).
-- **Mount carryover:** change-times are charged relative to what is **currently mounted on that specific
-  machine**. Same fixture carried over ⇒ no fixture change; same fixture, different locator ⇒ locator
-  change only; different fixture ⇒ both. First batch on a cold machine pays both.
-- The resulting `duration_minutes` is then spread across working windows (D.4 pause/resume), and the
-  machine takes 20-min cooling before its next batch.
-- **No fixture/locator match (D.11 fallback):** if `(SIZE_INCH, CLASS, DESIGN, TASK)` has no row in
-  MCH_ITEMWISE_FIXTURE_LOCATOR for any candidate machine, the fixture/locator terms drop out entirely:
-  `duration_minutes = Σ over pieces ( CYCLE_TIME[order, op] )`. No change-time, no load/unload, no
-  fixture-run membership, no pool involvement — see D.11.
-- **Per-order completion within a shared atomic batch:** pieces inside one atomic batch are processed
-  **sequentially in priority order** (committed sub-batch before safety, CDD-ascending within
-  committed — D.9/D.10), not as one indivisible blob credited to every member at once. Each order's
-  `end_timestamp` for that operation is when **its own** contiguous slice of pieces finishes — even
-  though the whole batch shared one fixture mount with zero changeover between members.
-
-### D.6 — Batching logic (how fixture runs are built)
-
-1. **Scope & filters** (D.11) first: keep only schedulable operations.
-2. **Form atomic batches — fixture-having ops only:** group in-scope order-operations that HAVE a
-   fixture/locator match by `(SIZE~CLASS~DESIGN, TASK)`. Each group is one atomic batch carrying its
-   FIXTURE and LOCATOR (looked up from MCH_ITEMWISE_FIXTURE_LOCATOR). Ops with **no** fixture/locator
-   match (D.11) skip this whole section — they are dispatched individually via D.7 machine selection
-   and the D.5 no-fixture duration formula, never grouped into a fixture run.
-3. **90-day consolidation window (from run date):** atomic batches may only pull in orders whose `CDD`
-   is within **today + 90 days** of each other. The window governs *only which orders may be batched
-   together* — every eligible order is still scheduled; it just isn't consolidated with something more
-   than 90 days away. Safety-stock (CDD null) is **outside** the window and never pulls others forward.
-4. **Fixture runs:** chain atomic batches that share the same FIXTURE onto one machine, ordered by
-   locator to minimise locator changes. **Fixture consolidation deliberately overrides pure CDD
-   priority** — a lower-CDD-priority order on a *different* fixture can be pushed later to keep a
-   fixture run whole (this is the intended setup-saving trade-off).
-5. **Release-date gating:** a Planned order joins a fixture run only if the run's start ≥ its
-   material-arrival date.
-6. **Routing-divergence split (Q-C answer (b)):** a batch normally stays intact across operations
-   (same SCD ⇒ same fixture/locator downstream). But when the orders in a batch have **divergent
-   routings** (e.g. one carries an extra rework op the others don't), the batch **splits only at the
-   operation where routings diverge, and rejoins afterward** where they reconverge. Do not force a
-   whole-routing lock.
-7. **Machine-capability intersection:** a fixture run runs on **one common machine** capable of all its
-   members (per MCH_MACHINE_PRIORITY for each member's ITEM_CATEGORY + TASK). In the rare case a run's
-   members are not all capable on any single machine, **keep the fixture run intact on one common
-   machine and drop the incapable members** (they schedule in their own run).
-
-### D.7 — Machine selection (soft priority)
-
-For a fixture run at operation `T`, among machines capable of **all** its members: pick the machine
-that is **free earliest**; break ties by best (lowest) `MACHINE_PRIORITY`. Priority is **soft** — an
-earlier-free lower-priority machine beats a later-free priority-1 machine. Never wait on a preferred
-machine while another capable machine sits idle. (Maximise machine utilisation; never idle a machine
-that could take work.)
-
-### D.8 — Fixture/Locator pool constraint (hard, plant-wide)
-
-- `MCH_FIXTURE_LOCATOR.QUANTITY` caps **concurrent** usage of each device across the entire plant. If
-  only 1 of Fixture B exists, a 14·150 run and a 16·150 run (both Fixture B) **cannot run at the same
-  time on two machines**, even if both machines are free — one waits.
-- **Mount/release lifecycle, no movement time:** a device is *held* for the duration it is in use and
-  *returned to the pool* the instant it is free; there is **no transfer/changeover time** when a device
-  moves between machines. QUANTITY is purely a concurrency cap.
-- **A fixture run holds 1 unit of its FIXTURE for the whole run** (mounted once, all its atomic
-  sub-batches). It holds **1 unit of a LOCATOR only during that locator's sub-batch**, releasing it
-  before mounting the next locator. So within one run: hold Fixture-A start→end; hold locator-1 during
-  sub-batch-1, release, hold locator-3 during sub-batch-2, release, …
-- The dispatch simulator must, at every instant, keep `concurrent_use(device) ≤ QUANTITY(device)` for
-  every fixture and locator, blocking a batch's start until a unit frees.
-
-### D.9 — Priority & global ordering
-
-- **Priority = lower CDD ⇒ higher priority.** Ties broken by ageing (older order first).
-- **Safety-stock (CDD null) is always lowest priority**, scheduled last / as backfill.
-- Fixture consolidation (D.6.4) overrides pure CDD priority within the 90-day window.
-- Planned-order release dates (D.3) gate when an order may first start.
-
-### D.10 — Safety-stock policy (mixed committed + safety in one fixture/locator group)
-
-Split each fixture/locator group into a **committed sub-batch** (CDD not null) and a **safety sub-batch**
-(CDD null), same fixture + locator.
-
-- **Light operations** (everything **not** in the heavy set): run committed and safety **together** —
-  the safety pieces cost only `LOAD_UNLOAD + CYCLE_TIME` each with **no** extra fixture/locator change,
-  so building stock while the fixture is already mounted is nearly free.
-- **Heavy operations** — `config.heavy_operations = ["VB03","VB04","VB05","VB06"]` (Weld Overlay, Stem
-  Boring, Cone Finishing, Stem Boring + Cone Finishing): schedule the **committed sub-batch first**.
-  Then attempt to **append the safety sub-batch immediately after** (zero fixture/locator change)
-  **only if doing so delays no committed order — anywhere, accounting for the shared pool — past its
-  CDD.** If it would cause any committed slip, **do not run safety now:** release the fixture/locator
-  back to the pool and re-queue the safety sub-batch at the **global tail** (lowest priority),
-  backfilled later only into genuine idle windows where its fixture is free.
-- **"Never delay a committed order to make safety stock" is ABSOLUTE** (`config.protect_committed_over_safety = true`).
-- With no capacity cap and an open horizon, deferred safety stock **always eventually schedules** (just
-  late) — that is intended; it is never dropped.
-
-### D.11 — Scheduling scope & preprocessing filters
-
-An operation is **scheduled** (appears on the output, consumes real machine time) iff **all** hold:
-- `CYCLE_TIME > 0` (drop CT=0 rows as today),
-- `balance_qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED(null→0) > 0`,
-- `WORK_CENTER` does **not** contain `'QAINSP'` (QA gates excluded from scheduling, shown in UI),
-- `CLASS != 'PN10'` (deliberately excluded — no established, complete routing/fixture setup for this
-  class yet; revisit once the ERP side is ready), **and**
-- it has a **routing** entry in MCH_MACHINE_PRIORITY (TASK present).
-
-**Fixture/locator lookup is optional, not gating.** Whether `(SIZE_INCH, CLASS, DESIGN, TASK)` has a
-matching row in MCH_ITEMWISE_FIXTURE_LOCATOR determines *how* the op is scheduled, not *whether*:
-
-- **Has a fixture/locator match** (on at least one candidate machine): scheduled via the full fixture
-  batching/pool/mount-carryover machinery (D.5–D.8) — this is the **VB0x machining tasks**.
-- **No fixture/locator match** — e.g. a task code absent from the table entirely (`VA03` Blasting,
-  `VB09` Phosphating, and similar non-machining steps are *expected* to have no fixture concept), or a
-  specific machine simply not yet entered for an otherwise-covered task (e.g. `2PMC17` missing rows
-  while `2PMC16` has them): the operation is **still scheduled**, using ordinary routing + soft
-  priority machine selection (D.7) and the no-fixture duration formula (D.5 fallback) — plain
-  `Σ CYCLE_TIME`, no fixture/locator effects, not part of any fixture run, `FIXTURE_ID`/`LOCATOR_ID`
-  left `NULL` on its output row. **Never silently drop or bridge over an op just because fixture data
-  is missing** — only the five bullets above ever cause an op to be skipped entirely.
-
-An op with genuinely **no routing entry at all** is skipped, precedence bridging over it exactly like
-today's unrouted-op handling (this is the only "skip transparently" case left). Shifts normalised to
-lowercase on read.
-
-### D.12 — Solver architecture
-
-- **Primary engine: a deterministic greedy / discrete-event dispatch simulator** built exactly around
-  D.3–D.11. It is more faithful to shop-floor logic and fully auditable for a $50M plan.
-- **CP-SAT is at most an optional post-optimizer** (not required, not the primary path). The dispatch
-  simulator's output is the schedule of record.
-- The simulator is deterministic: same inputs ⇒ same schedule (essential for auditability).
-
-### D.13 — Output
-
-- MCH_SCHEDULE_OUTPUT gains exactly **4 new columns** (Phase 1 DDL,
-  `backend/testing/phase_d1_schema_update.sql`): `FIXTURE_ID VARCHAR2(40)`, `LOCATOR_ID VARCHAR2(40)`
-  (the `DEVICE_NAME` actually assigned; `NULL` for a no-fixture-match op per D.11), and
-  `START_TIMESTAMP` / `END_TIMESTAMP TIMESTAMP` (absolute continuous-time bounds for this row —
-  needed because Model D no longer has a clean (date, shift) slot to hang display offsets on).
-  **One row per `(PRODUCTION_ORDER, OPERATION)`**, carrying its completion date, chosen `WORK_CENTER`,
-  and `BALANCE_QTY` as today. `BATCH_KEY` becomes **fixture-based** (holds the FIXTURE value, or
-  `NULL` for a no-fixture-match op) — same column, new meaning.
-- **No separate live fixture/locator tracking table.** The hard pool constraint (D.8) is enforced by
-  the dispatch simulator's **in-memory, transient** state during one run (a `busy_until` map per
-  device) — discarded once the run finishes writing. Post-hoc auditability that the pool was never
-  over-allocated comes from `MCH_SCHEDULE_OUTPUT` itself: group by `FIXTURE_ID`/`LOCATOR_ID`, check no
-  more than `QUANTITY` rows' `START_TIMESTAMP`–`END_TIMESTAMP` ranges overlap at any instant.
-- **Completion-date derivation:** an order's **operation end date** = the `END_TIMESTAMP` of *that
-  order's own* contiguous slice within its atomic batch (D.5 — pieces inside a shared batch are
-  processed sequentially in priority order, not credited to every member at once). An order's
-  **production completion date** = the `END_TIMESTAMP` of its **last schedulable operation**
-  (ascending OPERATION_NO), same definition Model C uses today.
-- The Gantt shows the operation's **completion date** (when it ends), not its start.
-- **No historical retention:** each run deletes prior rows and writes fresh (unchanged from Model C).
-
-### D.14 — Config additions
-
-```
-heavy_operations              = ["VB03","VB04","VB05","VB06"]
-protect_committed_over_safety = true
-batch_consolidation_window_days = 90     # fixture-run pull-forward window (from run date)
-cooling_minutes               = 20       # fixed machine cooling after every batch
-```
-
-### D.15 — Worked example (the 7-order batching trace — MUST replicate exactly)
-
-Orders (priority = lower CDD ⇒ higher):
-
-| Prio | SIZE | CLASS | DESIGN | QTY | FIXTURE | LOCATOR |
-|---|---|---|---|---|---|---|
-| 1 | 10 | 150 | DF  | 5 | A | 1 |
-| 5 | 10 | 150 | DF  | 4 | A | 1 |
-| 4 | 10 | 300 | DF  | 3 | A | 3 |
-| 6 | 10 | 150 | LUG | 3 | A | 2 |
-| 2 | 14 | 150 | DF  | 5 | B | 8 |
-| 7 | 14 | 150 | DF  | 5 | B | 8 |
-| 3 | 16 | 150 | DF  | 3 | B | 9 |
-
-Expected dispatch order on the machines (Fixture A run, then Fixture B run):
-
-1. **Prio 1** (10·150·DF, A/1) — first piece: **FIXTURE_CHANGE + LOCATOR_CHANGE** charged.
-2. **Prio 5** (10·150·DF, A/1) — same fixture **and** locator ⇒ **no change**; batched with #1.
-3. **Prio 4** (10·300·DF, A/3) — same fixture, new locator ⇒ **LOCATOR_CHANGE only**.
-4. **Prio 6** (10·150·LUG, A/2) — same fixture, new locator ⇒ **LOCATOR_CHANGE only**.
-5. **Prio 2** (14·150·DF, B/8) — new fixture ⇒ **FIXTURE_CHANGE + LOCATOR_CHANGE**.
-6. **Prio 7** (14·150·DF, B/8) — same fixture and locator ⇒ **no change**; batched with #5.
-7. **Prio 3** (16·150·DF, B/9) — same fixture, new locator ⇒ **LOCATOR_CHANGE only**.
-
-Note how fixture consolidation pulled prio 4, 5, 6 ahead of prio 2, 3 (different fixture). Every batch
-also adds `LOAD_UNLOAD_TIME × its own QTY`. The Fixture-A run holds 1×A for steps 1–4; locator-1 during
-1–2, then locator-3 during 3, then locator-2 during 4. The pool must permit each fixture/locator held.
-
-### D.16 — Phase plan (gate-by-gate; each phase validated before the next)
-
-1. **Schema & data load** — add FIXTURE_ID/LOCATOR_ID (+ optional timestamps); loaders + validators for
-   MCH_ITEMWISE_FIXTURE_LOCATOR and MCH_FIXTURE_LOCATOR; prove fixture/locator lookups resolve for 100%
-   of in-scope tasks, and that FIXTURE/LOCATOR are constant across WORK_CENTER for each SCD~TASK.
-2. **Batching** — atomic batches, fixture runs (locator-ordered), 90-day window, release-date gating,
-   routing-divergence split, safety-stock split. **Validate against D.15 exactly.**
-3. **Continuous timeline** — the dispatch simulator: AVAILABLE_MINS pause/resume, 20-min cooling,
-   precedence, per-machine mount carryover & change-times, duration formula (D.5).
-4. **Pool constraint** — hard fixture/locator concurrency caps with mount/release lifecycle (D.8).
-5. **Safety-stock policy** — committed-first / heavy-op deferral / backfill; "never delay committed"
-   absolute (D.10).
-6. **Validation** — full-run audit: no duplicates, precedence intact, pool never exceeded, per-order
-   CDD attainment, machine utilisation, and D.15 replication.
-
-### D.17 — Invariants (must hold in every run)
-
-- No `(PRODUCTION_ORDER, OPERATION)` appears on two machines for the same pieces (no double-count).
-- Operation precedence: an order's op_{n+1} never starts before op_n ends.
-- Every fixture/locator: `concurrent_use ≤ QUANTITY` at all times.
-- Machining minutes only accrue inside AVAILABLE_MINS windows; ≥ 20-min cooling between a machine's
-  consecutive batches.
-- No committed order is ever delayed by safety stock (D.10).
-- Planned orders never start before their material-arrival date.
-- Every in-scope piece is eventually scheduled (production never stops).
+FastAPI exposes `GET /config` and `PUT /config` to read and update this file (endpoints unchanged; the `Config` schema they serve needs the migration above).
 
 ---
 
-## Engine 1 — CP-SAT Scheduling Optimizer
+## Engine 1 — Model E (current, final design)
 
-> **Model C — CURRENT IMPLEMENTATION, being superseded by Model D (above).** This describes the engine
-> as it runs today; it remains accurate until the Model D phases land. Do not delete until Model D ships.
+Engine 1 is a **deterministic, continuous-time discrete-event dispatch simulator** — not a CP-SAT capacity model, and not an interval/slot solver of any kind. CP-SAT is fully retired; there is no fallback to it and no post-optimization pass. Same inputs always produce the same schedule (essential for a $50M line's auditability).
 
-Library: Google OR-Tools (`pip install ortools`), Apache 2.0 license, fully free.
+### E.1 — Order types (ORDER_STATUS)
 
-### Preprocessing pipeline (preprocess.py)
-Execute in this order before building the CP-SAT model:
-1. Load all 4 Oracle views (MCH_WIP, MCH_MACHINE_AVAILABILITY, MCH_MACHINE_AVAILABILITY_BY_DATE, MCH_MACHINE_PRIORITY) into pandas DataFrames
-2. **Filter CT=0:** Drop all rows where `CYCLE_TIME = 0`
-3. **Filter routable ops:** Keep only rows where `TASK` is present in MCH_MACHINE_PRIORITY (`TASK` column)
-4. **Filter QA:** Drop rows where `WORK_CENTER` contains 'QAINSP'
-5. **Compute Balance Qty:** `balance_qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED`; drop rows where `balance_qty ≤ 0`
-6. **Normalize shifts:** `SHIFT = SHIFT.str.lower()` in both machine views
-7. **Resolve capacity:** Call `resolve_capacity()` for each scheduling date to produce capacity_resolved
+- **"Active"** — foundry material is already on the shop floor. Plan normally: check CDD, batch per §5, assign to machines per §7. No extra constraint.
+- **"Planned"** — material for this order arrives at `PRODUCTION_START_DATE_AND_TIME`. The order's **earliest-start** is `PRODUCTION_START_DATE_AND_TIME + planned_order_start_buffer_days` (default: +1 calendar day), first shift of that day onward. A Planned order is **excluded from batching entirely** until its earliest-start passes — it cannot join a fixture run that starts before that date. If every machine capable of its first operation is fully busy on that exact day, the engine **never interrupts an already-running operation** to force the order in — it simply queues normally and starts as soon as a capable machine frees up at/after its earliest-start.
+- Every order — Active or Planned — is targeted to complete **on or before its CDD**. Downstream operations follow ordinary precedence once the first operation starts.
 
-### Time-Mapping Strategy — Model C (global slot index + capacity buckets, flexible routing)
+### E.2 — Priority ordering
 
-Engine 1 models time as **discrete `(date, shift)` slots**, not a continuous minute clock. This is the foundation every constraint builds on. It replaces the earlier "per-machine absolute-minute axis" idea, which broke precedence and tardiness (those are cross-machine, but a per-machine compressed minute axis drifts apart between machines with different AVAILABLE_MINS).
+**Lower CDD ⇒ higher priority.** Ties broken by ageing (older `PRODUCTION_START_DATE_AND_TIME` first). **Safety-stock orders (CDD = NULL) are always lowest priority**, scheduled last / as backfill (subject to §10). This is a simple sort key for the dispatch simulator — there is no CP-SAT-style weighted urgency score (that formula was specific to Model C's objective function and does not apply here).
 
-> **Model C vs. the retired Model B.** Model B assigned each batch to ONE machine
-> (`AddExactlyOne(assign[t,m])`) and forced every open slot between the batch's start and end to
-> be occupied (a circular contiguity reification). When that one machine hit a closed slot the
-> batch was trapped → INFEASIBLE even at ~5 % utilisation. **Model C deletes both `assign` and the
-> contiguity constraint.** Pieces are allocated as quantities into `(machine, slot)` buckets on
-> ANY capable machine; setup economics (not a hard lock) keep a batch together, and a greedy
-> fallback guarantees a schedule. This is simpler, correct, and never gets stuck.
+### E.3 — Fixture & Locator model (replaces SETUP_TIME)
 
-**Slot = one `(date, shift)` pair.** Shifts are ordered `SHIFT_ORDER = [first, second, third]`. Every horizon date carries all three shifts. A shift that is closed (holiday, festival, breakdown, maintenance) is represented by `AVAILABLE_MINS = 0` for that machine+shift+date in machine_daily — the slot still exists in the lattice, it just holds no work. The slot lattice is never edited to remove dates or shifts.
+Every `SIZE_INCH~CLASS~MOC~DESIGN` has one FIXTURE and one LOCATOR per operation (from `MCH_ITEMWISE_FIXTURE_LOCATOR`), constant across machines. `SETUP_TIME` (MCH_MACHINE_PRIORITY) is ignored entirely.
 
-**1. Global slot index — the shared calendar (answers "consecutive shifts contiguous?")**
-```
-horizon_dates = D = [d0, d1, d2, ...]          # consecutive calendar days, sorted ascending
-SHIFT_ORDER   = S = [first, second, third]     # fixed, 3 shifts per day
-
-slot_index(date, shift) = 3 × day_pos(date) + shift_pos(shift)
-    day_pos(date)   = index of date in D        (d0→0, d1→1, ...)
-    shift_pos: first→0, second→1, third→2
-```
-The slot index is **machine-independent**: a larger index is always later in real time for EVERY machine. Slots `k` and `k+1` are adjacent in real time — that is the entire meaning of "consecutive/contiguous." This shared calendar is what makes precedence (Op_n → Op_n+1 across different machines) and tardiness (completion vs CDD) correct.
-
-**2. Inverse mapping — slot_index → (date, shift)**
-```
-day_pos   = slot_index // 3     →  date  = D[day_pos]
-shift_pos = slot_index %  3     →  shift = S[shift_pos]
-```
-
-**3. (date, shift, offset_min) ↔ absolute_minute (DISPLAY / reference only — NOT a solver variable)**
-Shift wall-clock windows are fixed and identical every day and every machine, so absolute-minutes can be derived purely from WORKING_MINS when needed for a Gantt canvas:
-```
-W_first, W_second, W_third = WORKING_MINS of each shift (fixed wall-clock lengths)
-shift_start_in_day(first)  = 0
-shift_start_in_day(second) = W_first
-shift_start_in_day(third)  = W_first + W_second
-day_length = W_first + W_second + W_third
-
-absolute_minute(date, shift, offset_min)
-    = day_pos(date) × day_length + shift_start_in_day(shift) + offset_min
-      where 0 ≤ offset_min ≤ WORKING_MINS(shift)
-
-inverse: divmod(absolute_minute, day_length) → (day_pos, minute_in_day);
-         locate the shift window minute_in_day falls in → shift + offset_min
-```
-`start_offset_min / end_offset_min` are **real minutes into the shift (0 … WORKING_MINS)**, produced POST-SOLVE (see Output). Absolute-minutes are only a display/reference convenience.
-
-**4. Machine-slot capacity (replaces "absolute-minute bounds for (machine, shift, date)")**
-Each `(machine m, slot k)` has ONE scalar capacity — this is the only "bound" the solver needs; there is no per-machine minute axis:
-```
-cap[m, k] = AVAILABLE_MINS for machine m in the shift & date of slot k
-            (from resolve_capacity;  cap = 0  ⇒  closed slot)
-```
-
-**5. Closed slots (AVAILABLE_MINS = 0)**
-- Stay in the lattice so the date/shift mapping remains uniform.
-- A closed `(machine, slot)` has NO variables at all — nothing can be placed there (Hard Rule 7).
-- Overflow auto-routes around closed slots to the next open `(machine, slot)` (Hard Rule 4):
-```
-next_open(m, k) = smallest k' > k with cap[m, k'] > 0     # closed slots skipped (same machine)
-```
-Pieces prefer the same machine's next open slot (setup carries over = free) but move to another
-capable machine when this one is closed/full. There is NO contiguity requirement in Model C —
-a task's occupied slots need not be adjacent; setup economics, not a hard constraint, keep a
-batch together.
-
-**6. Integer scaling (CP-SAT is integer-only; AVAILABLE_MINS is fractional, e.g. 365.5)**
-All minute quantities are scaled to integers by fixed factors before entering the model; piece quantities stay unscaled integers:
-```
-TIME_SCALE    = 100     # 2-decimal precision on minutes
-URGENCY_SCALE = 1000    # 3-decimal precision on objective weights (captures ε = 0.001)
-
-cap_s[m,k]   = round(AVAILABLE_MINS × TIME_SCALE)     # e.g. 365.5 → 36550
-ct_s[t]      = round(CYCLE_TIME     × TIME_SCALE)
-setup_s[c,m] = round(SETUP_TIME     × TIME_SCALE)
-```
-
-**7. Horizon derivation — where `horizon_dates` comes from at runtime**
-The horizon must be long enough that every task is placeable, or the model is infeasible. Derived feasibility-first at run time:
-```
-total_work   = Σ_tasks (balance_qty × CYCLE_TIME) + setup allowance
-daily_cap    = Σ_machines Σ_shifts AVAILABLE_MINS   (machine_master baseline)
-horizon_days = ceil(total_work / daily_cap) × config.scheduling_horizon_safety_factor
-horizon_days = max(horizon_days, days_until latest CDD) + config.scheduling_horizon_buffer_days
-horizon_dates = [run_date + i days  for i in range(horizon_days)]
-```
-Consecutive calendar days from the run date. Closures within the horizon come from machine_daily as `cap = 0` slots — never by removing dates.
-
-### Guiding principle — PRODUCTION SHOULD NEVER STOP
-The single overriding design rule (from the plant owner): **work must never get stuck
-waiting on a specific machine.** Maximum machine AND manpower utilisation is a must.
-Every constraint below is subordinate to this: if the "preferred" choice would idle a
-batch, the batch flows to whatever capable machine is open next. Setup time is always a
-real cost when a *new valve size* (ITEM_CATEGORY) joins a machine — it shapes the choice,
-it never blocks production.
-
-### Hard Rules (enforced by CP-SAT model — Model C)
-1. Operations scheduled in strictly ascending OPERATION_NO order (precedence via slot index)
-2. Each scheduling unit is one `(PRODUCTION_ORDER, OPERATION_NO)` pair — quantity = balance_qty
-3. **Flexible per-slot routing (no single-machine lock):** a task's pieces may be placed on
-   ANY capable machine (from routing_master) in ANY open slot. There is NO `assign[t,m]`
-   "one machine for the whole operation" variable — that lock was the cause of spurious
-   INFEASIBILITY and has been removed. Splitting across machines is still possible when
-   capacity/deadline genuinely requires it, but see **Batch-Aware Scheduling** below — orders
-   sharing the same valve SIZE~CLASS~DESIGN are additionally constrained to consolidate onto
-   ONE common machine per operation, so splitting is now the exception, not the default.
-4. **Auto-route / overflow:** if a batch does not fit in a slot, the remainder flows to the
-   next OPEN `(machine, slot)` — preferring the SAME machine (setup carries over, so it is
-   free) but moving to another capable machine when the current one is closed/full. A closed
-   slot (`AVAILABLE_MINS = 0`) simply has no variable, so pieces route around it automatically.
-   Production never waits for a down machine.
-5. **Setup is always a cost on a new size:** SETUP_TIME is charged whenever an ITEM_CATEGORY
-   (valve size) newly appears on a machine in a slot — this covers both "a new order/size
-   joins the machine" and "the batch switched machines". It is WAIVED only when the same size
-   carried over from that machine's previous OPEN slot (so continuing across a shift boundary,
-   e.g. shift 3 → shift 1 next day, on the same machine and same size is free). Charged at slot
-   granularity inside the capacity bucket, and additionally penalised (mildly) in the objective
-   so the solver batches same-size work together to maximise utilisation.
-6. Non-routed operations are transparent to the CP-SAT model: precedence connects the last
-   schedulable Op_n directly to the next schedulable Op_n+k, skipping unrouted ops in between.
-7. If AVAILABLE_MINS = 0 for a machine+shift → that `(machine, slot)` has no variables; no work
-   is placed there and pieces route to the next open slot.
-
-**Preference vs. feasibility (Scenario 3 rule):** MACHINE_PRIORITY (1 = most preferred) is only
-a *tiny objective tiebreaker*. The solver keeps a batch on the priority-1 machine only while
-doing so still meets the deadline; the moment waiting for it would cause tardiness, the batch
-goes to an earlier-available capable machine instead — even a lower-priority one — because
-production must not stop or slip for a mere preference.
-
-**No-overlap note:** there is no continuous timeline to overlap on. A machine is never
-over-committed because the per-slot capacity constraint (`Σ work + setup ≤ AVAILABLE_MINS`)
-already caps total load in each `(machine, slot)` bucket. `AddNoOverlap` is subsumed by it.
-
-**Guaranteed feasibility (greedy fallback):** an earliest-slot, carryover-aware greedy pass
-always produces a complete, valid schedule. It warm-starts CP-SAT (instant feasible point) and
-is returned verbatim if CP-SAT cannot improve on it within the time budget. `/schedule/generate`
-therefore ALWAYS returns a runnable plan — it never fails with INFEASIBLE/UNKNOWN on real data.
-
-### Batch-Aware Scheduling — orders queued together to save setups
-
-**Why this exists:** a production planning engineer clubs orders of similar valves before their
-first operation and keeps that batch together through every operation that follows, so the
-machine pays ONE setup for the whole group instead of one setup per order. Model C's original
-per-piece flexible routing (Hard Rule 3) had no concept of this — it could freely fragment a
-single order's pieces, let alone a batch's, across every capable machine, which is not how the
-shop floor actually runs.
-
-**Batch key — `SIZE_INCH~CLASS~DESIGN` (excludes MOC).** Two production orders belong to the same
-batch at a given operation when their valve SIZE, CLASS, and DESIGN match — MOC does NOT need to
-match (a Carbon Steel and a Stainless Steel order of the same size/class/design still batch
-together). Grouping is evaluated independently **per operation** (per TASK code, e.g. VB02): a
-batch formed at Op10 is free to split apart at Op20 if the orders' downstream routing diverges —
-there is no requirement that a batch stays intact for an order's whole routing, only that *at any
-given operation*, same-batch orders consolidate onto one machine for that operation.
-
-> **Critical implementation detail — where `batch_key` must come from.** `batch_key` is computed
-> directly from the raw, typed WIP columns (`SIZE_INCH`, `CLASS`, `DESIGN`) — see
-> `preprocess.py::build_scheduler_input` and `batch_grouping.py::compute_batch_key`. It must
-> **never** be derived by string-splitting `ITEM_CATEGORY` (`SIZE~CLASS~DESIGN~MOC`). When DESIGN
-> is blank for a row, the ERP's concatenated `ITEM_CATEGORY` string silently drops that segment,
-> shifting MOC into the position DESIGN would have occupied — a real bug that once merged orders
-> with genuinely different DESIGN values into the same nominal batch, causing spurious machine
-> splits with a completely different (and misleading) explanation each time it was investigated.
-> `SchedulableTask.batch_key` (models.py) exists specifically so callers never re-derive this from
-> `item_category`.
-
-**Safety stock rides along, flagged separately.** Orders with `CDD = NULL` participate in
-batching exactly like any other order — excluding them would defeat the setup-sharing purpose.
-Each output row carries `IS_SAFETY_STOCK` (`Y`/`N`) so the UI can render them in a distinct
-colour; a planner can then manually decide whether to include a flagged batch member for a quick
-operation (e.g. Cone Oversize) or exclude it for a slower one (e.g. Stem Boring / Cone Finishing).
-
-**Enforcement — CP-SAT (hard constraint) + greedy (sticky machine), both paths, because greedy is
-often the one actually used:**
-- CP-SAT (`Engine1Scheduler._add_batch_continuity`): for every batch group with more than one
-  order, compute the **intersection** of all members' candidate machines. If non-empty, add one
-  boolean `chosen[m]` per machine in that intersection with `Σ chosen == 1`, and constrain every
-  member's `occ[pid, m, k] ≤ chosen[m]` for `m` in the intersection. If the intersection is empty
-  (routing genuinely diverges — see escape hatch below), no constraint is added for that group.
-- Greedy (`Engine1Scheduler.greedy_schedule`): the first order processed within a batch group
-  picks a machine normally; every other member is then forced onto that same machine (with
-  overflow onto further open slots on it, per Hard Rule 4). If that machine genuinely has no
-  room left for a later member (a real capacity/timing conflict), that member falls back to a
-  free search for its own remainder — logged as a "batch override" — rather than blocking
-  production to preserve the grouping. Orders are also walked in **batch-clustered order**
-  (same-batch orders adjacent in the urgency-sorted queue, not scattered) to minimise the chance
-  of an unrelated order consuming the group's chosen machine in between placements.
-
-**Escape hatch — divergent routing.** MOC is excluded from the batch key, but `MCH_MACHINE_PRIORITY`
-does key on MOC, so two orders with identical SIZE/CLASS/DESIGN but different MOC can legitimately
-have non-overlapping candidate machine sets. When that happens, batching is simply not enforced for
-that specific group (CP-SAT skips the constraint; greedy's override path fires immediately) — this
-is a real routing difference, not a bug, and production is never blocked over a batching preference.
-
-**No historical retention / no archiving.** A prior design archived `MCH_SCHEDULE_OUTPUT` and
-`MCH_SIM_RESULTS` rows older than 90 days into `_ARCHIVE` tables. This was removed: each
-`/schedule/generate` run now deletes all rows and writes fresh (see Write tables section below).
-
-### urgency_weight formula
-```
-pdd_score    = 1 / max(1, days_until_pdd)
-                  ↑ exponentially urgent near deadline
-
-ageing_score = (today − PRODUCTION_START_DATE_AND_TIME).days / config.ageing_normalization_days
-                  ↑ normalized 0→1 over ~6 months; config.ageing_normalization_days = 180
-
-batch_bonus  = config.batch_bonus_value  if  days_until_pdd < config.batch_bonus_months × 30
-             = 0                          otherwise
-                  ↑ bonus for orders due within the configured window (default: 2 months)
-                  ↑ config.batch_bonus_months is editable via UI
-
-downstream_queue_bonus = config.downstream_queue_bonus_value
-                       if (wip_orders contains at least one OTHER production order with:
-                           - same ITEM_CATEGORY as this order
-                           - balance_qty > 0 at the next downstream schedulable operation
-                           - meaning: that order already passed the current operation and is
-                             queued downstream — scheduling this order now avoids a new setup
-                             at the downstream machine)
-                       = 0 otherwise
-                  ↑ rewards scheduling orders that can "piggyback" on an active downstream setup
-                  ↑ example: 8-class valve at Cone Oversize gets bonus when 8-class valves are
-                    already pending at PTA — completing this order now sends pieces to a
-                    machine already set up for 8-class (SETUP_TIME = 0 saved)
-                  ↑ CP-SAT still weighs this against all other orders' tardiness — never
-                    overrides PDD pressure; only promotes the order when capacity is available
-                  ↑ config.downstream_queue_bonus_value = 0.3 (less than batch_bonus 0.5)
-
-urgency_weight = pdd_score + ageing_score + batch_bonus + downstream_queue_bonus
-
-Safety stock orders (CDD = NULL): urgency_weight = 0 (always scheduled last, never urgent)
-```
-
-### Objective function
-```
-Minimize:
-    Σ_i [ urgency_weight_i × max(0, completion_day_i − pdd_day_i) ]     ← primary: weighted tardiness
-  + Σ [ config.setup_penalty_weight × setup_charged[c,m,k] ]           ← secondary: batch same sizes
-  + Σ_j [ config.machine_priority_epsilon × (MACHINE_PRIORITY_j − 1) × used[t,m]_j ]
-                                                                          ← tertiary: machine priority tiebreaker
-```
-
-Weight ordering (all scaled by URGENCY_SCALE = 1000):
-- **Tardiness** dominates — one tardy day costs `urgency_weight × 1000` (hundreds to thousands).
-- **setup_penalty_weight = 0.05** → ~50 units per avoidable setup: enough to make the solver batch
-  same-size work together (maximising machine utilisation) but far too small to ever delay a
-  delivery to save a setup. Set to 0 to disable. Setup is *also* charged as real minutes inside the
-  capacity bucket — this objective term only adds a mild "prefer fewer setups" nudge on top.
-- **machine_priority_epsilon = 0.001** → 1 unit per priority level on `used[t,m]` (a per-task,
-  per-machine "this machine was used" bool). Pure tiebreaker: prefer the priority-1 machine only
-  when it costs no tardiness. `used[t,m]` replaces Model B's `assign[t,m]`, which no longer exists.
-
-**Day resolution + integer scaling (Model C).** `completion_day` and `pdd_day` are DAY indices, not minutes:
-```
-completion_day[order] = end_slot[last routable op] // 3      # slot index → day (3 shifts/day)
-pdd_day[order]        = (CDD − D[0]).days                    # days from horizon origin
-```
-Because CP-SAT is integer-only, the objective is evaluated in scaled integers:
-```
-urgency_s[order] = round(urgency_weight[order] × URGENCY_SCALE)      # URGENCY_SCALE = 1000
-setup_pen_s      = round(config.setup_penalty_weight × URGENCY_SCALE)      # 0.05 × 1000 = 50
-eps_s            = round(config.machine_priority_epsilon × URGENCY_SCALE)   # 0.001 × 1000 = 1
-
-Minimize:  Σ_order urgency_s[order] × tardiness_days[order]
-         + Σ_{c,m,k} setup_pen_s × setup_charged[c,m,k]
-         + Σ_{t,m}  eps_s × (MACHINE_PRIORITY[t,m] − 1) × used[t,m]
-```
-With `URGENCY_SCALE = 1000`, one tardy day costs at least a few hundred units while the priority
-tiebreaker costs 1 per priority level — so priority can only break ties among equal-tardiness solutions,
-never override tardiness.
-
-### CP-SAT model structure (engine1_scheduler.py) — Model C (flexible quantity-in-slot)
-
-Model C allocates integer **quantities into `(machine, slot)` buckets**, on any capable machine.
-There is no `assign` lock and no contiguity constraint — the two most complex, buggy parts of
-Model B are simply gone. What remains is small and provably correct.
+- When the **FIXTURE** on a machine changes: charge `FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME` once, before the first piece.
+- When only the **LOCATOR** changes (fixture unchanged): charge `LOCATOR_CHANGE_TIME` once, before the first piece.
+- **LOAD_UNLOAD_TIME** is charged **per piece**, for every piece in the batch, regardless of fixture/locator change.
 
 ```
-Notation:
-  t   = schedulable task = (PRODUCTION_ORDER, OPERATION_NO), quantity q_t = balance_qty
-  M_t = capable machines for t   (routing_master rows for t.TASK × t.ITEM_CATEGORY)
-  K   = all slot indices in the horizon   (|horizon_dates| × 3)
-  c_t = t.ITEM_CATEGORY (valve size)
-  open_slots[m] = slots where cap_s[m,k] > 0  (closed slots get NO variables at all)
-
-Decision variables (created only for capable m and OPEN slots k):
-  qty[t,m,k]  ∈ [0, q_t]   integer     # pieces of t done on m in slot k — ANY capable machine
-  occ[t,m,k]  ∈ {0,1}                   # 1 iff qty[t,m,k] > 0
-  occ_any[t,k]∈ {0,1}                   # OR over machines: t does any work in slot k
-  start_slot[t], end_slot[t] ∈ integer  # first / last occupied slot of t (for precedence)
-
-── Quantity accounting (Hard Rules 2, 3 — flexible routing) ──
-  Σ_{m,k} qty[t,m,k] = q_t             # every piece scheduled somewhere (never stops)
-  qty[t,m,k] ≤ q_t × occ[t,m,k]        # occ = 0 ⇒ qty = 0
-  occ[t,m,k] ≤ qty[t,m,k]              # qty = 0 ⇒ occ = 0
-  # NO assign[t,m], NO AddExactlyOne — pieces may split across any capable machines.
-
-── Capacity + setup per (machine, slot)  (Hard Rules 4, 5, 7; setup at slot granularity) ──
-  Σ_t qty[t,m,k] × ct_s[t]  +  Σ_c setup_s[c,m] × setup_charged[c,m,k]  ≤  cap_s[m,k]
-      cat_present[c,m,k]   = OR of occ[t,m,k] over tasks t with c_t = c
-      carried[c,m,k]       = cat_present[c,m,k] AND cat_present[c,m, prev_open(m,k)]
-      setup_charged[c,m,k] = cat_present[c,m,k] − carried[c,m,k]        (∈ {0,1})
-  # Closed slot (cap_s = 0) has no variables ⇒ nothing placed there; pieces route elsewhere.
-  # One SETUP_TIME per distinct valve size a machine newly touches in a slot, WAIVED when the
-  # same size carried over from that machine's previous OPEN slot (prev_open) — so continuing on
-  # one machine across a shift boundary is free, switching machines / sizes costs a setup.
-
-── Occupancy window (for precedence only — NO contiguity forcing) ──
-  occ_any[t,k]  = MaxEquality( occ[t,m,k] over m )
-  end_slot[t]   = MaxEquality( k · occ_any[t,k] )                       over achievable k
-  start_slot[t] = MinEquality( k · occ_any[t,k] + BIG · (1 − occ_any[t,k]) )
-  # One-directional (derived FROM occ). No constraint forces occ back from start/end, so there
-  # is no circular reification — this is the key difference from Model B.
-
-── Precedence, skipping non-routed ops (Hard Rules 1, 6) ──
-  Within each order, sort schedulable ops ascending OPERATION_NO: o_1 < o_2 < ...
-  For each consecutive pair:  start_slot[o_{i+1}] ≥ end_slot[o_i]
-
-── Objective (see Objective function section) ──
-  completion_day[order] = end_slot[last routable op] // 3
-  Minimize   Σ urgency_s × tardiness_days                         (primary)
-           + Σ setup_pen_s × setup_charged[c,m,k]                 (mild — batch same sizes)
-           + Σ eps_s × (MACHINE_PRIORITY − 1) × used[t,m]         (tiny — prefer priority-1)
+Fixture change:  FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME + (LOAD_UNLOAD_TIME × QTY)
+Locator change (fixture unchanged):  LOCATOR_CHANGE_TIME + (LOAD_UNLOAD_TIME × QTY)
+No change (same fixture + same locator carried over):  LOAD_UNLOAD_TIME × QTY
 ```
+`CYCLE_TIME` (per piece, from MCH_WIP) is **added on top** of the above — it is the actual cut time, unaffected by fixture/locator logic.
 
-**Greedy warm-start + fallback.** Before solving, an earliest-slot, carryover-aware greedy pass
-places every piece (preferring earliest slot, then a slot already set up for the size, then lowest
-priority). It hints CP-SAT (instant feasible point) and is returned as-is if CP-SAT does not beat
-it in time — so a valid schedule is guaranteed.
+### E.4 — Batching algorithm (the priority-walk)
 
-**Post-solve extraction → MCH_SCHEDULE_OUTPUT** (see Output): for each `(t, m, k)` with `qty > 0`,
-emit one row `(order, op, m, shift = S[k%3], date = D[k//3], balance_qty = qty)`, then lay the slot's
-tasks back-to-back from offset 0 to fill `start_offset_min / end_offset_min` within `[0, WORKING_MINS]`.
+Goal: minimize fixture/locator changeovers while respecting CDD priority. Batching happens **first, across the whole plant**, before any machine is chosen (§7 picks the machine afterward, per the intersection of capable machines for the whole batch).
 
-### Output
-Written to `MCH_SCHEDULE_OUTPUT`. One row per `(PRODUCTION_ORDER, OPERATION_NO, WORK_CENTER, shift, scheduled_date)` — a batch that overflows across slots produces multiple rows (same order/op/machine, different shift/date).
+Given the pool of eligible order-operations (same TASK) sorted by priority (§2), walk it as follows:
 
-- `scheduled_date = D[k // 3]` and `shift = S[k % 3]` for each occupied slot `k`.
-- `start_offset_min / end_offset_min`: POST-SOLVE display layout only. Within each `(machine, slot)`, lay the assigned tasks back-to-back from offset 0 using consumed minutes (`qty × CYCLE_TIME` + any charged setup). Since consumed ≤ `AVAILABLE_MINS ≤ WORKING_MINS`, all offsets fall inside `[0, WORKING_MINS]`. These offsets are NOT solver constraints.
-- `new_completion_date` for an order = `D[end_slot[last routable op] // 3]` = max(scheduled_date) across the rows of that order's last routable operation. Consumed by Engine 2 for slip_days.
+1. Take the highest-priority order not yet batched. Start a new **fixture run**: charge `FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME × qty`.
+2. Search the remaining pool, in this preference order, for the next order to append to the **current** atomic sub-batch / fixture run:
+   a. **Exact same SIZE~CLASS~MOC~DESIGN, same fixture AND same locator already active** → append, charge only `LOAD_UNLOAD_TIME × qty`.
+   b. Else, **same fixture + same locator combo** (any SCMD) → append, charge only `LOAD_UNLOAD_TIME × qty`.
+   c. Else, **same fixture, different locator**, highest priority among candidates → append, charge `LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME × qty`; this starts a new locator sub-batch within the same fixture run — repeat (a)/(b) inside it before falling back to (c) again.
+   d. When no order sharing this fixture remains, the fixture run is closed.
+3. Move to the next-highest-priority remaining order and repeat from step 1 (new fixture run, machine takes it after `cooling_minutes` — §7).
+
+This is worked in full, line-by-line, in the two examples preserved in `Chat Reports/Engine1_Finallogic(BOSS)` — implementers should validate against both exactly before considering the batching engine correct.
+
+**Routing-divergence split** (inherited from Model D): a batch normally stays intact across operations (same SCMD ⇒ same fixture/locator downstream), but when members' routing diverges at a later operation (e.g. one has an extra rework op), the batch splits only at the operation where routing diverges and rejoins where it reconverges.
+
+### E.5 — Machine selection
+
+For a formed fixture run: intersect the capable machines (per `MCH_MACHINE_PRIORITY`, evaluated for every member) across all members of the run. Pick the machine **free earliest**; break ties by lowest `MACHINE_PRIORITY`. Priority is soft — never wait on a preferred machine while another capable machine is idle and could take the work. If no single machine is capable of every member, keep the run intact on one common machine and drop the incapable member(s) — they schedule in their own run.
+
+### E.6 — Consolidation window (60 days) — HARD RULE, no override
+
+An order is eligible to be pulled into a fixture-run consolidation (§4 step 2) **iff its CDD is within `batch_consolidation_window_days` (default 60) of today** (run date).
+
+**This window governs committed-vs-committed consolidation only — it does not gate safety-stock orders.** Safety stock (CDD = NULL) always sorts last in priority (§2) and can therefore never *anchor* a run ahead of a committed order — it has no CDD to "pull forward" and no way to make the window's concern (needlessly consolidating a near-term committed order with something due far out) happen. So a safety-stock order riding along *after* an already-forming, committed-anchored run is exempt from this window check entirely; whether it actually gets appended is decided solely by §E.10's safety-stock policy below, never by §E.6. (An order's own committed CDD, if it has one, is still fully subject to the window regardless of what else is in the run.)
+
+**This is a hard cutoff, not a soft preference — there is no escape hatch.** An order beyond the window is simply never eligible for consolidation, regardless of machine idleness, downstream impact, or anything else. (An earlier draft of this rule had a "delays no committed order" override; that override was deliberately removed — §6 is now evaluated purely on the window number, nothing else.) `batch_consolidation_window_days` remains a plain config value — changing it (e.g. 60 → 90) takes effect immediately with no code change, since the cutoff is read from config on every call, never hardcoded.
+
+### E.7 — Continuous timeline, no capacity cap
+
+- Time is continuous wall-clock minutes. There is **no discrete shift-slot lattice** and **no per-machine capacity cap** — every machine can take infinite work; what governs timing is fixture/locator/machine availability, not a minute budget.
+- Machining only progresses inside a shift's `AVAILABLE_MINS` window (from `MCH_MACHINE_AVAILABILITY`, overridden by `MCH_MACHINE_AVAILABILITY_BY_DATE` when present; no row ⇒ fully available). If a batch's remaining work exceeds the time left in the current shift, it pauses and resumes in that machine's next working shift/day.
+- **`cooling_minutes` (default 20)** fixed dead-time after every batch, on every machine, before that machine's next batch — regardless of whether the next available instant falls in the same shift, the next shift, or the next working day. A machine is never left idle for a placeable task beyond this cooling window.
+- **Every machine is always considered.** A machine with no row in `MCH_MACHINE_AVAILABILITY_BY_DATE` is fully available for its `MCH_MACHINE_AVAILABILITY` baseline. Breakdowns/maintenance come only from `AVAILABLE_MINS = 0` rows in the by-date view.
+- No inter-operation WIP transit time: an order's next operation may start the instant its previous operation ends (subject to machine/fixture/locator availability and cooling).
+
+### E.8 — Planned-order release gating
+
+See §1. Earliest-start = `PRODUCTION_START_DATE_AND_TIME + planned_order_start_buffer_days`, first shift onward. The order is invisible to the batching walk (§4) until that instant passes; once it passes, it competes for machines/fixtures normally, by priority (§2). Never preempt or interrupt a machine's in-progress batch to slot a Planned order in early.
+
+### E.9 — Fixture/Locator pool constraint (hard, plant-wide)
+
+`MCH_FIXTURE_LOCATOR.QUANTITY` caps **concurrent** use of each device (fixture or locator) across the entire plant. If only 1 unit of a fixture exists, two batches needing it cannot run on two machines at the same time — one waits, regardless of machine availability.
+
+- A fixture run holds **1 unit of its FIXTURE for the run's entire start-to-end span**.
+- It holds **1 unit of a LOCATOR only during that locator's own sub-batch** inside the run, releasing it before the next locator sub-batch mounts.
+- No transfer/movement time when a device moves between machines — release and re-mount are instantaneous; `QUANTITY` is purely a concurrency cap, not a location tracker.
+- **Same SIZE~CLASS~MOC~DESIGN, same operation, running on two machines at once** is an **additional soft preference to avoid** — not a hard rule enforced only by the pool cap. Even when enough fixture/locator units physically exist to allow a split, the batching walk (§4) should still prefer keeping same-SCMD same-operation work together on one machine wherever priority and fixture/locator lookup allow it.
+
+### E.10 — Safety-stock policy on heavy operations
+
+`heavy_operations = ["VB03", "VB04", "VB05", "VB06"]` (Weld Overlay, Stem Boring, Cone Finishing, Stem Boring + Cone Finishing).
+
+Split a fixture+locator sub-batch into its **committed** (CDD not null) and **safety-stock** (CDD null) pieces.
+
+- **Heavy operations:** schedule the committed pieces first. Append the safety-stock pieces immediately after (free — same fixture/locator already mounted) **only if** doing so delays no committed order, anywhere, past its CDD. If it would, release the fixture/locator and send the safety-stock pieces to the **back of the global priority queue** — picked up later whenever their fixture/locator naturally comes free again.
+- **Light operations** (everything not in `heavy_operations`): committed and safety-stock pieces batch together normally, no special ordering — the marginal cost of including safety-stock is only `LOAD_UNLOAD_TIME × qty`.
+- **`protect_committed_over_safety = true` is absolute** — no committed order is ever delayed to build safety stock, under any circumstance.
+
+**Implementation requirement — full speculative check, not a proxy.** "Delays no committed order, anywhere" must be answered by actually forking the simulation state and running two independent continuations of the rest of the schedule — **append** and **defer** — then comparing whether the append branch causes any committed order to breach its own CDD. A local proxy (checking only orders sharing the same machine/fixture/locator) was explicitly rejected in favor of this full check, given the project's zero-tolerance for a wrongly-approved committed delay.
+
+Because both continuations are pure CPU-bound Python (no I/O), running them one after another would double the cost of every single heavy-op decision across a run with many such decisions. **This must be parallelized across separate OS processes, not threads** — CPython's GIL means threads buy no real speedup on CPU-bound work. On Windows (this project's dev machine and production target), `multiprocessing`'s spawn start method pickles every branch's target function and arguments to hand to a worker process, so each branch's continuation must be a plain module-level function operating on plain, picklable state (a forked `machine_free_at` dict, a forked `DevicePool` via `DevicePool.clone()`, the remaining order queue) — never a closure or bound method capturing outer state. See `backend/dispatch_parallel.py` (the branch-evaluation harness) and `DevicePool.clone()` in `backend/dispatch_pool.py` (the forkable pool state) — both already built; the orchestrator still needs to supply the actual "run the rest of the schedule from this forked state" continuation.
+
+### E.11 — Fixture/locator lookup: optional, not gating
+
+If `(SIZE_INCH, CLASS, MOC, DESIGN, TASK)` has **no** row in `MCH_ITEMWISE_FIXTURE_LOCATOR` for any candidate machine, the operation is **still scheduled** — via plain routing + `Σ CYCLE_TIME` only (no fixture/locator effect, no fixture-run membership, no pool involvement). `FIXTURE_ID`/`LOCATOR_ID` are left NULL on its output row, and `REMARK` records `"No fixture/locator match — scheduled via plain routing"`.
+
+### E.12 — Scheduling scope & the REMARK column
+
+An operation is **scheduled** (consumes real machine/fixture/locator time) iff **all** hold: `CYCLE_TIME > 0`, `balance_qty > 0`, `WORK_CENTER` does not contain `'QAINSP'`, `CLASS != 'PN10'`, and it has a routing entry in `MCH_MACHINE_PRIORITY`.
+
+**Every eligible order-operation from MCH_WIP now always produces a row in `MCH_SCHEDULE_OUTPUT`, scheduled or not.** When it is not scheduled, `WORK_CENTER`/`SHIFT`/`SCHEDULED_DATE`/fixture fields are left NULL and `REMARK` explains why, in plain language, e.g.:
+- `"CT = 0 — excluded"`
+- `"Balance Qty <= 0 — fully accounted for"`
+- `"QAINSP — manual QA gate, excluded from scheduling"`
+- `"CLASS = PN10 — excluded, no routing/fixture setup yet"`
+- `"No routing entry for this TASK"`
+- `"No fixture/locator match — scheduled via plain routing"` (this one **is** scheduled — see §11 — REMARK is a caveat, not an exclusion, in this case)
+
+An op with genuinely no routing entry is the only case still bridged transparently in precedence (the next schedulable op connects directly to the last schedulable one), matching prior models.
+
+### E.13 — Solver architecture
+
+The **only** engine is the deterministic dispatch simulator described above. CP-SAT is fully retired — not a fallback, not a post-optimizer. Determinism (same inputs ⇒ same schedule) is required for plant-floor auditability.
+
+### E.14 — Output (MCH_SCHEDULE_OUTPUT)
+
+See DDL in **Write tables** below, and `backend/testing/model_e_schedule_output_schema.sql`. Key points:
+- **One row per `(PRODUCTION_ORDER, OPERATION_NO, LINE_NO)`.** `LINE_NO` starts at 1 and increments **only** when one order-operation's own balance is genuinely split across more than one machine (e.g. a mid-batch machine breakdown forcing a handoff) — this is rare, not the normal case.
+- `START_TIMESTAMP`/`END_TIMESTAMP` are the row's real, continuous-time bounds (can span shifts/days). `SCHEDULED_DATE`/`SHIFT` are derived display fields = the calendar date / shift window containing `END_TIMESTAMP` (the Gantt shows completion, not start — unchanged convention from Model D).
+- `BATCH_KEY` stores the literal `SIZE_INCH~CLASS~MOC~DESIGN` string. `FIXTURE_ID`/`LOCATOR_ID` are separate columns holding the `DEVICE_NAME` actually assigned (NULL when §11's no-match fallback applies, or when the row is unscheduled).
+- `ORDER_COMPLETION_DATE`/`ORDER_COMPLETION_SHIFT`: taken from the order's own last-operation row (highest `OPERATION_NO` among its scheduled rows) and **stamped identically across every row of that `PRODUCTION_ORDER`**, so any row for that order shows its eventual completion without a join.
+- `REMARK`: see §12.
+- **No historical retention** — each `/schedule/generate` run deletes all rows and writes fresh (unchanged from prior models).
 
 ---
 
 ## Engine 2 — Recommendation Engine (engine2_recommender.py)
 
+Unchanged in concept from prior models — no Model E changes planned as of this writing.
+
 ### Trigger
 Planner selects one or more orders to elevate via the Order Board UI.
 
 ### Process
-1. Read current `MCH_SCHEDULE_OUTPUT` → old_completion_date per order (baseline snapshot)
-2. Set elevated order(s): `urgency_weight = 999999` (forces to top of scheduling queue)
-3. Re-run Engine 1 CP-SAT with `max_time_in_seconds = config.engine2_time_limit_seconds` (default: 10s)
-4. For every other order in the new schedule:
-   - `slip_days = new_completion_date − old_completion_date`
-   - `slack = CDD − new_completion_date`
-5. Classify risk:
-   - **SAFE:**    `slack > config.risk_safe_threshold_days` (default: 5 days)
-   - **AT_RISK:** `0 ≤ slack ≤ config.risk_safe_threshold_days`
-   - **BREACH:**  `slack < 0`
-6. Write all results to `MCH_SIM_RESULTS` table
-7. Return top-5 most impacted orders (highest slip_days) in API response
+1. Read current `MCH_SCHEDULE_OUTPUT` → old_completion_date per order (baseline snapshot; use `ORDER_COMPLETION_DATE`).
+2. Force the elevated order(s) to the top of the priority queue (§2) — highest priority, ahead of all CDD-based ordering.
+3. Re-run Engine 1 (the Model E dispatch simulator).
+4. For every other order in the new schedule: `slip_days = new_completion_date − old_completion_date`, `slack = CDD − new_completion_date`.
+5. Classify risk: **SAFE** (`slack > risk_safe_threshold_days`), **AT_RISK** (`0 ≤ slack ≤ risk_safe_threshold_days`), **BREACH** (`slack < 0`).
+6. Write all results to `MCH_SIM_RESULTS`.
+7. Return top-5 most impacted orders (highest slip_days).
+
+Since the dispatch simulator is deterministic and fast (not an iterative solver with a time budget), `engine2_time_limit_seconds` is retired along with the rest of the CP-SAT-era config (see Configuration section).
 
 ---
 
 ## Write tables (created + owned by this application — the ONLY two objects it writes)
 
-Both are real Oracle tables (not views). They are created once in Oracle SQL Developer using the
-DDL below. Machine identity uses **WORK_CENTER** to match the ERP views; the operation-sequence
-number is stored as **OPERATION_NO** (= MCH_WIP.OPERATION).
-
-### schedule_output → MCH_SCHEDULE_OUTPUT (Engine 1 writes)
+### schedule_output → MCH_SCHEDULE_OUTPUT (Engine 1 writes) — Model E shape
 ```sql
 CREATE TABLE MCH_SCHEDULE_OUTPUT (
-    RUN_ID            VARCHAR2(36)  NOT NULL,   -- one id per /schedule/generate run
-    PRODUCTION_ORDER  VARCHAR2(9)   NOT NULL,
-    OPERATION_NO      NUMBER        NOT NULL,   -- = MCH_WIP.OPERATION (ascending seq number)
-    TASK              VARCHAR2(51),             -- task code (VB02, …); for display, nullable
-    WORK_CENTER       VARCHAR2(49)  NOT NULL,   -- assigned machine
-    SHIFT             VARCHAR2(10)  NOT NULL,   -- first | second | third
-    SCHEDULED_DATE    DATE          NOT NULL,
-    BALANCE_QTY       NUMBER        NOT NULL,   -- pieces placed in THIS slot
-    START_OFFSET_MIN  NUMBER        NOT NULL,   -- display: minutes into shift (0 … WORKING_MINS)
-    END_OFFSET_MIN    NUMBER        NOT NULL,   -- display: minutes into shift
-    BATCH_KEY         VARCHAR2(100),            -- SIZE_INCH~CLASS~DESIGN (excl. MOC) — see Batch-Aware Scheduling
-    IS_SAFETY_STOCK   CHAR(1)       DEFAULT 'N',-- Y when the order's CDD is NULL — UI flags these distinctly
-    GENERATED_AT      TIMESTAMP     NOT NULL,
+    RUN_ID                  VARCHAR2(36)   NOT NULL,   -- audit only; NOT part of the PK (table holds one run at a time)
+    PRODUCTION_ORDER        VARCHAR2(9)    NOT NULL,
+    OPERATION_NO            NUMBER         NOT NULL,   -- = MCH_WIP.OPERATION
+    LINE_NO                 NUMBER         DEFAULT 1 NOT NULL,  -- increments only on a machine-handoff split
+    TASK                    VARCHAR2(51),
+    WORK_CENTER             VARCHAR2(49),               -- NULL on unscheduled/REMARK rows
+    SHIFT                   VARCHAR2(10),               -- NULL on unscheduled/REMARK rows
+    SCHEDULED_DATE          DATE,                       -- NULL on unscheduled/REMARK rows
+    BALANCE_QTY             NUMBER         NOT NULL,
+    GENERATED_AT            TIMESTAMP(6)   NOT NULL,
+    BATCH_KEY               VARCHAR2(100),              -- SIZE_INCH~CLASS~MOC~DESIGN
+    IS_SAFETY_STOCK         CHAR(1)        DEFAULT 'N',
+    FIXTURE_ID              VARCHAR2(40),
+    LOCATOR_ID              VARCHAR2(40),
+    START_TIMESTAMP         TIMESTAMP(6),
+    END_TIMESTAMP           TIMESTAMP(6),
+    REMARK                  VARCHAR2(200),              -- human-readable miss/caveat reason
+    ORDER_COMPLETION_DATE   DATE,
+    ORDER_COMPLETION_SHIFT  VARCHAR2(10),
     CONSTRAINT PK_MCH_SCHEDULE_OUTPUT
-        PRIMARY KEY (RUN_ID, PRODUCTION_ORDER, OPERATION_NO, WORK_CENTER, SHIFT, SCHEDULED_DATE)
+        PRIMARY KEY (PRODUCTION_ORDER, OPERATION_NO, LINE_NO)
 );
 ```
-Model mapping (models.py `ScheduleOutputRow`): production_order→PRODUCTION_ORDER, operation_no→OPERATION_NO,
-machine_name→WORK_CENTER, shift→SHIFT, scheduled_date→SCHEDULED_DATE, balance_qty→BALANCE_QTY,
-start_offset_min→START_OFFSET_MIN, end_offset_min→END_OFFSET_MIN, batch_key→BATCH_KEY,
-is_safety_stock→IS_SAFETY_STOCK ('Y'/'N' in Oracle, bool in Pydantic), run_id→RUN_ID, generated_at→GENERATED_AT.
-(TASK is an extra display-only column not currently in the Pydantic model — populate it or leave NULL.)
+Full DDL with indexes: `backend/testing/model_e_schedule_output_schema.sql`. **This has already been applied manually in Oracle SQL Developer** — `models.py::ScheduleOutputRow`, `db.py`, `pipeline.py`, and the FastAPI response shapes in `main.py` still need to be migrated to match (tracked as implementation work, not yet done — the old shape had `START_OFFSET_MIN`/`END_OFFSET_MIN` and a different PK, both retired).
 
-**No historical retention.** Each `/schedule/generate` run DELETEs all existing rows from
-`MCH_SCHEDULE_OUTPUT` before writing the new schedule (see `pipeline.py::_persist_schedule_output`).
-There is no archive table for this data — a prior design that moved rows older than 90 days to
-`MCH_SCHEDULE_OUTPUT_ARCHIVE` was removed; the table always holds exactly one run's worth of rows.
+**No historical retention.** Each `/schedule/generate` run DELETEs all existing rows before writing the new schedule.
 
-### sim_results → MCH_SIM_RESULTS (Engine 2 writes)
+### sim_results → MCH_SIM_RESULTS (Engine 2 writes) — unchanged
 ```sql
 CREATE TABLE MCH_SIM_RESULTS (
-    SIM_ID               VARCHAR2(36)  NOT NULL,  -- one id per /priority/simulate run
-    ELEVATED_ORDER       VARCHAR2(200) NOT NULL,  -- elevated PRODUCTION_ORDER(s), comma-joined
-    PRODUCTION_ORDER     VARCHAR2(9)   NOT NULL,  -- the impacted order (models.py `order` field)
+    SIM_ID               VARCHAR2(36)  NOT NULL,
+    ELEVATED_ORDER       VARCHAR2(200) NOT NULL,
+    PRODUCTION_ORDER     VARCHAR2(9)   NOT NULL,
     OLD_COMPLETION_DATE  DATE,
     NEW_COMPLETION_DATE  DATE,
-    SLIP_DAYS            NUMBER,                   -- new_completion − old_completion, in days
-    RISK_FLAG            VARCHAR2(10)  NOT NULL,   -- SAFE | AT_RISK | BREACH
+    SLIP_DAYS            NUMBER,
+    RISK_FLAG            VARCHAR2(10)  NOT NULL,
     CREATED_AT           TIMESTAMP     NOT NULL,
     CONSTRAINT PK_MCH_SIM_RESULTS PRIMARY KEY (SIM_ID, PRODUCTION_ORDER)
 );
 ```
-Model mapping (models.py `SimResultRow`): sim_id→SIM_ID, elevated_order→ELEVATED_ORDER,
-order→PRODUCTION_ORDER (Oracle reserves the word ORDER, so the impacted order is stored as the
-column PRODUCTION_ORDER), old_completion_date→OLD_COMPLETION_DATE, new_completion_date→NEW_COMPLETION_DATE,
-slip_days→SLIP_DAYS, risk_flag→RISK_FLAG, created_at→CREATED_AT.
 
 ---
 
@@ -985,8 +391,7 @@ connection = oracledb.connect(
 )
 ```
 
-Credentials stored in `.env` (never committed to git).
-Local dev DSN: `localhost:1521/XEPDB1` (Oracle XE via Docker).
+Credentials stored in `.env` (never committed to git). Local dev DSN: `localhost:1521/XEPDB1` (Oracle XE via Docker).
 
 ---
 
@@ -994,22 +399,20 @@ Local dev DSN: `localhost:1521/XEPDB1` (Oracle XE via Docker).
 
 Framework: FastAPI | ASGI server: Uvicorn | Port: 8000
 
-### Endpoints (9 total)
+### Endpoints (9 total — unchanged surface, response shapes need Model E migration)
 - POST /schedule/generate — triggers Engine 1, writes to MCH_SCHEDULE_OUTPUT
-- GET  /schedule/current — reads latest MCH_SCHEDULE_OUTPUT, returns Gantt data
+- GET  /schedule/current — reads latest MCH_SCHEDULE_OUTPUT, returns Gantt data (needs to drop offset fields, add REMARK/ORDER_COMPLETION_DATE/ORDER_COMPLETION_SHIFT/LINE_NO)
 - POST /priority/simulate — triggers Engine 2 with payload `{orders: [...]}`, writes to MCH_SIM_RESULTS
 - GET  /orders/wip — returns active MCH_WIP rows (CT > 0, routable, balance_qty > 0)
-- GET  /machines/capacity — returns capacity_resolved for next N days
-- POST /data/refresh — re-fetches all 4 read-only ERP views from Oracle
+- GET  /machines/capacity — returns resolved machine availability for next N days
+- POST /data/refresh — re-fetches all 6 read-only ERP views from Oracle
 - GET  /machines/daily — returns MCH_MACHINE_AVAILABILITY_BY_DATE rows for a date range (read-only display)
 - GET  /config — returns current config.json contents
-- PUT  /config — updates config.json (batch_bonus_months, etc.)
+- PUT  /config — updates config.json
 
-There is **no** `PUT /machines/daily` — MCH_MACHINE_AVAILABILITY_BY_DATE is an ERP-owned read-only
-view; the application never writes machine availability.
+There is **no** `PUT /machines/daily` — read-only ERP view, never written by this application.
 
-CORS enabled for React frontend origin.
-Schedule regeneration: manual trigger only in v1 (no background timer).
+CORS enabled for React frontend origin. Schedule regeneration: manual trigger only in v1 (no background timer).
 
 ---
 
@@ -1018,16 +421,13 @@ Schedule regeneration: manual trigger only in v1 (no background timer).
 Framework: React 18 + Vite | Styling: TailwindCSS | Charts: Recharts | Drag-and-drop: React DnD
 
 ### Four main views
-1. **Schedule view** — Gantt chart per machine, showing shift utilisation %
-2. **Order board** — WIP order cards, drag-to-reprioritise, trigger Engine 2 simulation
-3. **Impact analyser** — MCH_SIM_RESULTS: risk scores, slip days, SAFE/AT_RISK/BREACH badges per order
-4. **Machine availability & settings** — read-only view of MCH_MACHINE_AVAILABILITY_BY_DATE (capacity is
-   ERP-owned, not editable here) + settings panel for config.json (batch_bonus_months and other
-   parameters editable here)
+1. **Schedule view** — Gantt chart per machine. Needs migration to render against `START_TIMESTAMP`/`END_TIMESTAMP` directly (continuous time) instead of the retired shift-offset fields; should surface `REMARK` and `ORDER_COMPLETION_DATE`/`SHIFT`.
+2. **Order board** — WIP order cards, drag-to-reprioritise, trigger Engine 2 simulation.
+3. **Impact analyser** — MCH_SIM_RESULTS: risk scores, slip days, SAFE/AT_RISK/BREACH badges.
+4. **Machine availability & settings** — read-only view of MCH_MACHINE_AVAILABILITY_BY_DATE + settings panel for the Model E config.json shape.
 
 ### API proxy
-Development: `vite.config.js` proxies `/api` → `http://localhost:8000`
-Production: Express.js handles the `/api` → Uvicorn proxy
+Development: `vite.config.js` proxies `/api` → `http://localhost:8000`. Production: Express.js handles the `/api` → Uvicorn proxy.
 
 ---
 
@@ -1037,8 +437,6 @@ Production: Express.js handles the `/api` → Uvicorn proxy
 Terminal 1:  cd backend && uvicorn main:app --reload --port 8000
 Terminal 2:  cd frontend && npm run dev   (Vite dev server on port 5173)
 ```
-
-Vite proxies `/api` calls to FastAPI on port 8000. server.js is NOT used in development.
 
 ---
 
@@ -1087,13 +485,17 @@ tov-mlo/
 ├── server.js                     ← Express.js production server
 ├── package.json                  ← express + http-proxy-middleware
 ├── backend/
-│   ├── main.py                   ← FastAPI app + all 10 endpoints
+│   ├── main.py                   ← FastAPI app + all 9 endpoints
 │   ├── db.py                     ← Oracle connection pool + read/write helpers
-│   ├── preprocess.py             ← resolve_capacity() + full preprocessing pipeline
-│   ├── engine1_scheduler.py      ← CP-SAT scheduling model
+│   ├── preprocess.py             ← preprocessing pipeline (Model C-era; needs Model E migration)
+│   ├── engine1_scheduler.py      ← scheduling engine (currently Model C CP-SAT; needs Model E dispatch-simulator rewrite)
+│   ├── batch_grouping.py         ← Model C batch-key grouping (needs Model E SIZE~CLASS~MOC~DESIGN migration)
 │   ├── engine2_recommender.py    ← priority simulation + risk scoring
-│   ├── models.py                 ← Pydantic request/response schemas
-│   ├── config.json               ← runtime config (batch_bonus_months, epsilon, etc.)
+│   ├── pipeline.py / pipeline2.py← orchestration for Engine 1 / Engine 2 runs
+│   ├── models.py                 ← Pydantic request/response schemas (needs Model E migration)
+│   ├── config.json               ← runtime config (needs Model E migration — see Configuration section)
+│   ├── testing/
+│   │   └── model_e_schedule_output_schema.sql   ← Model E DDL (applied)
 │   └── requirements.txt
 └── frontend/
     ├── package.json
@@ -1101,80 +503,55 @@ tov-mlo/
     ├── tailwind.config.js
     └── src/
         ├── App.jsx
-        ├── views/
-        │   ├── ScheduleView.jsx
-        │   ├── OrderBoard.jsx
-        │   ├── ImpactAnalyser.jsx
-        │   └── MachineAvailability.jsx  ← read-only machine_daily viewer + config settings panel
-        ├── components/
-        │   ├── GanttChart.jsx
-        │   ├── OrderCard.jsx
-        │   └── RiskBadge.jsx
-        └── api/
-            └── client.js               ← all fetch calls to FastAPI
+        ├── views/            (ScheduleView, OrderBoard, ImpactAnalyser, MachineAvailability)
+        ├── components/       (GanttChart, OrderCard, RiskBadge, ...)
+        └── api/client.js
 ```
 
 ---
 
-## Phase execution plan
+## Phase execution status
 
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
-| 0 — Foundation | Oracle connection to the 4 ERP views + CREATE TABLE DDL for the 2 write tables (MCH_SCHEDULE_OUTPUT, MCH_SIM_RESULTS), test_connection.py, .env | Ready to start |
-| 1 — Engine 1 | preprocess.py, engine1_scheduler.py (full CP-SAT with batch overflow + setup + priority), write MCH_SCHEDULE_OUTPUT | After Phase 0 |
-| 2 — Engine 2 | engine2_recommender.py, risk classifier, write MCH_SIM_RESULTS | After Phase 1 |
-| 3 — FastAPI | All 10 endpoints, config GET/PUT, Pydantic schemas, CORS, error handling | After Phase 2 |
-| 4 — React UI | All 4 views, config settings panel in MachineAvailability, drag-drop Order Board | After Phase 3 |
-| 5 — Deploy | NSSM Windows services (Uvicorn + Express), end-to-end integration test | After Phase 4 |
+| 0 — Foundation | Oracle connection, original write-table DDL, test_connection.py, .env | ✅ Done |
+| 1 — Engine 1 (Model C) | preprocess.py, engine1_scheduler.py (CP-SAT), write MCH_SCHEDULE_OUTPUT | ✅ Done |
+| 2 — Engine 2 | engine2_recommender.py, risk classifier, write MCH_SIM_RESULTS | ✅ Done |
+| 3 — FastAPI | All 9 endpoints, config GET/PUT, Pydantic schemas, CORS, error handling | ✅ Done |
+| 4 — React UI | All 4 views, config settings panel, drag-drop Order Board | ✅ Done, verified end-to-end (see `PHASE4_SUMMARY.md`) |
+| E-1 — Model E schema | Rebuild `MCH_SCHEDULE_OUTPUT` (new PK, REMARK, ORDER_COMPLETION_*, drop offset columns) | ✅ Done (`backend/testing/model_e_schedule_output_schema.sql`, applied manually) |
+| E-2 — Model E data layer | Loaders/validators for MCH_ITEMWISE_FIXTURE_LOCATOR / MCH_FIXTURE_LOCATOR; batch/fixture key migrated to SIZE~CLASS~MOC~DESIGN | ⏳ Partial (loaders exist from Model D prep in `db.py`; key still needs MOC added, needs revalidation) |
+| E-3 — Dispatch simulator core | Priority-walk batching (§4), continuous timeline + cooling (§7), machine selection (§5), pool constraint (§9), safety-stock policy (§10) | ❌ Not started |
+| E-4 — REMARK & completion surfacing | §12 REMARK taxonomy, ORDER_COMPLETION_DATE/SHIFT population | ❌ Not started |
+| E-5 — API/UI migration | `models.py`, `main.py` response shapes, `GanttChart.jsx` continuous-time rendering, config.json migration | ❌ Not started |
+| E-6 — Validation | Full-run audit: precedence intact, pool never exceeded, per-order CDD attainment, replicate the two worked batching examples exactly | ❌ Not started |
+| 5 — Deploy | NSSM Windows services (Uvicorn + Express), end-to-end integration test | ❌ Not started |
 
 ---
 
 ## Key constraints and rules — always follow these
 
-- All tools free and open-source. No paid services.
-- Oracle thin mode only. No Oracle Instant Client.
+- All tools free and open-source. No paid services. Oracle thin mode only.
 - ALL time values are in minutes throughout the entire stack. Never convert units.
-- Balance Qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED. Skip if ≤ 0.
-- CYCLE_TIME = 0: skip those rows entirely (external vendors, missing data, non-machine ops).
-- QA Inspection (WORK_CENTER contains 'QAINSP'): exclude from CP-SAT, show in UI.
-- Rework (R002 operation): no special logic — schedule exactly like any other operation.
-- v1 scheduling scope: only the 7 operations present in routing_master.
-- Routing-extensible: new routing entries automatically extend CP-SAT scope without code changes.
-- Shift names: always normalize to lowercase ("first", "second", "third") on read.
-- **PRODUCTION SHOULD NEVER STOP** — the overriding rule. A task is never locked to one machine
-  by the base model; batch continuity (below) adds a preference for ONE machine per batch, but
-  always with an escape hatch back to free routing rather than ever blocking production.
-- **Flexible per-slot routing (base capability):** a task's pieces may run on ANY capable machine
-  in ANY open slot. If a machine is down/full, pieces auto-route to the next open `(machine, slot)`.
-- **Batch-Aware Scheduling (layered on top):** orders sharing `SIZE_INCH~CLASS~DESIGN` (excludes
-  MOC) consolidate onto ONE common machine per operation — enforced as a hard CP-SAT constraint
-  AND in the greedy fallback (the path actually used when CP-SAT times out on real data). Batches
-  may diverge after any single operation; safety stock orders (CDD=NULL) batch normally but are
-  flagged via `IS_SAFETY_STOCK` for the UI. See **Batch-Aware Scheduling** section above.
-  `batch_key` MUST come from the typed SIZE_INCH/CLASS/DESIGN columns, never parsed from the
-  concatenated `ITEM_CATEGORY` string (blank DESIGN silently shifts MOC into that position).
-- **Overflow / auto-route:** remainder prefers the SAME machine's next open shift (setup carries over = free), but moves to another capable machine when the current one is closed/full. Closed slots have no variables, so routing around a breakdown is automatic.
-- **SETUP_TIME is always a cost on a NEW valve size:** charged whenever an ITEM_CATEGORY newly appears on a machine in a slot (new order joining, or a machine switch). Same size back-to-back on the same machine (carried over from its previous OPEN slot) = zero setup. Charged at slot granularity inside the capacity bucket, and mildly penalised in the objective to encourage batching.
-- **MACHINE_PRIORITY is a soft tiebreaker only:** prefer priority-1 when it still meets the deadline; abandon it for an earlier-available capable machine the moment waiting would cause tardiness.
-- **Guaranteed schedule:** a greedy fallback always returns a complete valid plan; `/schedule/generate` never fails with INFEASIBLE/UNKNOWN on real data.
-- **Time model = Model C**: discrete `(date, shift)` slots with a global, machine-independent slot index (`3 × day_pos + shift_pos`); capacity is a per-`(machine, slot)` scalar bucket = AVAILABLE_MINS. No continuous minute axis, no OptionalIntervalVar, no `assign` lock, no contiguity constraint, no AddNoOverlap (capacity bucket subsumes it).
-- Scheduling is at DAY/SHIFT resolution; `start_offset_min/end_offset_min` are post-solve display only, in real minutes into the shift (0 … WORKING_MINS).
-- CP-SAT is integer-only: scale minutes by `TIME_SCALE = 100` and objective weights by `URGENCY_SCALE = 1000` (AVAILABLE_MINS can be fractional, e.g. 365.5).
-- Horizon: `horizon_dates` = consecutive days from run date, sized feasibility-first (see Horizon derivation); closures come from machine_daily (cap = 0), never by removing dates.
-- urgency_weight = pdd_score + ageing_score + batch_bonus + downstream_queue_bonus.
-- batch_bonus: only for orders with CDD within batch_bonus_months × 30 days from today.
-- downstream_queue_bonus: applied when another order of the same ITEM_CATEGORY has balance_qty > 0 at the next downstream schedulable operation — rewards batching to save downstream setup time. Value = config.downstream_queue_bonus_value (default 0.3). CP-SAT naturally weighs this against all other orders' tardiness; never overrides PDD pressure.
-- Safety stock (CDD = NULL): urgency_weight = 0, always scheduled last.
-- MACHINE_PRIORITY: soft tiebreaker via epsilon penalty (config.machine_priority_epsilon = 0.001).
-- Maximum utilization: guiding principle, not a hard constraint.
-- capacity_resolved: computed in memory only, never stored to any table.
+- Balance Qty = QUANTITY_ORDERED − QUANTITY_COMPLETED − QUANTITY_REJECTED. Skip if ≤ 0 (with REMARK).
+- CYCLE_TIME = 0: skip entirely (with REMARK).
+- QA Inspection (WORK_CENTER contains 'QAINSP'): exclude from scheduling, show in UI (with REMARK).
+- CLASS = 'PN10': excluded (with REMARK) — no established fixture/routing setup yet.
+- Rework (R002): no special logic — scheduled exactly like any other operation.
+- v1 scheduling scope: only TASK codes with a routing entry in `MCH_MACHINE_PRIORITY` (currently VB02–VB09). Routing-extensible.
+- Shift names always normalized to lowercase ("first", "second", "third") on read.
+- **Batch/fixture key = `SIZE_INCH~CLASS~MOC~DESIGN`, everywhere, built from typed columns — never parsed from `ITEM_CATEGORY`** (see Data sources warning).
+- **`SETUP_TIME` is ignored everywhere** — replaced by fixture/locator change-time economics (Model E §3).
+- **No machine capacity cap, anywhere.** Machines have infinite capacity; `AVAILABLE_MINS` is a working-window/rate, not a budget. Timing is governed by fixture/locator/machine availability, not minutes-per-slot.
+- **20-minute cooling** (`config.cooling_minutes`) is mandatory after every batch on every machine, before its next batch — regardless of shift/day boundaries.
+- **`MACHINE_PRIORITY` is a soft tiebreaker only** — earliest-free machine wins; priority breaks ties among machines free at the same instant.
+- **Fixture/locator pool (`MCH_FIXTURE_LOCATOR.QUANTITY`) is a hard, plant-wide concurrency cap** — never exceeded, ever, for any device.
+- **Committed orders (CDD not null) are never delayed** — not for safety stock (§10, enforced by a full speculative simulation, not a proxy check). This is absolute. (The 60-day consolidation window, §6, is now a hard rule with no override at all — it never risks a committed delay because there's no path for it to fire in the first place.)
+- **Every eligible WIP order-operation always produces a row in `MCH_SCHEDULE_OUTPUT`**, scheduled or not, with `REMARK` explaining any miss.
+- **CP-SAT is fully retired.** Engine 1 is a deterministic dispatch simulator — no fallback to CP-SAT, no post-optimization pass.
+- `capacity_resolved` (baseline + daily-override merge): still computed in memory only, never stored — now used purely as an availability window/rate, not a bucket capacity.
 - Schedule regeneration: manual trigger only in v1. No background timer.
-- **No historical retention:** each `/schedule/generate` run DELETEs all `MCH_SCHEDULE_OUTPUT` rows
-  before writing the fresh schedule. There is no archive table — a prior 90-day archiving design
-  (`MCH_SCHEDULE_OUTPUT_ARCHIVE` / `MCH_SIM_RESULTS_ARCHIVE`) was removed entirely.
-- Writes: only MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2) are written by this application.
-- All four ERP sources — MCH_WIP, MCH_MACHINE_AVAILABILITY, MCH_MACHINE_AVAILABILITY_BY_DATE, MCH_MACHINE_PRIORITY — are read-only views (machine_daily is NOT written; there is no UI edit path).
-- ERP column names: machine identifier = WORK_CENTER (not machine_name); shift = SHIFT; machine_daily date = WORKING_DATE; MCH_WIP op-sequence number = OPERATION (this doc's "OPERATION_NO"); op/task code = TASK (this doc's old "OPERATION"). No DOWNTIME column — AVAILABLE_MINS comes straight from the views.
-- config.json: all runtime settings stored here. Never stored in Oracle tables.
-- IIS not used. Express.js on Node.js handles all production serving.
-- Both Uvicorn (port 8000) and Express (port 80) run as permanent NSSM Windows Services.
+- **No historical retention:** each `/schedule/generate` run DELETEs all `MCH_SCHEDULE_OUTPUT` rows before writing the fresh schedule.
+- Writes: only MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2) are written by this application. All six ERP sources are read-only views.
+- config.json: all runtime settings stored here (Model E shape — see Configuration section). Never stored in Oracle tables.
+- IIS not used. Express.js on Node.js handles all production serving. Both Uvicorn (port 8000) and Express (port 80) run as permanent NSSM Windows Services.

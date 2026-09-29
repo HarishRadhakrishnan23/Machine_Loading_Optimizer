@@ -1,0 +1,17 @@
+1. A1 — pin down the "3-month window" mechanics:
+
+Your answer confirms the window carries over from Model D, with an override. Two things I need nailed down before coding it:
+
+1A. What is the window measured against? Model D's own config comment (batch_consolidation_window_days = 90 # fixture-run pull-forward window (from run date)) measured every candidate's CDD against today/run-date, not against the other order's CDD pairwise. I'll carry that same semantics forward unless you say otherwise: an order is eligible for fixture-run consolidation only if its CDD is within 3 months of today; beyond that, it's excluded from consolidation by default.
+Answer: Yes., this logic is correct
+
+1B. The override, translated into an exact rule I can implement: when the greedy walk finds a same-fixture candidate whose CDD is beyond the 3-month window, pull it in anyway only if simulating that pull-in (a) doesn't push any committed order's projected completion past its own CDD anywhere in the plant, and (b) the machine would otherwise sit idle waiting (no other committed work is ready for it sooner). Both conditions, not just one — is that the right bar, or did you intend something looser (e.g., condition (a) alone is enough)?
+Answer: See the logic is correct, but I think instead (a) AND (b), (a) OR (b) would be a better approach.
+
+2. Your new ask — order-level completion date/shift visibility
+
+2A. This is genuinely new, not covered by Model D. The underlying data already exists in principle (Model D's D.13 defines "order completion" as the END_TIMESTAMP of an order's own last schedulable operation, which — since ops run in ascending OPERATION_NO order — is just the row with the highest OPERATION_NO among that order's scheduled rows). The question is purely how to expose it, and there are three ways, with different tradeoffs:
+Answer: I will go with option (c) Denormalize onto every row — add ORDER_COMPLETION_DATE/ORDER_COMPLETION_SHIFT columns to MCH_SCHEDULE_OUTPUT itself, stamped with the same value across every row belonging to that order. Simplest for a planner scanning the raw table, but duplicates the value across every operation-row of an order (harmless since the table is fully rewritten each run, but it is redundant storage).
+Because in MCH_WIP., for every production order there are unique scheduled rows for each operation., if we calculate the highest OPERATION_NO's  completion date will be enogh to fin when that Production order is getting complete.
+
+But I have a doubt according to MODEL D., START_TIMESTAMP, END_TIMESTAMP., what are these for..? and is it really useful if I ask you to add ORDER_COMPLETION_DATE/ORDER_COMPLETION_SHIFT columns to MCH_SCHEDULE_OUTPUT.

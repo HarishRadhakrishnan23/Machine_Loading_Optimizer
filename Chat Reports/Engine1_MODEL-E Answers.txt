@@ -1,0 +1,83 @@
+A. Batching search scope
+
+A1. Is there a date/CDD window limiting the batching search, like Model D's 90-day consolidation window — or does the greedy walk ("look for same fixture, different locator, higher priority") search the entire pending backlog regardless of how far apart the CDDs are? Your examples don't show CDD dates, only priority ranks, so I can't tell if a job due in 2 weeks could get batched with one due in 11 months just because they share a fixture.
+Answer: Here also follow the 90-day consolidation window., for any batching., always look for a 3 months criteria., if it is due above 3 months dont batch it together (but if the machine is available and batching it will not induce any delays for higher priority orders then batch it together.
+
+A2.Machine assignment order: do we pick the machine before running the batching walk (batch queues are already per-machine, as your examples assume — "consider these orders are assigned to same machine"), or does batching happen first across the whole plant and then pick one common capable machine per batch (Model D's approach: form the batch → intersect capable machines → pick machine free-earliest)? This matters because capability varies by SIZE/CLASS/MOC/DESIGN/TASK.
+Answer: Choose the Model D's approach, batching happen first across the whole plant and then pick one common capable machine per batch (Model D's approach: form the batch → intersect capable machines → pick machine free-earliest)
+
+A3.Is a Planned order (material not yet arrived) eligible to be pulled into the "order list" search before its arrival date, or excluded from batching entirely until its earliest-start passes?
+Answer: See Planned order should be assigned to machines only after PRODUCTION_START_DATE_AND_TIME + 1 day or any day after but near that day (that is the date at which the assigned materials for that Production Order arrives at). So if I understand your question correctly, it should be excluded from batching entirely until its earliest-start passes.
+
+
+B. Planned-order timing (rule 1.2)
+
+B1."PRODUCTION_START_DATE_AND_TIME + 1 day or near that day" — I need this as an unambiguous formula. Is the earliest-start always exactly arrival_date + 1 calendar day, first shift of that day onward? Or does "near that day" mean something flexible (e.g., shift to the next day if +1 day happens to be a machine breakdown)? Model D used the arrival date itself as the hard earliest-start with no +1 offset — confirming the exact new rule matters.
+Answer: See the earliest-start always exactly arrival_date + 1 calendar day, first shift of that day onward. the only reason I said "near that day" is because in case all the machines that are capable of completing this production order's batch for that particular Task are busy for all three shifts on that day., then I dont want the system to disturb an on going operation and assign this order., never interrept a current flow to create a new flow., allways try to plan accordingly.
+
+
+C. Fixture/locator lookup: mandatory or optional?
+
+C1. Model D had a fallback: if (SIZE, CLASS, DESIGN, TASK) had no row in MCH_ITEMWISE_FIXTURE_LOCATOR, the op still got scheduled via plain routing + Σcycle_time, no fixture involved. Does Model E keep that fallback, or is a fixture/locator match now mandatory to schedule at all — i.e., a missing match means the row goes to REMARK unscheduled (no machine/date assigned) rather than being scheduled fixture-free? This is the crux of what REMARK is for, and I want to confirm before designing it.
+Answer: See Model E keeps that fallback, i.e, if (SIZE, CLASS, DESIGN, TASK) had no row in MCH_ITEMWISE_FIXTURE_LOCATOR, the op still got scheduled via plain routing + Σcycle_time, no fixture involved. But I also want it add a REMARK stating that this Production order does not have Fixture/Locator.
+
+
+D. MCH_SCHEDULE_OUTPUT completeness
+
+D1. Today, an order-operation that's filtered out (CT=0, QAINSP, balance_qty≤0, no routing) is simply absent from the table — no row at all. With REMARK, does that stay true (only eligible-but-unplaceable rows get a REMARK row), or should every eligible order-operation now always get a row, scheduled or not, with REMARK explaining any miss?
+Answer: Every eligible order-operation now always get a row, scheduled or not, with REMARK explaining any miss., like it should give human understandable reson like QAINSP or CT = 0 or balance_qty≤0 or no routing., etc in REMARK column
+
+
+E. Section 3 (fixture size-groups: 3–6", 8–14", etc.)
+
+E1. My working assumption: these ranges (and the DFL/CLASS=600 exceptions) are background context explaining a pattern already fully captured by the MCH_ITEMWISE_FIXTURE_LOCATOR table — the engine should just look up FIXTURE/LOCATOR directly per (SIZE, CLASS, MOC, DESIGN, TASK, WORK_CENTER) from that table and never hardcode size ranges. Please confirm — I don't want to bake a redundant/conflicting rule into code if the table is already authoritative.
+Answer: Yes, : these ranges (and the DFL/CLASS=600 exceptions) are background context explaining a pattern already fully captured by the MCH_ITEMWISE_FIXTURE_LOCATOR table — the engine should just look up FIXTURE/LOCATOR directly per (SIZE, CLASS, MOC, DESIGN, TASK, WORK_CENTER) from that table and never hardcode size ranges.
+
+
+F. Safety-stock / heavy-op policy — my proposal, since you asked
+You flagged this as unresolved. Adapting Model D's D.10 to Model E's fixture/locator world:
+
+F1. Heavy ops = VB03, VB04, VB05, VB06 (Weld Overlay, Stem Boring, Cone Finishing, Stem Boring+Cone Finishing) — matches your list. Confirm?
+Answer: Yes, Heavy ops = VB03, VB04, VB05, VB06 (Weld Overlay, Stem Boring, Cone Finishing, Stem Boring+Cone Finishing) — matches my list.
+
+F2. Split a fixture+locator sub-batch into its committed (CDD not null) and safety-stock (CDD null) pieces. Schedule committed first. Only append the safety pieces right after (free — same fixture/locator already mounted) if doing so delays no committed order anywhere past its CDD. If it would, release the fixture/locator and send the safety pieces to the back of the global queue, to be picked up whenever that fixture/locator naturally comes free again later. "Never delay a committed order to build safety stock" stays absolute. Light operations (everything else): committed and safety pieces just batch together normally — no special ordering, since the marginal cost is only LOAD_UNLOAD_TIME.
+Answer: Yes, this would be the perfect approach.
+
+Does this match your intent, or do you want something different (e.g., a hard cap on how much safety stock one fixture-run can absorb)?
+Yes, This matches my intent.
+
+
+G. Pool constraint mount/release lifecycle
+
+G1. Confirm this carries over from Model D unchanged: a fixture is held for the entire fixture-run start-to-end; a locator is held only for its own sub-batch inside that run (released before the next locator mounts); MCH_FIXTURE_LOCATOR.QUANTITY is the hard plant-wide concurrency cap for both.
+Answer: Yes, A fixture is held for the entire fixture-run start-to-end; a locator is held only for its own sub-batch inside that run (released before the next locator mounts); MCH_FIXTURE_LOCATOR.QUANTITY is the hard plant-wide concurrency cap for both.
+
+G2. Rule 2.5 ("same SCD~MOC~DESIGN, same operation shouldn't ideally run on two machines at the same time") — is this fully enforced by the pool cap alone (physically impossible if only 1 fixture unit exists), or is it an additional soft preference even when enough fixture units exist to physically allow a split?
+Answer: See Same SCMD (SIZE~CLASS~MOC~DESIGN) with same operation, should not run in two machine, it is more of an additional soft preference even when enough fixture units exist to physically allow a split.
+
+
+H. Solver architecture
+
+H1. With infinite capacity, continuous time, and no shift-slot buckets, this reads as a full adoption of Model D's dispatch-simulator architecture (D.12) — CP-SAT (Model C) is retired entirely for Engine 1, not kept as a fallback or post-optimizer. Confirm?
+Answer: Yes Confirm, it is a a full adoption of Model D's dispatch-simulator architecture (D.12)
+
+I. What stays the same (please confirm, don't want to assume)
+
+I1. Ascending OPERATION_NO precedence per order, CT=0 row exclusion, QAINSP exclusion, Balance Qty as the sole quantity gate, CLASS='PN10' exclusion, and the 7-TASK v1 routing scope (VB02–VB09) all remain unchanged.
+Answer: Yes, all of them remain unchanged.
+
+I2. Model D's routing-divergence rule (a batch splits only at the operation where members' routing diverges, rejoins after) — still applies?
+Answer: Yes, it still applies.
+
+I3. Engine 2 (Recommendation Engine) — I assume it's untouched in concept, just re-invoking whatever Engine 1 becomes instead of CP-SAT, same old/new completion-date diff and SAFE/AT_RISK/BREACH logic. Confirm no other changes intended there.
+Answer: No, other changes as of this moment.
+
+
+J. Schema detail
+
+J1. With batch_key now = SIZE_INCH~CLASS~MOC~DESIGN, should the existing BATCH_KEY column store that literal string (with FIXTURE_ID/LOCATOR_ID as their own separate columns, as your table description implies), or should it instead store the fixture value like Model D's D.13 proposed? I want one unambiguous definition before touching the write path.
+Answer: I think it should store that literal string (with FIXTURE_ID/LOCATOR_ID as their own separate columns, as my table description implies) in BATCH_KEY. I think this is the better approach., let me know what u think as well.
+
+And I also want one more clarification or provion to be added:
+If I assign an order to a machine at a particular TASK (lets take VB04)., and if its scheduling plann ends at VB09., I want the Engine1 to tell me at which date and which shift is that Production order getting completed.
+Is there a provision to get this in information., if not., the add this provison in Model E and if additional rows are required in MCH_SCHEDULE_OUTPUT., that can be added. (I am not sure whether this logic is considered in Model D., just check and let me know.

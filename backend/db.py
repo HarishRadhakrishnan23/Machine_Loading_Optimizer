@@ -4,7 +4,7 @@ db.py — Oracle connection and data access layer for TOV Machine Loading Optimi
 Uses python-oracledb in THIN MODE (no Oracle Instant Client required).
 Credentials loaded from environment variables (.env file).
 
-All functions read from the 4 ERP views (read-only) and write to the 2 result
+All functions read from the 6 ERP views (read-only) and write to the 2 result
 tables (MCH_SCHEDULE_OUTPUT for Engine 1, MCH_SIM_RESULTS for Engine 2).
 """
 
@@ -118,11 +118,12 @@ def read_routing_master() -> pd.DataFrame:
 def read_fixture_locator_master() -> pd.DataFrame:
     """
     Read itemwise fixture/locator master from MCH_ITEMWISE_FIXTURE_LOCATOR view.
-    Keyed by (SIZE_INCH, CLASS, DESIGN, TASK, WORK_CENTER) — MOC-independent.
+    Keyed by (SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER) — Model E's batch/
+    fixture key (CLAUDE.md "Batch / fixture key — used everywhere, all tables").
 
-    Returns: DataFrame with columns (SIZE_INCH, CLASS, DESIGN, TASK, WORK_CENTER,
+    Returns: DataFrame with columns (SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER,
     FIXTURE, LOCATOR, FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME, LOAD_UNLOAD_TIME,
-    USER_ID, USER_DATE). Model D (D.1): change-times apply once (to the batch's first
+    USER_ID, USER_DATE). Model E §3: change-times apply once (to the batch's first
     piece); LOAD_UNLOAD_TIME is per piece.
     """
     with get_connection() as conn:
@@ -246,9 +247,10 @@ def write_sim_results(sim_rows: list[dict], sim_id: str) -> int:
 
 def refresh_all_views() -> dict[str, pd.DataFrame]:
     """
-    Fetch all 4 ERP views at once (convenience for POST /data/refresh endpoint).
+    Fetch all 6 ERP views at once (convenience for POST /data/refresh endpoint).
 
-    Returns: dict with keys ('wip_orders', 'machine_master', 'machine_daily', 'routing_master'),
+    Returns: dict with keys ('wip_orders', 'machine_master', 'machine_daily',
+             'routing_master', 'fixture_locator_master', 'fixture_locator_inventory'),
              each mapping to a DataFrame.
     """
     return {
@@ -256,4 +258,6 @@ def refresh_all_views() -> dict[str, pd.DataFrame]:
         "machine_master": read_machine_master(),
         "machine_daily": read_machine_daily(),
         "routing_master": read_routing_master(),
+        "fixture_locator_master": read_fixture_locator_master(),
+        "fixture_locator_inventory": read_fixture_locator_inventory(),
     }

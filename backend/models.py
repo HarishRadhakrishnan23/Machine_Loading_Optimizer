@@ -111,9 +111,10 @@ class SchedulableTask(BaseModel):
     operation: str = Field(description="Task code, e.g. VB02, VB03, R002")
     item_category: str = Field(description="concatenation_key Size~Class~Design~MOC")
     batch_key: str = Field(
-        description="SIZE_INCH~CLASS~DESIGN, computed directly from the raw WIP columns "
-        "(NOT parsed from item_category — that string's segment order shifts when DESIGN "
-        "is blank in the ERP data, which would silently pull MOC into the batch key). "
+        description="SIZE_INCH~CLASS~MOC~DESIGN (Model E), computed directly from the raw WIP "
+        "columns (NOT parsed from item_category — that string's own concatenation order is "
+        "Size~Class~Design~MOC, a different field order, and it silently drops the DESIGN "
+        "segment when blank in the ERP data, shifting MOC into DESIGN's position). "
         "Orders sharing a batch_key are queued together on one machine per operation."
     )
 

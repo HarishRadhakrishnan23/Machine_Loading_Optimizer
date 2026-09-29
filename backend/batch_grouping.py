@@ -1,9 +1,15 @@
 """
-batch_grouping.py — Batch-aware scheduling logic for Engine 1.
+batch_grouping.py — Batch/fixture-key logic for Engine 1 (Model E).
 
-A BATCH groups Production Orders with the same SIZE~CLASS~DESIGN (excluding MOC).
-All pieces in a batch are scheduled on the SAME MACHINE for each operation,
-to minimize setup costs and maintain batch continuity.
+A BATCH groups Production Orders with the same SIZE_INCH~CLASS~MOC~DESIGN.
+This is also the fixture/locator lookup key into MCH_ITEMWISE_FIXTURE_LOCATOR
+(CLAUDE.md "Batch / fixture key — used everywhere, all tables (Model E)").
+
+Field order is fixed: SIZE_INCH ~ CLASS ~ MOC ~ DESIGN. This must always be
+built from the raw typed WIP columns directly — never parsed out of
+ITEM_CATEGORY, whose own concatenation order is Size~Class~Design~MOC (a
+different order) and which silently drops the DESIGN segment when it is blank,
+shifting MOC into DESIGN's position.
 
 Safety stock orders (CDD = NULL) are included in batches but flagged separately
 so operators can manually exclude them during execution if needed.
@@ -14,40 +20,41 @@ from datetime import datetime
 import pandas as pd
 
 
-def compute_batch_key(size_inch: str, class_val: str, design: str) -> str:
+def compute_batch_key(size_inch: str, class_val: str, moc: str, design: str) -> str:
     """
-    Compute batch key from SIZE~CLASS~DESIGN (excluding MOC).
+    Compute the Model E batch/fixture key: SIZE_INCH~CLASS~MOC~DESIGN.
 
     Example:
-        size_inch = "3", class_val = "300", design = "DFS"
-        returns "3~300~DFS"
+        size_inch = "3", class_val = "300", moc = "CS", design = "DFS"
+        returns "3~300~CS~DFS"
 
     Args:
         size_inch: SIZE_INCH (e.g., "3", "6", "10")
         class_val: CLASS (e.g., "150", "300")
+        moc: MOC (e.g., "CS", "SS")
         design: DESIGN (e.g., "DFS", "LUG")
 
     Returns:
-        Batch key string: "SIZE~CLASS~DESIGN"
+        Batch key string: "SIZE_INCH~CLASS~MOC~DESIGN"
     """
-    return f"{size_inch}~{class_val}~{design}"
+    return f"{size_inch}~{class_val}~{moc}~{design}"
 
 
 def group_orders_by_batch(wip_df: pd.DataFrame) -> Dict[str, list]:
     """
-    Group production orders by batch key (SIZE~CLASS~DESIGN).
+    Group production orders by batch key (SIZE_INCH~CLASS~MOC~DESIGN).
 
     Returns a dict: batch_key → list of (PRODUCTION_ORDER, OPERATION) tuples
 
     Args:
         wip_df: DataFrame with columns: PRODUCTION_ORDER, OPERATION,
-                SIZE_INCH, CLASS, DESIGN, CDD
+                SIZE_INCH, CLASS, MOC, DESIGN, CDD
 
     Returns:
-        Dict mapping batch_key (e.g., "3~300~DFS") to list of task keys
+        Dict mapping batch_key (e.g., "3~300~CS~DFS") to list of task keys
         Example: {
-            "3~300~DFS": [("XX0000001", 10), ("XX0000002", 10), ("XX0000003", 10)],
-            "6~150~LUG": [("XX0000004", 10), ("XX0000005", 10)]
+            "3~300~CS~DFS": [("XX0000001", 10), ("XX0000002", 10), ("XX0000003", 10)],
+            "6~150~SS~LUG": [("XX0000004", 10), ("XX0000005", 10)]
         }
     """
     batch_groups = {}
@@ -57,6 +64,7 @@ def group_orders_by_batch(wip_df: pd.DataFrame) -> Dict[str, list]:
         batch_key = compute_batch_key(
             str(row["SIZE_INCH"]),
             str(row["CLASS"]),
+            str(row["MOC"]),
             str(row["DESIGN"])
         )
 
@@ -96,9 +104,9 @@ def build_batch_task_map(wip_df: pd.DataFrame) -> Dict[Tuple, str]:
     Returns:
         Dict mapping task_key → batch_key
         Example: {
-            ("QS1000575", 10): "10~150~DFS",
-            ("QS1000575", 20): "10~150~DFS",
-            ("VN1003405", 50): "8~300~CS"
+            ("QS1000575", 10): "10~150~CS~DFS",
+            ("QS1000575", 20): "10~150~CS~DFS",
+            ("VN1003405", 50): "8~300~SS~LUG"
         }
     """
     task_to_batch = {}
@@ -108,6 +116,7 @@ def build_batch_task_map(wip_df: pd.DataFrame) -> Dict[Tuple, str]:
         batch_key = compute_batch_key(
             str(row["SIZE_INCH"]),
             str(row["CLASS"]),
+            str(row["MOC"]),
             str(row["DESIGN"])
         )
         task_to_batch[task_key] = batch_key
@@ -148,9 +157,9 @@ def build_safety_stock_map(wip_df: pd.DataFrame) -> Dict[str, bool]:
 if __name__ == "__main__":
     # Test batch key computation
     print("[Test] Batch key computation:")
-    batch_key = compute_batch_key("3", "300", "DFS")
-    print(f"  compute_batch_key('3', '300', 'DFS') = '{batch_key}'")
-    assert batch_key == "3~300~DFS", "Batch key format incorrect"
+    batch_key = compute_batch_key("3", "300", "CS", "DFS")
+    print(f"  compute_batch_key('3', '300', 'CS', 'DFS') = '{batch_key}'")
+    assert batch_key == "3~300~CS~DFS", "Batch key format incorrect"
     print("  [OK] PASSED")
 
     # Test safety stock detection

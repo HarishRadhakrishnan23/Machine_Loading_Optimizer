@@ -1,5 +1,7 @@
 Our team has discussed on a lot of topics to bring the Engine1 to produce results which are "Close to SHOP FLOOR REALITY" and we have decided to make some shift changes that will involve some fundamental structural re-alteration of Engine1 Logic, which I am going to mention below.
+This is our MODEL E of the Project., and the final one!. Delete unnecessary information regarding previous models from Claude.md (But keep a trace for previous models).
 The Plan is simple to make a few fundamental and structural changes which will contain a lot of topics on the core structure of constraints in Engine1. I want you to first understand all the constraints I am going to mention here, understand that, then we will discuss the things you are unclear about and make a desicion together through those discussions and then proceed to make changes in the claude.md and code. Before going through these changes read the current claude.md once and understand to understand these changes better.
+We nonger have just SIZE~CLASS~DESIGN dependency., every table fundamental structure will be mapped with SIZE~CLASS~MOC~DESIGN dependency (all table., update this in claude.md)
 
 These are the fundamental changes we are going to implement:
 
@@ -45,40 +47,53 @@ The Batching should always be done to reduce the overall Production Time of the 
 	2. DO NOT have Capacity Restrictions on any Machine. All the Machines can load Infinte Capacity and Time. Production orders of specific Operation is alloted to Machine only based on Batch Priority, Machine Availability, Fixture and Locator availability and Maximum Machine Utilization.
 	3. See always consider all the Machine available into consideration while planning., do not plan only on a few machines and keep some machine ideal. If Machine is breakdown or unavailable then that information will be available on MCH_MACHINE_AVAILABILITY_BY_DATE, with which you can plan accordingly, but if there is no data regarding a machine then always consider that machine is available for all AVAILABLE_MINS (in MCH_MACHINE_AVAILABILITY, for all shifts all day and include it in plan.
 	
-Now I will Provide you a series of example for understanding the Scheduling Process
+Now I will Provide you a series of example for understanding the Scheduling Process. All the example provided are not real orders in actual MCH_WIP and are rather scenario's with which you can understand inter and intra batching logics.
 BATCHING EXAMPLE 1: (Lets take a few orders and try to understand the Batching Logic concept). Consider these orders are assigned to same machine and same operation.
 
 | Priority no (Lower the CDD, Higher the Priority) | SIZE | CLASS | MOC | DESIGN | QTY | FIXTURE ID | LOCATOR ID |
 |:---|:---|:---|:---|:---|:---|:---|:---|
 | 2 | 10 | 150 | Carbon Steel | DFS | 5 | A | 1 |
 | 1 | 10 | 300 | Carbon Steel | DFS | 4 | A | 2 |
-| 3 | 8 | 150 | Stainless Steel | LUG | 10 | A | 3 |
-| 5 | 12 | 150 | Carbon Steel | DFS | 10 | A | 4 |
+| 5 | 8 | 150 | Stainless Steel | LUG | 10 | A | 3 |
+| 6 | 12 | 150 | Carbon Steel | DFS | 10 | A | 4 |
 | 4 | 10 | 150 | Carbon Steel | DFS | 21 | A | 1 |
+| 3 | 24 | 150 | Carbon Steel | LUG | 8 | D | 2 |
 
 Here in this case how would you process or Prioritize the orders., It is simple :
 
-| 1 | 10 | 300 | Carbon Steel | DFS | 4 | A | 2 | - This will the first order to be pipelined because this it has high priority., Now this is where Batching logic starts., In the order list (in our case WIP), look for similae SIZE~CLASS~MOC~DESIGN with same fixture an locator for same machine and operation (in this case 10~300~CS~DF), we dont have any. So we look for same Fixture, Locator combo in order list (A, 2) we dont have any. So we look for same Fixture but different Locator with higher priority for next micro batch.
-| 2 | 10 | 150 | Carbon Steel | DFS | 5 | A | 1 | - This will be the second order to be pipelined and first order to be batched with previous order due to higher priority and similar fixture but only different locator. In this atomic batching, now look for same SIZE~CLASS~MOC~DESIGN, we have one order. So combine that in this atomic batch.
-| 4 | 10 | 150 | Carbon Steel | DFS | 21 | A | 1 | - This will be the third order to be pipelined and second order to be batched with previous orders due to same SIZE~CLASS~MOC~DESIGN similarity. now again look for same SIZE~CLASS~MOC~DESIGN, we dont have any. So look for same Fixture, Locator combo (A, 1), we dont have any so now go to same Fixture but different locator combo with higher priority.
-| 3 | 8 | 150 | Stainless Steel | LUG | 10 | A | 3 | - This will be the fourth order to be pipelined and third order to be batched with previous orders due to higher priority and similar fixture but only different locator. So now look for same SIZE~CLASS~MOC~DESIGN, we dont have any so go for Fixture, Locator combo (A, 3), we dont have any. So now go for same fixture but different locator combo.
-| 5 | 12 | 150 | Carbon Steel | DFS | 10 | A | 4 | - This will be the Fifth order to pipeline and last order to be batched with previous orders due to higher priority and similar fixture but only different locator.
+| 1 | 10 | 300 | Carbon Steel | DFS | 4 | A | 2 | - This will the first order to be pipelined because it has high priority (Add FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 4)., Now this is where Batching logic starts., In the order list (in our case WIP), look for similae SIZE~CLASS~MOC~DESIGN with same fixture an locator for same machine and operation (in this case 10~300~CS~DF), we dont have any. So we look for same Fixture, Locator combo in order list (A, 2) we dont have any. So we look for same Fixture but different Locator with higher priority for next micro batch.
+| 2 | 10 | 150 | Carbon Steel | DFS | 5 | A | 1 | - This will be the second order to be pipelined and first order to be batched with previous order due to higher priority and similar fixture but only different locator (Add LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 5). In this atomic batching, now look for same SIZE~CLASS~MOC~DESIGN, we have one order. So combine that in this atomic batch.
+| 4 | 10 | 150 | Carbon Steel | DFS | 21 | A | 1 | - This will be the third order to be pipelined and second order to be batched with previous orders due to same SIZE~CLASS~MOC~DESIGN similarity (Add LOAD_UNLOAD_TIME * 21). now again look for same SIZE~CLASS~MOC~DESIGN, we dont have any. So look for same Fixture, Locator combo (A, 1), we dont have any so now go to same Fixture but different locator combo with higher priority.
+| 5 | 8 | 150 | Stainless Steel | LUG | 10 | A | 3 | - This will be the fourth order to be pipelined and third order to be batched with previous orders due to higher priority and similar fixture but only different locator (Add LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 10). So now look for same SIZE~CLASS~MOC~DESIGN, we dont have any so go for Fixture, Locator combo (A, 3), we dont have any. So now go for same fixture but different locator combo.
+| 6 | 12 | 150 | Carbon Steel | DFS | 10 | A | 4 | - This will be the Fifth order to pipeline and last order to be batched with previous orders due to higher priority and similar fixture but only different locator (Add LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 10). then look for orders with similar fixtures in order list., we dont have any so we move on to a different batch.
+| 3 | 24 | 150 | Carbon Steel | LUG | 8 | D | 2 | - This will be the second batch that is pipelined to this machine (at 21st minute (>= 20mins))an at first piece we will add FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 8 and then start batch similar orders in order list (WIP) if any.
 
-BATCHING EXAMPLE 2: This example will teach you how to execute a series of similar orders.
 
-| Priority no (Lower the CDD, Higher the Priority) | SIZE | CLASS | MOC | DESIGN | QTY | FIXTURE ID | LOCATOR ID |
-|:---|:---|:---|:---|:---|:---|:---|:---|
-| 1 | 12 | 150 | Carbon Steel | DFS | 5 | A | 1 |
-| 2 | 14 | 150 | Carbon Steel | DFS | 4 | A | 1 |
-| 3 | 12 | 300 | Carbon Steel | LUG | 10 | A | 1 |
-| 4 | 12 | 600 | Carbon Steel | DFS | 5 | A | 1 |
+BATCHING EXAMPLE 2: This example will teach you how to execute a series of similar orders. Consider this example for Inter batching prioritization.
+See the main takeaway from this example is that when you atomic batching same SIZE orders (Consider Same - Task, machine, fixture, locator), we have to consider clubing MOC's together (intra batching) for better cleaning of machine purpose.
+
+| P.no | Size | Class | MOC | Design | Qty | Fixture type | Locator type |
+|:-----|:-----|:------|:-----|:-------|:----|:-------------|:-------------|
+| 1 | 10 | 150 | Carbon steel | DFS | 10 | A | 1 |
+| 4 | 12 | 150 | Stainless steel | DFS | 2 | A | 3 |
+| 6 | 10 | 150 | Carbon steel | DFS | 10 | A | 1 |
+| 5 | 10 | 150 | Stainless steel | DFS | 12 | A | 1 |
+| 2 | 10 | 150 | Carbon steel | LUG | 5 | A | 2 |
+| 3 | 10 | 150 | Stainless steel | LUG | 5 | A | 2 |
+| 7 | 12 | 150 | Carbon steel | DFS | 2 | A | 3 |
+| 8 | 40 | 300 | Super Duplex | DFL | 9 | G | 4 |
 
 Here in this case how would you process or Prioritize the orders., It is simple :
 
-| 1 | 12 | 150 | Carbon Steel | DFS | 5 | A | 1 | - This will be the First order to be executed (continue from here this for antha similar SIZE~CLASS ah combine pani mudi mothala approach )
+| 1 | 10 | 150 | Carbon steel | DFS | 10 | A | 1 | - This will be the first order to be pipelined to the batch because it has high priority (Add FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 10). Now look for exact same SIZE~CLASS~MOC~DESIGN with same FIXTURE and LOCATOR, we have one order that satisfies this in our order list.
+| 6 | 10 | 150 | Carbon steel | DFS | 10 | A | 1 | - This will be the second order to be pipelined to the batch (even though an order with same FIXTURE and LOCATOR and same size with a higher priority is there in the order list., the priority is given to this because to match the same SIZE~CLASS~MOC~DESIGN constraint) (Add only LOAD_UNLOAD_TIME * 10). Now look for same SIZE~CLASS~MOC~DESIGN with same Fixture and locator type, we dont have any. So go ahead with same Fixture and LOCATOR combo (A, 1). We have 1 order in our list that matches this requirement.
+| 5 | 10 | 150 | Stainless steel | DFS | 12 | A | 1 | - This will be the thrid order to be pipelined to the batch (Add LOAD_UNLOAD_TIME * 12). Now look for same SIZE~CLASS~MOC~DESIGN with same Fixture and locator type, we dont have any. So look for same FIXTURE, LOCATOR combo (A, 1) we dont hane any. So look for same Fixture but different Locator with higher priority. We have the suitable candidate.
+| 2 | 10 | 150 | Carbon steel | LUG | 5 | A | 2 | - This will be the fourth order to be pipelined to the batch (Add LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 5). Now look for same SIZE~CLASS~MOC~DESIGN with same Fixture and locator type,we dont have any. So look for same FIXTURE, LOCATOR combo (A, 2), we have one order in the order list.
+| 3 | 10 | 150 | Stainless steel | LUG | 5 | A | 2 | - This will be the fifth order to be pipelined to the batch (Add LOAD_UNLOAD_TIME * 5). Now look for same SIZE~CLASS~MOC~DESIGN with same Fixture and locator type,we dont have any. So look for same FIXTURE, LOCATOR combo (A, 2), we dont have any. So look for same Fixture but different Locator with higher priority, we have one.
+| 4 | 12 | 150 | Stainless steel | DFS | 2 | A | 3 | - This will be the sixth order to be pipelined to the batch (Add LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 2). Now look for same SIZE~CLASS~MOC~DESIGN with same Fixture and locator type,we dont have any. So look for same FIXTURE, LOCATOR combo (A, 3), we have one order in the order list.
+| 7 | 12 | 150 | Carbon steel | DFS | 2 | A | 3 | - This will be the seventh order to be pipelined to the batch (Add LOAD_UNLOAD_TIME * 5). Now look for same SIZE~CLASS~MOC~DESIGN with same Fixture and locator type, we dont have any. So look for same FIXTURE, LOCATOR combo (A, 3) we dont hane any. So look for same Fixture but different Locator with higher priority, we dont have any. So now look for different fixture higher priority order for next batch, we have one.
+| 8 | 40 | 300 | Super Duplex | DFL | 9 | G | 4 | - This will be the first order to be pipelined for next batch (Add FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME + LOAD_UNLOAD_TIME * 9). And then look for batching with same logic as before.
 
-But For Every batch and QUANTITY we have to add LOAD_UNLOAD_TIME.
- 		
 And I am giving Description for these tables for contextual understanding purpose:
 
 1. This is the Description of my MCH_WIP Table. It contains all the data of current Production Orders in pieline.
@@ -107,7 +122,7 @@ QUANTITY_COMPLETED                   NUMBER
 QUANTITY_REJECTED                    NUMBER        
 CYCLE_TIME                           NUMBER        
   
-2. MCH_MACHINE_PRIORITY: Contains informationon which Machine should be priortized for which ITEM_CATEGORY and Which TASK. Do not Consider this SETUP_TIME at all.
+2. MCH_MACHINE_PRIORITY: Contains informationon which Machine should be priortized for which ITEM_CATEGORY and Which TASK.
 
 Name             Null?    Type          
 ---------------- -------- ------------- 
@@ -119,8 +134,7 @@ DESIGN           NOT NULL VARCHAR2(25)
 ITEM_CATEGORY             VARCHAR2(103) 
 TASK             NOT NULL VARCHAR2(8)   
 MACHINE_PRIORITY NOT NULL NUMBER        
-WORK_CENTER      NOT NULL VARCHAR2(6)   
-SETUP_TIME       NOT NULL NUMBER        
+WORK_CENTER      NOT NULL VARCHAR2(6)          
 
 3. MCH_MACHINE_AVAILABILITY: Machine Master Table used to identify what are the Available mins we have to work with per machine.
 
@@ -145,7 +159,7 @@ WORKING_MINS   NOT NULL NUMBER
 OEE            NOT NULL NUMBER       
 AVAILABLE_MINS NOT NULL NUMBER 
 
-And I have added two new table in my Oracle SQL Developer
+And I have added these new table in my Oracle SQL Developer
 
 1. MCH_ITEMWISE_FIXTURE_LOCATOR : It contains Itemwise (SIZE~CLASS~MOC~DESIGN) information on Locator and Fixture and the Time details (only aplicable for the First piece change) involed in changing them. It also includes LOAD_UNLOAD_TIME which we have to calculate per piece.
 
@@ -162,10 +176,8 @@ LOCATOR                      VARCHAR2(40)
 FIXTURE_CHANGE_TIME          NUMBER       
 LOCATOR_CHANGE_TIME          NUMBER       
 LOAD_UNLOAD_TIME             NUMBER       
-CLEANING_TIME                NUMBER       
 USER_ID                      VARCHAR2(20) 
-USER_DATE                    DATE         
-      
+USER_DATE                    DATE                
 
 2. MCH_FIXTURE_LOCATOR: It contains the Quantity of Particular Fixture and Locator available on the shop floor material stock.
 

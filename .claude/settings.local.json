@@ -46,7 +46,25 @@
       "Bash(bash -c 'source venv/Scripts/activate && python -c \" *)",
       "Bash(break)",
       "Bash(ps -W)",
-      "Bash(tasklist)"
+      "Bash(tasklist)",
+      "Bash(python3 -c \"import openpyxl; print\\(openpyxl.__version__\\)\")",
+      "Bash(./venv/Scripts/python.exe -c \"import openpyxl; print\\(openpyxl.__version__\\)\")",
+      "Bash(\"./venv/Scripts/python.exe\" batch_grouping.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_batching.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_machine_selection.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_consolidation_window.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_timeline.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_planned_release.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_pool.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_safety_stock.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_scope.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_parallel.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_orders.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_engine.py)",
+      "Bash(./venv/Scripts/python.exe -c ' *)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_orchestrator.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_shift_clock.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_safety_stock_speculation.py)"
     ]
   }
 }
