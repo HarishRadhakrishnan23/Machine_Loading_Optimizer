@@ -72,7 +72,7 @@ A `TimePoint`'s `minute` offset is assumed to map linearly onto real clock time 
 
 ## Data sources — Oracle DB
 
-**Six** upstream data sources are **read-only ERP views** (created and owned in Oracle by the ERP team; this application only SELECTs from them). The application writes to exactly **two** tables, which it creates and owns: MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2).
+**Seven** upstream data sources are **read-only** (six MCH_* ERP views owned by the ERP team, plus one cross-schema holiday calendar table — see below; this application only SELECTs from all seven). The application writes to exactly **two** tables, which it creates and owns: MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2).
 
 ### Table / view name map (ERP name ⇄ legacy name used in this doc)
 | Role in this doc | Oracle object (real name)         | Kind  | Access |
@@ -83,6 +83,7 @@ A `TimePoint`'s `minute` offset is assumed to map linearly onto real clock time 
 | wip_orders       | MCH_WIP                           | view  | read-only |
 | fixture_locator_master    | MCH_ITEMWISE_FIXTURE_LOCATOR | view | read-only |
 | fixture_locator_inventory | MCH_FIXTURE_LOCATOR          | view | read-only |
+| holiday_calendar | L750.TCCCP019 (cross-schema)       | table | read-only |
 | schedule_output  | MCH_SCHEDULE_OUTPUT               | table | read + write (Engine 1 writes) |
 | sim_results      | MCH_SIM_RESULTS                   | table | read + write (Engine 2 writes) |
 
@@ -143,11 +144,21 @@ A `TimePoint`'s `minute` offset is assumed to map linearly onto real clock time 
 - For a given SIZE~CLASS~MOC~DESIGN~TASK, FIXTURE and LOCATOR are constant across every WORK_CENTER row (only the change-times/load-unload may vary by machine).
 - **Lookup is optional, not gating** — see Model E §11 for the no-match fallback.
 - Background pattern (not a hardcoded rule — the table above is authoritative): fixtures tend to be shared within SIZE bands (3–6", 8–14", 16–24", 26–36", 40–48"), with exceptions when DESIGN = "DFL" or CLASS = "600". The engine never hardcodes these bands; it always looks up FIXTURE/LOCATOR directly from this table.
+- **Two real conventions in live data, confirmed and handled (`dispatch_pool.parse_devices`):**
+  - `LOCATOR` (never `FIXTURE`) can be a `"+"`-joined compound of two physical device names (e.g. `"AT18/212-F02+AT18/212-LC2"`) — meaning the operation needs **both** devices held simultaneously, each checked against its own `QUANTITY` cap.
+  - Either `FIXTURE` or `LOCATOR` can be the literal string `"NA"` — meaning **no physical device is needed at all** for that slot (confirmed on ~1200 rows, always FIXTURE and LOCATOR together, e.g. VB03 Weld Overlay). Filtered out before any inventory lookup — never treated as a device name, never charged against any `QUANTITY`.
+  - A `FIXTURE`/`LOCATOR` device genuinely absent from `MCH_FIXTURE_LOCATOR`'s inventory (not `"NA"`, just never entered) makes that operation `EXCLUDED_UNKNOWN_FIXTURE_DEVICE` (REMARK explains it) rather than guessing a quantity — confirmed as the right call; a small, bounded gap in live data (7 devices) that the ERP owner is backfilling.
 
 ### fixture_locator_inventory → MCH_FIXTURE_LOCATOR (read-only view) — Model E
 **Exact Oracle columns:** DEVICE_NAME, DEVICE_TYPE, DESCRIPTION, QUANTITY, USER_ID, USER_DATE
 - Physical shop-floor inventory: `DEVICE_NAME` = a Fixture ID or Locator ID, `DEVICE_TYPE` = `'F'` (fixture) or `'L'` (locator), `QUANTITY` = how many physically exist.
 - `QUANTITY` is a **hard, plant-wide concurrency cap** — see Model E §9 (pool constraint).
+
+### holiday_calendar → L750.TCCCP019 (read-only table, cross-schema) — Model E
+**Exact Oracle columns:** CALENDAR_CODE, DATE_1, DESCRIPTION
+- The confirmed company holiday calendar — **not** one of the other six MCH_* ERP views; a separate, pre-existing cross-schema table (`L750.TCCCP019`), read-only to this application exactly like the rest.
+- **On every date listed here, `AVAILABLE_MINS` is forced to `0` for all three shifts, for every machine** — a plant-wide closure, taking precedence over both the `MCH_MACHINE_AVAILABILITY_BY_DATE` override and the `MCH_MACHINE_AVAILABILITY` baseline (`model_e_data.ResolvedAvailability` checks holiday first, unconditionally).
+- The table also carries old/historical entries (2008, 2013, 2014, …) alongside forward-looking ones — harmless to read in full; a date that never falls inside a schedule's horizon simply never gets looked up. No filtering by `CALENDAR_CODE` is applied (every row observed in live data is `'VEL'`); revisit if a second calendar code is ever introduced for a different purpose.
 
 ---
 
@@ -245,7 +256,7 @@ An order is eligible to be pulled into a fixture-run consolidation (§4 step 2) 
 - Time is continuous wall-clock minutes. There is **no discrete shift-slot lattice** and **no per-machine capacity cap** — every machine can take infinite work; what governs timing is fixture/locator/machine availability, not a minute budget.
 - Machining only progresses inside a shift's `AVAILABLE_MINS` window (from `MCH_MACHINE_AVAILABILITY`, overridden by `MCH_MACHINE_AVAILABILITY_BY_DATE` when present; no row ⇒ fully available). If a batch's remaining work exceeds the time left in the current shift, it pauses and resumes in that machine's next working shift/day.
 - **`cooling_minutes` (default 20)** fixed dead-time after every batch, on every machine, before that machine's next batch — regardless of whether the next available instant falls in the same shift, the next shift, or the next working day. A machine is never left idle for a placeable task beyond this cooling window.
-- **Every machine is always considered.** A machine with no row in `MCH_MACHINE_AVAILABILITY_BY_DATE` is fully available for its `MCH_MACHINE_AVAILABILITY` baseline. Breakdowns/maintenance come only from `AVAILABLE_MINS = 0` rows in the by-date view.
+- **Every machine is always considered.** A machine with no row in `MCH_MACHINE_AVAILABILITY_BY_DATE` is fully available for its `MCH_MACHINE_AVAILABILITY` baseline. Breakdowns/maintenance come only from `AVAILABLE_MINS = 0` rows in the by-date view — plus, independently, any date listed in the holiday_calendar table closes every machine's every shift outright (see Data sources).
 - No inter-operation WIP transit time: an order's next operation may start the instant its previous operation ends (subject to machine/fixture/locator availability and cooling).
 
 ### E.8 — Planned-order release gating
@@ -405,7 +416,7 @@ Framework: FastAPI | ASGI server: Uvicorn | Port: 8000
 - POST /priority/simulate — triggers Engine 2 with payload `{orders: [...]}`, writes to MCH_SIM_RESULTS
 - GET  /orders/wip — returns active MCH_WIP rows (CT > 0, routable, balance_qty > 0)
 - GET  /machines/capacity — returns resolved machine availability for next N days
-- POST /data/refresh — re-fetches all 6 read-only ERP views from Oracle
+- POST /data/refresh — re-fetches all 7 read-only sources from Oracle (6 MCH_* ERP views + holiday_calendar)
 - GET  /machines/daily — returns MCH_MACHINE_AVAILABILITY_BY_DATE rows for a date range (read-only display)
 - GET  /config — returns current config.json contents
 - PUT  /config — updates config.json
@@ -485,17 +496,48 @@ tov-mlo/
 ├── server.js                     ← Express.js production server
 ├── package.json                  ← express + http-proxy-middleware
 ├── backend/
-│   ├── main.py                   ← FastAPI app + all 9 endpoints
-│   ├── db.py                     ← Oracle connection pool + read/write helpers
-│   ├── preprocess.py             ← preprocessing pipeline (Model C-era; needs Model E migration)
-│   ├── engine1_scheduler.py      ← scheduling engine (currently Model C CP-SAT; needs Model E dispatch-simulator rewrite)
-│   ├── batch_grouping.py         ← Model C batch-key grouping (needs Model E SIZE~CLASS~MOC~DESIGN migration)
-│   ├── engine2_recommender.py    ← priority simulation + risk scoring
-│   ├── pipeline.py / pipeline2.py← orchestration for Engine 1 / Engine 2 runs
-│   ├── models.py                 ← Pydantic request/response schemas (needs Model E migration)
-│   ├── config.json               ← runtime config (needs Model E migration — see Configuration section)
+│   ├── main.py                   ← FastAPI app + all 9 endpoints. /schedule/generate, /schedule/current,
+│   │                                /data/refresh now call the Model E pipeline. /orders/wip and
+│   │                                /priority/simulate (Engine 2) still call Model C-era code — not yet migrated.
+│   ├── db.py                     ← Oracle connection pool + read/write helpers. write_schedule_output /
+│   │                                delete_schedule_output rewritten for the Model E schema.
+│   ├── model_e_data.py           ← adapts live Oracle DataFrames into the dispatch engine's plain input types
+│   │                                (RawWipRow/RoutingIndex/FixtureIndex/DevicePool/ResolvedAvailability).
+│   ├── model_e_pipeline.py       ← the single entry point: data load → dispatch_orders → dispatch_orchestrator
+│   │                                → dispatch_writer → db.py write. What /schedule/generate actually calls.
+│   ├── dispatch_orders.py        ← layer 1: raw WIP rows → classified, precedence-bridged OrderChains.
+│   ├── dispatch_batching.py / dispatch_consolidation_window.py / dispatch_machine_selection.py /
+│   │   dispatch_timeline.py / dispatch_planned_release.py / dispatch_pool.py / dispatch_safety_stock.py /
+│   │   dispatch_parallel.py / dispatch_scope.py
+│   │                            ← the Model E dispatch simulator's individually-tested building blocks
+│   │                                (§E.2–§E.12). See each module's own docstring for which CLAUDE.md
+│   │                                section it implements.
+│   ├── dispatch_engine.py        ← layer 2 core: places one TASK's ready pool onto machines (batching +
+│   │                                machine selection + timeline + pool + window + safety-stock hook, wired).
+│   ├── dispatch_orchestrator.py  ← layer 2 outer loop: drives placement across every order's full chain,
+│   │                                Planned-order gating, REMARK/ORDER_COMPLETION_* assembly, and the real
+│   │                                §E.10 full speculative check (forks state, runs parallel continuations).
+│   ├── shift_clock.py            ← the fixed shift clock-time convention; the only place TimePoint becomes
+│   │                                a real datetime.
+│   ├── dispatch_writer.py        ← FinalRow → MCH_SCHEDULE_OUTPUT row dict (RUN_ID/LINE_NO/GENERATED_AT +
+│   │                                shift_clock conversion).
+│   ├── preprocess.py             ← Model C-era preprocessing pipeline (historical — no longer called by main.py)
+│   ├── engine1_scheduler.py      ← Model C CP-SAT engine (historical — superseded by the dispatch_* modules above)
+│   ├── batch_grouping.py         ← now Model E's SIZE~CLASS~MOC~DESIGN batch key (compute_batch_key), used by
+│   │                                both the historical Model C path and dispatch_orders.py
+│   ├── engine2_recommender.py    ← priority simulation + risk scoring — still Model C-era, not yet migrated
+│   │                                to call the Model E pipeline (CLAUDE.md's Engine 2 section says it should)
+│   ├── pipeline.py / pipeline2.py← Model C-era orchestration for Engine 1 / Engine 2 runs (pipeline.py no
+│   │                                longer called by main.py; pipeline2.py still is, via engine2_recommender.py)
+│   ├── models.py                 ← Pydantic schemas. Config migrated to the Model E shape;
+│   │                                ScheduleGenerateResponse added for /schedule/generate's new response.
+│   ├── config.json               ← Model E shape (see Configuration section) — migrated
 │   ├── testing/
-│   │   └── model_e_schedule_output_schema.sql   ← Model E DDL (applied)
+│   │   ├── model_e_schedule_output_schema.sql   ← Model E DDL (applied)
+│   │   ├── test_dispatch_*.py                   ← unit tests for every dispatch_* module above
+│   │   └── e6_validate_real_data.py             ← E-6 audit script: runs the full pipeline against live
+│   │                                                Oracle WIP data and checks precedence/pool/REMARK/row-count
+│   │                                                invariants (read-only, never writes)
 │   └── requirements.txt
 └── frontend/
     ├── package.json
@@ -520,11 +562,11 @@ tov-mlo/
 | 3 — FastAPI | All 9 endpoints, config GET/PUT, Pydantic schemas, CORS, error handling | ✅ Done |
 | 4 — React UI | All 4 views, config settings panel, drag-drop Order Board | ✅ Done, verified end-to-end (see `PHASE4_SUMMARY.md`) |
 | E-1 — Model E schema | Rebuild `MCH_SCHEDULE_OUTPUT` (new PK, REMARK, ORDER_COMPLETION_*, drop offset columns) | ✅ Done (`backend/testing/model_e_schedule_output_schema.sql`, applied manually) |
-| E-2 — Model E data layer | Loaders/validators for MCH_ITEMWISE_FIXTURE_LOCATOR / MCH_FIXTURE_LOCATOR; batch/fixture key migrated to SIZE~CLASS~MOC~DESIGN | ⏳ Partial (loaders exist from Model D prep in `db.py`; key still needs MOC added, needs revalidation) |
-| E-3 — Dispatch simulator core | Priority-walk batching (§4), continuous timeline + cooling (§7), machine selection (§5), pool constraint (§9), safety-stock policy (§10) | ❌ Not started |
-| E-4 — REMARK & completion surfacing | §12 REMARK taxonomy, ORDER_COMPLETION_DATE/SHIFT population | ❌ Not started |
-| E-5 — API/UI migration | `models.py`, `main.py` response shapes, `GanttChart.jsx` continuous-time rendering, config.json migration | ❌ Not started |
-| E-6 — Validation | Full-run audit: precedence intact, pool never exceeded, per-order CDD attainment, replicate the two worked batching examples exactly | ❌ Not started |
+| E-2 — Model E data layer | Loaders for MCH_ITEMWISE_FIXTURE_LOCATOR / MCH_FIXTURE_LOCATOR; batch/fixture key migrated to SIZE~CLASS~MOC~DESIGN | ✅ Done (`model_e_data.py`, validated against live Oracle data) |
+| E-3 — Dispatch simulator core | Priority-walk batching (§4), continuous timeline + cooling (§7), machine selection (§5), pool constraint (§9), safety-stock policy (§10, full speculative check) | ✅ Done — all `dispatch_*` modules built, unit-tested, and wired together via `dispatch_orchestrator.py` |
+| E-4 — REMARK & completion surfacing | §12 REMARK taxonomy, ORDER_COMPLETION_DATE/SHIFT population | ✅ Done (`dispatch_scope.py`, `dispatch_orchestrator.py`), verified against live data — every WIP row produces exactly one output row |
+| E-5 — API/UI migration | `models.py`, `main.py` response shapes, `GanttChart.jsx` continuous-time rendering, config.json migration | ⏳ Partial — backend done (`config.json`/`models.Config` migrated, `/schedule/generate`+`/schedule/current`+`/data/refresh` call the Model E pipeline, verified live). **Not done:** `/orders/wip` and `/priority/simulate` (Engine 2) still call Model C-era code; `GanttChart.jsx` and the rest of the frontend still expect the old offset-based shape |
+| E-6 — Validation | Full-run audit: precedence intact, pool never exceeded, per-order CDD attainment, replicate the two worked batching examples exactly | ✅ Done against live Oracle WIP data (5005 rows) — see `backend/testing/e6_validate_real_data.py`. Found and fixed 3 real bugs along the way: a `select_machine` int/TimePoint default-type crash, missing compound-device (`"+"`-joined LOCATOR) and `"NA"`-sentinel handling in the fixture/locator pool (both confirmed real ERP conventions), and a precedence bug where `_place_no_fixture_op` never advanced `ready_at`. All invariants pass; CDD attainment on the current live backlog is 28.5% — a real finding about the backlog, not an engine defect |
 | 5 — Deploy | NSSM Windows services (Uvicorn + Express), end-to-end integration test | ❌ Not started |
 
 ---
@@ -552,6 +594,6 @@ tov-mlo/
 - `capacity_resolved` (baseline + daily-override merge): still computed in memory only, never stored — now used purely as an availability window/rate, not a bucket capacity.
 - Schedule regeneration: manual trigger only in v1. No background timer.
 - **No historical retention:** each `/schedule/generate` run DELETEs all `MCH_SCHEDULE_OUTPUT` rows before writing the fresh schedule.
-- Writes: only MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2) are written by this application. All six ERP sources are read-only views.
+- Writes: only MCH_SCHEDULE_OUTPUT (Engine 1) and MCH_SIM_RESULTS (Engine 2) are written by this application. All seven upstream sources (six MCH_* ERP views + the holiday_calendar table) are read-only.
 - config.json: all runtime settings stored here (Model E shape — see Configuration section). Never stored in Oracle tables.
 - IIS not used. Express.js on Node.js handles all production serving. Both Uvicorn (port 8000) and Express (port 80) run as permanent NSSM Windows Services.

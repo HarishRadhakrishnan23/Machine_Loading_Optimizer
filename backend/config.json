@@ -1,15 +1,9 @@
 {
-  "batch_bonus_months": 2,
-  "batch_bonus_value": 0.5,
-  "downstream_queue_bonus_value": 0.3,
-  "ageing_normalization_days": 180,
-  "machine_priority_epsilon": 0.001,
+  "batch_consolidation_window_days": 60,
+  "cooling_minutes": 20,
+  "heavy_operations": ["VB03", "VB04", "VB05", "VB06"],
+  "protect_committed_over_safety": true,
+  "planned_order_start_buffer_days": 1,
   "risk_safe_threshold_days": 5,
-  "engine2_time_limit_seconds": 10,
-  "scheduling_horizon_safety_factor": 2,
-  "scheduling_horizon_buffer_days": 7,
-  "dev_max_orders": 0,
-  "solver_workers": 2,
-  "solver_time_limit_seconds": 3000,
-  "setup_penalty_weight": 0.05
+  "dev_max_orders": 0
 }

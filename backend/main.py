@@ -29,15 +29,17 @@ from db import (
     read_machine_master,
     read_machine_daily,
     read_routing_master,
+    read_fixture_locator_master,
+    read_fixture_locator_inventory,
+    read_holiday_calendar,
 )
 from models import (
     Config,
     RiskReport,
-    ScheduleOutputRow,
-    SchedulerResult,
+    ScheduleGenerateResponse,
     SimulationRequest,
 )
-from pipeline import schedule_all_orders
+from model_e_pipeline import generate_schedule as run_model_e_schedule
 from pipeline2 import simulate_elevation
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -122,30 +124,34 @@ def put_config(config: Config):
 # ─────────────────────────────────────────────────────────────────────────────
 # Engine 1: Scheduling
 # ─────────────────────────────────────────────────────────────────────────────
-@app.post("/schedule/generate", tags=["Engine 1"], response_model=SchedulerResult)
+@app.post("/schedule/generate", tags=["Engine 1"], response_model=ScheduleGenerateResponse)
 def generate_schedule(run_date: Optional[date] = Query(None)):
     """
-    Generate an optimal shift-level schedule for all pending orders.
+    Generate a schedule for all pending orders using Engine 1 (Model E — the
+    deterministic continuous-time dispatch simulator, CLAUDE.md §E.13). CP-SAT
+    is not invoked.
 
     Query parameters:
       - run_date: reference date (default: today)
 
     Returns:
       - run_id: unique identifier for this scheduling run
-      - status: OPTIMAL, FEASIBLE, INFEASIBLE, or MODEL_INVALID
-      - objective_value: weighted tardiness score (lower is better)
-      - assignments: list of scheduled work (order, op, machine, shift, date, offsets)
-      - completion_dates: per-order completion date (used by Engine 2)
+      - rows_written: total MCH_SCHEDULE_OUTPUT rows written (== total WIP rows — every
+        eligible order-operation always produces a row, scheduled or not, §E.12)
+      - scheduled_count / scheduled_no_fixture_count / excluded_count: breakdown
 
     Writes:
-      - MCH_SCHEDULE_OUTPUT table with all assignments
+      - MCH_SCHEDULE_OUTPUT table (prior rows deleted first — no historical retention)
     """
     if run_date is None:
         run_date = date.today()
 
     config = load_config()
-    result = schedule_all_orders(config, run_date)
-    return result
+    try:
+        result = run_model_e_schedule(config.model_dump(), run_date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Schedule generation failed: {e}")
+    return ScheduleGenerateResponse(**result.__dict__)
 
 
 @app.get("/schedule/current", tags=["Engine 1"])
@@ -164,12 +170,13 @@ def get_current_schedule():
         with get_connection() as conn:
             df = pd.read_sql(
                 """
-                SELECT RUN_ID, PRODUCTION_ORDER, OPERATION_NO, TASK, WORK_CENTER,
-                       SHIFT, SCHEDULED_DATE, BALANCE_QTY, START_OFFSET_MIN, END_OFFSET_MIN,
-                       BATCH_KEY, IS_SAFETY_STOCK, GENERATED_AT
+                SELECT RUN_ID, PRODUCTION_ORDER, OPERATION_NO, LINE_NO, TASK, WORK_CENTER,
+                       SHIFT, SCHEDULED_DATE, BALANCE_QTY, BATCH_KEY, IS_SAFETY_STOCK,
+                       FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK,
+                       ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT, GENERATED_AT
                 FROM MCH_SCHEDULE_OUTPUT
-                ORDER BY GENERATED_AT DESC, WORK_CENTER, SCHEDULED_DATE, START_OFFSET_MIN
-                FETCH FIRST 1000 ROWS ONLY
+                ORDER BY GENERATED_AT DESC, PRODUCTION_ORDER, OPERATION_NO
+                FETCH FIRST 5000 ROWS ONLY
                 """,
                 conn,
             )
@@ -177,20 +184,32 @@ def get_current_schedule():
         if df.empty:
             return {"assignments": [], "message": "No schedule generated yet"}
 
+        def _d(v):
+            return v.strftime("%Y-%m-%d") if pd.notna(v) else None
+
+        def _ts(v):
+            return v.isoformat() if pd.notna(v) else None
+
         # Convert to response format
         assignments = [
             {
                 "production_order": row["PRODUCTION_ORDER"],
                 "operation_no": row["OPERATION_NO"],
+                "line_no": int(row["LINE_NO"]),
                 "task": row["TASK"],
-                "machine_name": row["WORK_CENTER"],
-                "shift": row["SHIFT"],
-                "scheduled_date": row["SCHEDULED_DATE"].strftime("%Y-%m-%d"),
+                "machine_name": row["WORK_CENTER"] if pd.notna(row["WORK_CENTER"]) else None,
+                "shift": row["SHIFT"] if pd.notna(row["SHIFT"]) else None,
+                "scheduled_date": _d(row["SCHEDULED_DATE"]),
                 "balance_qty": int(row["BALANCE_QTY"]),
-                "start_offset_min": int(row["START_OFFSET_MIN"]),
-                "end_offset_min": int(row["END_OFFSET_MIN"]),
                 "batch_key": row["BATCH_KEY"],
                 "is_safety_stock": row["IS_SAFETY_STOCK"] == "Y",
+                "fixture_id": row["FIXTURE_ID"] if pd.notna(row["FIXTURE_ID"]) else None,
+                "locator_id": row["LOCATOR_ID"] if pd.notna(row["LOCATOR_ID"]) else None,
+                "start_timestamp": _ts(row["START_TIMESTAMP"]),
+                "end_timestamp": _ts(row["END_TIMESTAMP"]),
+                "remark": row["REMARK"] if pd.notna(row["REMARK"]) else None,
+                "order_completion_date": _d(row["ORDER_COMPLETION_DATE"]),
+                "order_completion_shift": row["ORDER_COMPLETION_SHIFT"] if pd.notna(row["ORDER_COMPLETION_SHIFT"]) else None,
             }
             for _, row in df.iterrows()
         ]
@@ -392,16 +411,19 @@ def get_machines_daily(start_date: Optional[date] = Query(None), end_date: Optio
 @app.post("/data/refresh", tags=["Admin"])
 def refresh_all_data():
     """
-    Re-fetch all 4 ERP views from Oracle (cache-busting).
+    Re-fetch all 7 read-only sources from Oracle (cache-busting).
 
     Reads:
       - MCH_WIP
       - MCH_MACHINE_AVAILABILITY
       - MCH_MACHINE_AVAILABILITY_BY_DATE
       - MCH_MACHINE_PRIORITY
+      - MCH_ITEMWISE_FIXTURE_LOCATOR
+      - MCH_FIXTURE_LOCATOR
+      - L750.TCCCP019 (holiday calendar)
 
     Returns:
-      - Count of rows per view
+      - Count of rows per source
       - Timestamp of refresh
     """
     try:
@@ -409,12 +431,18 @@ def refresh_all_data():
         machines = read_machine_master()
         daily = read_machine_daily()
         routing = read_routing_master()
+        fixture_master = read_fixture_locator_master()
+        fixture_inventory = read_fixture_locator_inventory()
+        holidays = read_holiday_calendar()
 
         return {
             "wip_orders": len(wip),
             "machine_master": len(machines),
             "machine_daily": len(daily),
             "routing_master": len(routing),
+            "fixture_locator_master": len(fixture_master),
+            "fixture_locator_inventory": len(fixture_inventory),
+            "holiday_calendar": len(holidays),
             "refreshed_at": datetime.now().isoformat(),
         }
     except Exception as e:

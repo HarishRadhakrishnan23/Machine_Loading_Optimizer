@@ -64,7 +64,10 @@
       "Bash(./venv/Scripts/python.exe -c ' *)",
       "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_orchestrator.py)",
       "Bash(\"./venv/Scripts/python.exe\" testing/test_shift_clock.py)",
-      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_safety_stock_speculation.py)"
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_safety_stock_speculation.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/e6_validate_real_data.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_writer.py)",
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_model_e_data_holidays.py)"
     ]
   }
 }

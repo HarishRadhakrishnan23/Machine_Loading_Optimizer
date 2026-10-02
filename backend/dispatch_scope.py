@@ -39,6 +39,16 @@ skip"); under Model E's "never silently drop a row" mandate that can no
 longer be silent, so it gets its own outcome and REMARK, distinct from "no
 routing entry for this TASK at all" — flagging this as an addition beyond the
 literal CLAUDE.md text, for the same reason.
+
+A second such addition, discovered during E-6 validation against live Oracle
+data: EXCLUDED_UNKNOWN_FIXTURE_DEVICE. MCH_ITEMWISE_FIXTURE_LOCATOR can
+reference a FIXTURE/LOCATOR DEVICE_NAME that has no matching row in
+MCH_FIXTURE_LOCATOR's physical inventory at all (as opposed to the literal
+value "NA", which means "no device needed" and is filtered out upstream by
+dispatch_pool.parse_devices before this check ever runs). Per explicit
+confirmation, this fails loudly for just that operation — REMARK explains
+it, never scheduled — rather than guessing a device quantity or silently
+dropping the pool constraint for an unregistered physical device.
 """
 
 from __future__ import annotations
@@ -58,6 +68,7 @@ class ScopeOutcome(str, Enum):
     EXCLUDED_PN10 = "excluded_pn10"
     EXCLUDED_NO_ROUTING = "excluded_no_routing"
     EXCLUDED_NO_MACHINE_FOR_COMBO = "excluded_no_machine_for_combo"  # see module docstring
+    EXCLUDED_UNKNOWN_FIXTURE_DEVICE = "excluded_unknown_fixture_device"  # see module docstring
     SCHEDULED_NO_FIXTURE = "scheduled_no_fixture"
     SCHEDULED = "scheduled"
 
@@ -71,6 +82,9 @@ REMARKS: dict[ScopeOutcome, Optional[str]] = {
     ScopeOutcome.EXCLUDED_NO_MACHINE_FOR_COMBO: (
         "TASK has routing entries, but none match this exact SIZE~CLASS~MOC~DESIGN"
     ),
+    ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE: (
+        "Fixture/locator device not in inventory — cannot schedule"
+    ),
     ScopeOutcome.SCHEDULED_NO_FIXTURE: "No fixture/locator match — scheduled via plain routing",
     ScopeOutcome.SCHEDULED: None,
 }
@@ -83,6 +97,7 @@ _EXCLUDED_OUTCOMES = frozenset(
         ScopeOutcome.EXCLUDED_PN10,
         ScopeOutcome.EXCLUDED_NO_ROUTING,
         ScopeOutcome.EXCLUDED_NO_MACHINE_FOR_COMBO,
+        ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE,
     }
 )
 
@@ -111,6 +126,7 @@ class ScopeCheckInputs:
     has_routing_entry: bool  # this order's TASK appears anywhere in MCH_MACHINE_PRIORITY
     has_machine_for_combo: bool  # >=1 MCH_MACHINE_PRIORITY row matches this exact SIZE~CLASS~MOC~DESIGN + TASK
     has_fixture_locator_match: bool  # (SIZE,CLASS,MOC,DESIGN,TASK) present in MCH_ITEMWISE_FIXTURE_LOCATOR for >=1 candidate machine
+    fixture_locator_devices_known: bool = True  # only consulted when has_fixture_locator_match is True — see EXCLUDED_UNKNOWN_FIXTURE_DEVICE
 
 
 def classify_operation(inputs: ScopeCheckInputs) -> ScopeOutcome:
@@ -119,7 +135,9 @@ def classify_operation(inputs: ScopeCheckInputs) -> ScopeOutcome:
     conditions (first match wins — a row can fail more than one, the earliest
     check in this order determines its REMARK). Only once every gating
     condition passes does §E.11's fixture/locator lookup (optional, not
-    gating) decide SCHEDULED vs SCHEDULED_NO_FIXTURE.
+    gating) decide SCHEDULED vs SCHEDULED_NO_FIXTURE — and, when a match
+    exists, whether its referenced devices are actually known to the
+    physical inventory (EXCLUDED_UNKNOWN_FIXTURE_DEVICE if not).
     """
     if inputs.cycle_time <= 0:
         return ScopeOutcome.EXCLUDED_CT_ZERO
@@ -135,4 +153,6 @@ def classify_operation(inputs: ScopeCheckInputs) -> ScopeOutcome:
         return ScopeOutcome.EXCLUDED_NO_MACHINE_FOR_COMBO
     if not inputs.has_fixture_locator_match:
         return ScopeOutcome.SCHEDULED_NO_FIXTURE
+    if not inputs.fixture_locator_devices_known:
+        return ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE
     return ScopeOutcome.SCHEDULED

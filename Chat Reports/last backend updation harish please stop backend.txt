@@ -1,0 +1,40 @@
+See in this table L750.TCCCP019 I have the list of already confirmed holidays in emerson., so for these days the AVAILABLE_MINS should be 0 for all the three shifts of that particular date
+
+DESC L750.TCCCP019: 
+
+Name          Null?    Type         
+------------- -------- ------------ 
+CALENDAR_CODE NOT NULL VARCHAR2(9)  
+DATE_1        NOT NULL DATE         
+DESCRIPTION   NOT NULL VARCHAR2(40) 
+
+SELECT * FROM L750.TCCCP019:
+
+VEL	01-JAN-14	New Year
+VEL	01-MAY-14	Labour Day
+VEL	15-AUG-14	Independence Day
+VEL	29-AUG-14	Ganesh Chaturdashi
+VEL	08-SEP-14	Anant Chaturdashi
+VEL	03-OCT-14	Dashahara
+VEL	22-OCT-13	Diwali
+VEL	23-OCT-14	Diwali
+VEL	24-OCT-14	Diwali
+VEL	25-OCT-14	Diwali
+VEL	22-OCT-14	Diwali
+VEL	01-JAN-08	New years day
+VEL	26-JAN-08	Republic Day
+VEL	01-MAY-08	Labour Day
+VEL	15-AUG-08	Independence Day
+VEL	03-SEP-08	Ganesh Chaturthi
+VEL	13-SEP-08	Anant Chaturthi
+VEL	09-OCT-08	Dasserra
+VEL	26-OCT-08	Diwali
+VEL	27-OCT-08	Diwali
+VEL	28-OCT-08	Diwali
+VEL	29-OCT-08	Diwali
+VEL	26-JAN-26	Republic Day - National Holiday
+VEL	15-AUG-26	Independence Day - National Holiday
+VEL	02-OCT-26	Gandhi Jayanti - National Holiday
+
+
+And I have updated the 7 missing locators in the inventry., with their correct quantity., please check that too and after completing both go ahead with again testing the full write path live — this performs the designed DELETE-then-INSERT against MCH_SCHEDULE_OUTPUT

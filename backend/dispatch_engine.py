@@ -136,13 +136,20 @@ def _find_feasible_fixture_run(
     (never a guess — `has_capacity` is re-checked every attempt, per
     dispatch_pool.py's own contract). Returns (per-step results, run_start
     actually used, run_end).
+
+    Uses the `_multi` pool methods — FIXTURE is never a "+"-joined compound
+    in practice, but it CAN be the literal "NA" (confirmed real-data
+    convention: some operations need no physical fixture at all), which
+    `parse_devices` turns into an empty device list. Routing both fixture
+    and locator through the same multi-aware methods means "no device
+    needed" is handled uniformly rather than as a special case here.
     """
     candidate_start = earliest_start
     for _ in range(max_attempts):
         results, run_end = _simulate_run_timing(op_by_id, steps, machine, candidate_start, availability)
-        if pool.has_capacity(fixture, candidate_start, run_end):
+        if pool.has_capacity_multi(fixture, candidate_start, run_end):
             return results, candidate_start, run_end
-        hint = pool.earliest_release_hint(fixture, candidate_start)
+        hint = pool.earliest_release_hint_multi(fixture, candidate_start)
         if hint is None:
             raise RuntimeError(f"Fixture {fixture!r} reported blocked with no release hint at {candidate_start}")
         candidate_start = next_open_instant(hint, machine, availability)
@@ -245,10 +252,15 @@ def _place_fixture_run(
         op_by_id, covered_steps, machine, fixture, earliest_start, availability, pool
     )
 
-    pool.reserve(fixture, run_start, run_end)
+    pool.reserve_multi(fixture, run_start, run_end)
     placed: list[PlacedOperation] = []
     for step, start, end in results:
-        pool.reserve(step.locator, start, end)  # per-slice, no retry — see module docstring
+        # per-slice, no retry — see module docstring. reserve_multi (not
+        # reserve) because a LOCATOR value can be a "+"-joined compound of
+        # two physical devices that must be held together (confirmed real
+        # ERP convention, dispatch_pool.py) — FIXTURE never is, so it keeps
+        # using the plain single-device reserve() above.
+        pool.reserve_multi(step.locator, start, end)
         op = op_by_id[step.order_id]
         placed.append(
             PlacedOperation(
@@ -305,6 +317,7 @@ def _place_no_fixture_op(
     duration = op.cycle_time * op.balance_qty
     end = advance_clock(start, duration, machine, availability)
     machine_free_at[machine] = advance_clock(end, cooling_minutes, machine, availability)
+    ready_at[op.production_order] = end  # this order's NEXT schedulable op must not start before this one ends
 
     return PlacedOperation(
         production_order=op.production_order,

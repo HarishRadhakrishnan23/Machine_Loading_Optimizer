@@ -38,6 +38,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from batch_grouping import compute_batch_key
+from dispatch_pool import parse_devices
 from dispatch_scope import ScopeCheckInputs, ScopeOutcome, classify_operation, is_excluded, remark_for
 
 
@@ -229,18 +230,40 @@ def build_order_chains(
     rows: list[RawWipRow],
     routing_index: RoutingIndex,
     fixture_index: FixtureIndex,
+    known_devices: Optional[frozenset[str]] = None,
 ) -> list[OrderChain]:
-    """Classify and group every raw WIP row into one OrderChain per PRODUCTION_ORDER."""
+    """
+    Classify and group every raw WIP row into one OrderChain per PRODUCTION_ORDER.
+
+    `known_devices`: the set of DEVICE_NAMEs actually present in
+    MCH_FIXTURE_LOCATOR's physical inventory. When supplied, a fixture/locator
+    match whose referenced device(s) aren't in this set is excluded
+    (EXCLUDED_UNKNOWN_FIXTURE_DEVICE) rather than scheduled against an
+    unregistered physical device — a real gap found in live Oracle data (see
+    dispatch_scope.py). Default None skips this check entirely (every match
+    is treated as having known devices) — existing callers that don't pass an
+    inventory see unchanged behavior.
+    """
     chains: dict[str, tuple[list[ScheduledOperation], list[ExcludedOperation]]] = {}
 
     for row in rows:
         schedulable_list, excluded_list = chains.setdefault(row.production_order, ([], []))
 
         routing_candidates = routing_index.candidates_for(row.size_inch, row.class_val, row.moc, row.design, row.task)
-        has_fixture_match = any(
-            fixture_index.lookup(row.size_inch, row.class_val, row.moc, row.design, row.task, m) is not None
+        matching_timings = [
+            fixture_index.lookup(row.size_inch, row.class_val, row.moc, row.design, row.task, m)
             for m, _ in routing_candidates
-        )
+        ]
+        matching_timings = [t for t in matching_timings if t is not None]
+        has_fixture_match = len(matching_timings) > 0
+
+        devices_known = True
+        if has_fixture_match and known_devices is not None:
+            # FIXTURE/LOCATOR identity is constant across every candidate
+            # machine for one SCMD~TASK combo (CLAUDE.md), so the first match
+            # is representative of them all — no need to check every one.
+            referenced = set(parse_devices(matching_timings[0].fixture)) | set(parse_devices(matching_timings[0].locator))
+            devices_known = referenced <= known_devices
 
         inputs = ScopeCheckInputs(
             cycle_time=row.cycle_time,
@@ -250,6 +273,7 @@ def build_order_chains(
             has_routing_entry=routing_index.has_routing_entry(row.task),
             has_machine_for_combo=len(routing_candidates) > 0,
             has_fixture_locator_match=has_fixture_match,
+            fixture_locator_devices_known=devices_known,
         )
         outcome = classify_operation(inputs)
 

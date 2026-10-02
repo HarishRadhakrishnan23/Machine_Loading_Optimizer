@@ -26,6 +26,17 @@ CLAUDE.md's own auditability language for this constraint is a check
 search. `earliest_release_hint` gives the dispatcher's retry loop a starting
 point to re-check from, not a guaranteed answer — the loop must still re-run
 `has_capacity` after advancing, since other reservations may still conflict.
+
+Compound devices (real ERP data discovery, confirmed during E-6 validation
+against live MCH_ITEMWISE_FIXTURE_LOCATOR data): a LOCATOR value can be TWO
+device names joined by "+" (e.g. "AT18/212-F02+AT18/212-LC2") — never seen on
+FIXTURE. This means the operation needs BOTH physical devices held
+simultaneously, not one device with an unusual name — each component is a
+real, separate DEVICE_NAME in MCH_FIXTURE_LOCATOR's own inventory, with its
+own QUANTITY cap. `parse_devices` + the `*_multi` methods below handle this
+as a thin layer on top of the single-device primitives above: a plain device
+name is just a one-element list. No change to the timing/duration formula —
+this is purely about which device(s) a reservation checks/holds.
 """
 
 from __future__ import annotations
@@ -124,3 +135,48 @@ class DevicePool:
         self._require_known(device)
         ends = sorted(e for _, e in self._held.get(device, []) if e > not_before)
         return ends[0] if ends else None
+
+    # ── Compound-device layer (see module docstring) ──────────────────────
+    def has_capacity_multi(self, device_name: str, start: TimePoint, end: TimePoint) -> bool:
+        """`has_capacity`, but `device_name` may be a "+"-joined compound —
+        true only if EVERY component device has capacity for [start, end)."""
+        return all(self.has_capacity(d, start, end) for d in parse_devices(device_name))
+
+    def reserve_multi(self, device_name: str, start: TimePoint, end: TimePoint) -> None:
+        """`reserve`, but commits [start, end) against EVERY component device
+        of a "+"-joined compound name (both held together, per CLAUDE.md's
+        confirmed real-data convention)."""
+        for d in parse_devices(device_name):
+            self.reserve(d, start, end)
+
+    def earliest_release_hint_multi(self, device_name: str, not_before: TimePoint) -> Optional[TimePoint]:
+        """
+        `earliest_release_hint`, but for a possibly-compound `device_name`:
+        the whole compound isn't free until ALL of its components are, so
+        this is the LATEST of the components' individual hints (a component
+        already free contributes nothing — it isn't what's blocking). None
+        iff every component is free right now.
+        """
+        hints = [h for h in (self.earliest_release_hint(d, not_before) for d in parse_devices(device_name)) if h is not None]
+        return max(hints) if hints else None
+
+
+def parse_devices(device_name: str) -> list[str]:
+    """
+    Split a possibly-compound device name into its individual DEVICE_NAMEs.
+    Real ERP conventions (confirmed during E-6 validation against live data):
+
+      - A LOCATOR value can join two physical devices with "+" (never seen
+        on FIXTURE), meaning the operation needs BOTH held simultaneously.
+      - EITHER field (confirmed on both FIXTURE and LOCATOR — e.g. VB03 Weld
+        Overlay rows carry FIXTURE=LOCATOR="NA") can be the literal string
+        "NA", meaning no physical device is needed at all for that slot —
+        filtered out here, never treated as a device name to look up.
+
+    A plain name returns a single-element list, "NA" (alone or inside a
+    compound) contributes nothing, so every caller can treat this uniformly
+    — including the "no device needed at all" case, which naturally becomes
+    an empty list (has_capacity_multi vacuously True, reserve_multi a no-op,
+    earliest_release_hint_multi None).
+    """
+    return [d.strip() for d in device_name.split("+") if d.strip().upper() != "NA"]

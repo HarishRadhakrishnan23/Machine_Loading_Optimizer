@@ -1,0 +1,111 @@
+I want to create an inner join among these tables., I will tell you want I want from each table., just give me the query
+
+1. DESC mch_wip: (I want COMPANY, PRODUCTION_ORDER, PRODUCTION_START_DATE_AND_TIME, ORDER_STATUS, ITEM, ITEM_DESCRIPTION, SIZE_INCH, CLASS, MOC,	DESIGN,	ITEM_CATEGORY, REFERENCE, QUANTITY_ORDERED, CDD, OPERATION, OPERATION_STATUS, TASK, WORK_CENTER, QUANTITY_COMPLETED, QUANTITY_REJECTED, CYCLE_TIME ). This is my primary table in the join
+
+
+Name                           Null? Type          
+------------------------------ ----- ------------- 
+COMPANY                              NUMBER        
+PRODUCTION_ORDER                     VARCHAR2(9)   
+PRODUCTION_START_DATE_AND_TIME       DATE          
+ORDER_STATUS                         VARCHAR2(70)  
+ITEM                                 VARCHAR2(47)  
+ITEM_DESCRIPTION                     VARCHAR2(40)  
+SIZE_INCH                            NUMBER        
+CLASS                                VARCHAR2(10)  
+MOC                                  VARCHAR2(25)  
+DESIGN                               VARCHAR2(25)  
+ITEM_CATEGORY                        VARCHAR2(103) 
+REFERENCE                            VARCHAR2(30)  
+QUANTITY_ORDERED                     NUMBER        
+CDD                                  DATE          
+OPERATION                            NUMBER        
+OPERATION_STATUS                     VARCHAR2(70)  
+TASK                                 VARCHAR2(8)   
+WORK_CENTER                          VARCHAR2(6)   
+QUANTITY_COMPLETED                   NUMBER        
+QUANTITY_REJECTED                    NUMBER        
+CYCLE_TIME                           NUMBER        
+
+
+2. DESC mch_schedule_output: ( I want RUN_ID, WORK_CENTER_1, SHIFT, SCHEDULED_DATE, BALANCE_QTY as Planned_Quantity, GENERATED_AT, BATCH_KEY, IS_SAFETY_STOCK, FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK, ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT ). This is my secondary table.
+
+
+Name                   Null?    Type          
+---------------------- -------- ------------- 
+RUN_ID                 NOT NULL VARCHAR2(36)  
+PRODUCTION_ORDER       NOT NULL VARCHAR2(9)   
+OPERATION_NO           NOT NULL NUMBER        
+LINE_NO                NOT NULL NUMBER        
+TASK                            VARCHAR2(51)  
+WORK_CENTER                     VARCHAR2(49)  
+SHIFT                           VARCHAR2(10)  
+SCHEDULED_DATE                  DATE          
+BALANCE_QTY            NOT NULL NUMBER        
+GENERATED_AT           NOT NULL TIMESTAMP(6)  
+BATCH_KEY                       VARCHAR2(100) 
+IS_SAFETY_STOCK                 CHAR(1)       
+FIXTURE_ID                      VARCHAR2(40)  
+LOCATOR_ID                      VARCHAR2(40)  
+START_TIMESTAMP                 TIMESTAMP(6)  
+END_TIMESTAMP                   TIMESTAMP(6)  
+REMARK                          VARCHAR2(200) 
+ORDER_COMPLETION_DATE           DATE          
+ORDER_COMPLETION_SHIFT          VARCHAR2(10)  
+
+FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK, ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT
+
+3. DESC L750.TIROU003: ( I want the DESCRIPTION to be extracted from this table using TASK as reference )
+
+Name                         Null?    Type         
+---------------------------- -------- ------------ 
+TASK                         NOT NULL VARCHAR2(8)  
+DESCRIPTION                  NOT NULL VARCHAR2(40) 
+SEARCH_KEY                   NOT NULL VARCHAR2(16) 
+DEFAULT_WORK_CENTER          NOT NULL VARCHAR2(6)  
+DEFAULT_MACHINE              NOT NULL VARCHAR2(6)  
+WORK_CENTER_SELECTION_METHOD NOT NULL NUMBER       
+MACHINE_SELECTION_METHOD     NOT NULL NUMBER       
+EXTRA_INFORMATION            NOT NULL VARCHAR2(8)  
+TASK_TEXT                    NOT NULL NUMBER       
+GROUP_TASK_NAME              NOT NULL VARCHAR2(30) 
+SCAN_REPORT                  NOT NULL NUMBER       
+
+
+4. DESC L750.TIROU001: ( I want the DESCRIPTION to be extracted from this table using WORK_CENTER as reference )
+
+Name                                 Null?    Type         
+------------------------------------ -------- ------------ 
+WORK_CENTER                          NOT NULL VARCHAR2(6)  
+DESCRIPTION                          NOT NULL VARCHAR2(40) 
+WORK_CENTER_TYPE                     NOT NULL NUMBER       
+STATION_TYPE                         NOT NULL NUMBER       
+BUFFER_TYPE                          NOT NULL NUMBER       
+MAIN_WORK_CENTER                     NOT NULL VARCHAR2(6)  
+SUBCONTRACTOR_INDEPENDENT            NOT NULL NUMBER       
+SUBCONTRACTOR                        NOT NULL VARCHAR2(9)  
+OPERATION_RATE_CODE                  NOT NULL VARCHAR2(6)  
+WAIT_TIME                            NOT NULL NUMBER       
+MOVE_TIME                            NOT NULL NUMBER       
+BASIC_WEEK_CAPACITY_BY_RESOURCE_UNIT NOT NULL NUMBER       
+BASIC_DAY_CAPACITY_BY_RESOURCE_UNIT  NOT NULL NUMBER       
+SHOP_FLOOR_WAREHOUSE                 NOT NULL VARCHAR2(6)  
+BACKFLUSH_EMPLOYEE                   NOT NULL VARCHAR2(9)  
+CRITICAL_IN_PLANNING                 NOT NULL NUMBER       
+OPTIMAL_BUFFER_UTILIZATION           NOT NULL NUMBER       
+NUMBER_OF_RANDOM_ACCESS_PLACES       NOT NULL NUMBER       
+SHARED_WORK_CENTER_TYPE              NOT NULL NUMBER       
+SHARED_WORK_CENTER_PRIMARY_COMPANY   NOT NULL NUMBER       
+DESIRED_QUEUE                        NOT NULL NUMBER       
+QUEUE_TIME                           NOT NULL NUMBER       
+NUMBER_OF_MACHINES                   NOT NULL NUMBER       
+NUMBER_OF_OPERATORS                  NOT NULL NUMBER       
+TIME_UNIT                            NOT NULL NUMBER       
+PRINT_INSTRUCTIONS                   NOT NULL NUMBER       
+COSTING_WORK_CENTER                  NOT NULL VARCHAR2(6)  
+CONSTRAINT_TYPE                      NOT NULL NUMBER       
+CONSTRAINT_TIME_FENCE                NOT NULL NUMBER       
+CRITICAL_CAPACITY_FOR_PLANNING       NOT NULL NUMBER       
+USE_ROUGH_PCS_CAPACITY_REQUIREMENT   NOT NULL NUMBER       
+DEVICE_FOR_PRINTING_LABELS           NOT NULL VARCHAR2(14) 
+WC_GROUP_NAME                        NOT NULL VARCHAR2(35) 

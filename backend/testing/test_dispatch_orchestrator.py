@@ -35,6 +35,17 @@ def sched_op(order_id, operation_no, task, cdd, qty=10, machine="M1", cycle_time
     )
 
 
+def no_fixture_op(order_id, operation_no, task, cdd, qty=10, machine="M1", cycle_time=5.0):
+    """A SCHEDULED_NO_FIXTURE operation — CLAUDE.md §E.11's plain-routing fallback."""
+    candidates = [CandidateMachine(machine=machine, machine_priority=1)]
+    return ScheduledOperation(
+        production_order=order_id, operation_no=operation_no, task=task, batch_key="10~150~CS~DFS",
+        balance_qty=qty, cycle_time=cycle_time, cdd=cdd, order_date=None, order_status="Active",
+        production_start_date=DAY0, candidates=candidates, scope_outcome=ScopeOutcome.SCHEDULED_NO_FIXTURE,
+        remark="No fixture/locator match — scheduled via plain routing",
+    )
+
+
 def check(label, condition):
     status = "PASS" if condition else "FAIL"
     print(f"  [{status}] {label}")
@@ -111,6 +122,21 @@ def test_planned_order_first_op_never_starts_before_earliest_start():
     check("minute 0", rows[0].start.minute == 0.0)
 
 
+def test_no_fixture_op_updates_ready_at_for_the_next_op():
+    print("\n=== Regression: a SCHEDULED_NO_FIXTURE op must still advance ready_at (real-data bug, E-6) ===")
+    # Caught during E-6 validation against live WIP data: _place_no_fixture_op
+    # computed `end` but never wrote it back to ready_at, so a second op for
+    # the same order could start before the no-fixture op actually finished.
+    op1 = no_fixture_op("O1", 10, "VA03", cdd=date(2026, 2, 1), cycle_time=500.0)  # long enough to force a real gap
+    op2 = no_fixture_op("O1", 20, "VB12", cdd=date(2026, 2, 1), cycle_time=5.0)
+    chain = OrderChain(production_order="O1", schedulable=[op1, op2], excluded=[])
+    pool = DevicePool(quantities={})
+    rows = run_dispatch_simulation([chain], availability, pool, today=DAY0, window_days=60, cooling_minutes=20, day_zero=DAY0, planned_order_start_buffer_days=1)
+    r1 = next(r for r in rows if r.operation_no == 10)
+    r2 = next(r for r in rows if r.operation_no == 20)
+    check("op20 starts at/after op10 ends", r2.start >= r1.end)
+
+
 def test_two_orders_same_depth_and_task_batch_together():
     print("\n=== Two independent orders, same round + TASK: dispatch_task_pool batching kicks in ===")
     op1 = sched_op("O1", 10, "VB02", cdd=date(2026, 2, 1), qty=10)
@@ -130,5 +156,6 @@ if __name__ == "__main__":
     test_excluded_row_carries_batch_key_and_safety_flag_but_no_machine()
     test_order_with_zero_schedulable_ops_has_no_completion()
     test_planned_order_first_op_never_starts_before_earliest_start()
+    test_no_fixture_op_updates_ready_at_for_the_next_op()
     test_two_orders_same_depth_and_task_batch_together()
     print("\n[OK] The outer dispatch loop assembles complete, precedence-correct schedules.")

@@ -1,0 +1,67 @@
+Now complete whats left., that is: 
+1. The shift-start-time convention (now saved) still needs TimePoint→TIMESTAMP conversion wired into the actual write path.
+2. E-5 (API/UI migration)
+3. E-6 (validation against real WIP data) are the remaining phases.
+
+But before that I have some thing I want you to clarify me about., which is:
+
+"None of the 6 ERP views carry a shift's real clock-time-of-day — only its *duration* (`WORKING_MINS`). The engine's internal clock (`TimePoint`: day + shift + minutes-into-shift) doesn't need one, but converting a `TimePoint` into a real Oracle `TIMESTAMP` (for `START_TIMESTAMP`/`END_TIMESTAMP`) does. This mapping is fixed, plant-wide, identical every day it applies, and does **not** come from Oracle — it's a hardcoded constant:
+
+| Shift | Starts | Ends |
+|---|---|---|
+| first | 07:00 | 15:30 |
+| second | 15:30 | 23:30 |
+| third | 23:30 | 07:00 (next calendar day) |
+
+Applies Monday through Saturday — Monday's first shift starts the week at 07:00, and Saturday's third shift ends Sunday at 07:00. There is no defined shift window for the rest of Sunday (07:00 Sunday → 07:00 Monday): this isn't a rule the engine hardcodes — it falls out naturally from `AVAILABLE_MINS` being 0 for that window in the ERP data (baseline or daily-override), exactly like any other closed shift (CLAUDE.md's existing "no capacity cap, closed shifts are skipped" behavior handles it with no special-casing).
+
+A `TimePoint`'s `minute` offset is assumed to map linearly onto real clock time from the shift's start above — there's no finer-grained break/downtime subdivision in any ERP source to do otherwise."
+
+See I took the above words from claude.md., But I have a question in this : 
+
+Suppose a job starts at:
+
+TimePoint:
+Thursday
+first shift
+minute 180
+Show more lines
+
+First shift starts at:
+
+07:00
+Show more lines
+
+Therefore:
+
+07:00 + 180
+= 10:00
+``
+Show more lines
+
+Start timestamp:
+
+Thursday 10:00
+Show more lines
+
+Job duration:
+
+240 minutes
+Show more lines
+
+End:
+
+10:00 + 240
+= 14:00
+Show more lines
+
+Output:
+
+START_TIMESTAMP = Thu 10:00
+END_TIMESTAMP = Thu 14:00
+
+So the whole idea is:
+
+The scheduling engine works with abstract (Day, Shift, Minute) values. The hardcoded shift timetable (07:00, 15:30, 23:30) exists only to translate those internal values into human-readable Oracle timestamps. The ERP provides capacity (WORKING_MINS / AVAILABLE_MINS), while the shift clock mapping provides the actual wall-clock time. I think this what you mean by these sentences above in claude.md but.,
+
+In a shift the scheduled minutes must never exceed AVAILABLE_MINS of that shift., is that considered or the engine is going to plan conitiously..?

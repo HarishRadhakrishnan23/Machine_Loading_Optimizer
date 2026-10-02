@@ -47,34 +47,34 @@ class RiskFlag(str, Enum):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Runtime configuration (mirror of backend/config.json)
+# Runtime configuration (mirror of backend/config.json) — Model E shape
+# (CLAUDE.md "Configuration — backend/config.json (Model E shape)")
 # ─────────────────────────────────────────────────────────────────────────────
 class Config(BaseModel):
     """Runtime parameters. Loaded from backend/config.json, never from Oracle."""
 
-    batch_bonus_months: int = 2
-    batch_bonus_value: float = 0.5
-    downstream_queue_bonus_value: float = 0.3
-    ageing_normalization_days: int = 180
-    machine_priority_epsilon: float = 0.001
-    risk_safe_threshold_days: int = 5
-    engine2_time_limit_seconds: int = 10
-    # Horizon sizing (CLAUDE.md "Horizon derivation"). Present in config.json;
-    # without them here Pydantic silently drops the keys and horizon logic that
-    # reads them raises AttributeError at runtime.
-    scheduling_horizon_safety_factor: int = 2
-    scheduling_horizon_buffer_days: int = 7
-    # Development mode: limit WIP orders to top-N by urgency (for fast testing).
-    # 0 = no limit (full dataset). Set to 100 for rapid iteration, 0 for production.
-    dev_max_orders: int = 0
-    # CP-SAT solver parallelization and time budget.
-    solver_workers: int = 0  # 0 = use ALL CPU cores; set to a specific count to limit
-    solver_time_limit_seconds: int = 600  # time budget for Engine 1 (production: 600-3600s OK)
-    # Model C — soft-cost weights (see CLAUDE.md "Objective function").
-    # setup_penalty_weight: mild objective cost per setup event — nudges the solver to
-    # batch same-size work together (maximise utilisation) WITHOUT ever delaying a
-    # delivery to save a setup. Kept small so tardiness always dominates. 0 disables it.
-    setup_penalty_weight: float = 0.05
+    batch_consolidation_window_days: int = 60  # §E.6 — hard rule, no override
+    cooling_minutes: int = 20  # §E.7
+    heavy_operations: list[str] = ["VB03", "VB04", "VB05", "VB06"]  # §E.10
+    protect_committed_over_safety: bool = True  # must always be True
+    planned_order_start_buffer_days: int = 1  # §E.1/§E.8
+    risk_safe_threshold_days: int = 5  # Engine 2 SAFE/AT_RISK/BREACH threshold
+    dev_max_orders: int = 0  # dev knob; 0 = full dataset (production)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Engine 1 (Model E) — /schedule/generate response
+# ─────────────────────────────────────────────────────────────────────────────
+class ScheduleGenerateResponse(BaseModel):
+    """What POST /schedule/generate returns — model_e_pipeline.ScheduleGenerateResult,
+    serialized. Replaces the old CP-SAT-era SchedulerResult (status/objective_value
+    don't apply to a deterministic dispatch simulator — see CLAUDE.md §E.13)."""
+
+    run_id: str
+    rows_written: int
+    scheduled_count: int
+    scheduled_no_fixture_count: int
+    excluded_count: int
 
 
 # ─────────────────────────────────────────────────────────────────────────────

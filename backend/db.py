@@ -142,19 +142,54 @@ def read_fixture_locator_inventory() -> pd.DataFrame:
         return pd.read_sql("SELECT * FROM MCH_FIXTURE_LOCATOR", conn)
 
 
+def read_holiday_calendar() -> pd.DataFrame:
+    """
+    Read the confirmed company holiday calendar from L750.TCCCP019 — a
+    cross-schema, read-only table (not one of the 6 MCH_* ERP views). On
+    every date listed here, AVAILABLE_MINS is forced to 0 for all three
+    shifts, for every machine (CLAUDE.md "Shift clock-time convention" —
+    holiday closure rule). The table also carries old/historical entries
+    (e.g. 2008, 2013, 2014) that are harmless to read — a date that never
+    falls inside a schedule's horizon simply never gets looked up.
+
+    Returns: DataFrame with columns (CALENDAR_CODE, DATE_1, DESCRIPTION).
+    """
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM L750.TCCCP019", conn)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Write functions (pandas DataFrames → result tables)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def write_schedule_output(schedule_rows: list[dict], run_id: str) -> int:
+def delete_schedule_output() -> int:
     """
-    Write Engine 1 scheduling results to MCH_SCHEDULE_OUTPUT.
+    CLAUDE.md: no historical retention — every /schedule/generate run DELETEs
+    all existing MCH_SCHEDULE_OUTPUT rows before writing the fresh schedule.
+    Returns the number of rows removed.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM MCH_SCHEDULE_OUTPUT")
+        removed = cursor.rowcount
+        conn.commit()
+    return removed
+
+
+def write_schedule_output(schedule_rows: list[dict]) -> int:
+    """
+    Write Engine 1 (Model E) scheduling results to MCH_SCHEDULE_OUTPUT.
 
     Args:
-        schedule_rows: list of dicts with keys (PRODUCTION_ORDER, OPERATION_NO, TASK,
-                       WORK_CENTER, SHIFT, SCHEDULED_DATE, BALANCE_QTY, START_OFFSET_MIN,
-                       END_OFFSET_MIN, BATCH_KEY, IS_SAFETY_STOCK, generated_at).
-        run_id: unique identifier for this scheduling run (e.g., UUID).
+        schedule_rows: list of dicts with the exact Oracle column names as
+            keys (RUN_ID, PRODUCTION_ORDER, OPERATION_NO, LINE_NO, TASK,
+            WORK_CENTER, SHIFT, SCHEDULED_DATE, BALANCE_QTY, GENERATED_AT,
+            BATCH_KEY, IS_SAFETY_STOCK, FIXTURE_ID, LOCATOR_ID,
+            START_TIMESTAMP, END_TIMESTAMP, REMARK, ORDER_COMPLETION_DATE,
+            ORDER_COMPLETION_SHIFT) — exactly what
+            `dispatch_writer.to_oracle_rows` produces. Caller is responsible
+            for calling `delete_schedule_output()` first (no historical
+            retention) — this function only inserts.
 
     Returns: number of rows inserted.
     """
@@ -165,36 +200,19 @@ def write_schedule_output(schedule_rows: list[dict], run_id: str) -> int:
         cursor = conn.cursor()
         insert_sql = """
             INSERT INTO MCH_SCHEDULE_OUTPUT
-            (RUN_ID, PRODUCTION_ORDER, OPERATION_NO, TASK, WORK_CENTER, SHIFT,
-             SCHEDULED_DATE, BALANCE_QTY, START_OFFSET_MIN, END_OFFSET_MIN,
-             BATCH_KEY, IS_SAFETY_STOCK, GENERATED_AT)
-            VALUES (:run_id, :production_order, :operation_no, :task, :work_center,
-                    :shift, :scheduled_date, :balance_qty, :start_offset_min,
-                    :end_offset_min, :batch_key, :is_safety_stock, :generated_at)
+            (RUN_ID, PRODUCTION_ORDER, OPERATION_NO, LINE_NO, TASK, WORK_CENTER, SHIFT,
+             SCHEDULED_DATE, BALANCE_QTY, GENERATED_AT, BATCH_KEY, IS_SAFETY_STOCK,
+             FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK,
+             ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT)
+            VALUES (:RUN_ID, :PRODUCTION_ORDER, :OPERATION_NO, :LINE_NO, :TASK, :WORK_CENTER, :SHIFT,
+                    :SCHEDULED_DATE, :BALANCE_QTY, :GENERATED_AT, :BATCH_KEY, :IS_SAFETY_STOCK,
+                    :FIXTURE_ID, :LOCATOR_ID, :START_TIMESTAMP, :END_TIMESTAMP, :REMARK,
+                    :ORDER_COMPLETION_DATE, :ORDER_COMPLETION_SHIFT)
         """
-
-        rows_inserted = 0
-        for row in schedule_rows:
-            cursor.execute(insert_sql, {
-                "run_id": run_id,
-                "production_order": row["PRODUCTION_ORDER"],
-                "operation_no": row["OPERATION_NO"],
-                "task": row.get("TASK"),  # nullable for display
-                "work_center": row["WORK_CENTER"],
-                "shift": row["SHIFT"],
-                "scheduled_date": row["SCHEDULED_DATE"],
-                "balance_qty": row["BALANCE_QTY"],
-                "start_offset_min": row["START_OFFSET_MIN"],
-                "end_offset_min": row["END_OFFSET_MIN"],
-                "batch_key": row["BATCH_KEY"],
-                "is_safety_stock": row["IS_SAFETY_STOCK"],
-                "generated_at": row["generated_at"],
-            })
-            rows_inserted += 1
-
+        cursor.executemany(insert_sql, schedule_rows)
         conn.commit()
 
-    return rows_inserted
+    return len(schedule_rows)
 
 
 def write_sim_results(sim_rows: list[dict], sim_id: str) -> int:
