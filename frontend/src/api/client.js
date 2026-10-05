@@ -34,6 +34,18 @@ export const putConfig = (config) =>
 export const generateSchedule = (runDate) =>
   request(`/schedule/generate${runDate ? `?run_date=${runDate}` : ''}`, { method: 'POST' })
 export const getCurrentSchedule = () => request('/schedule/current')
+export const freezeSchedule = () => request('/schedule/freeze', { method: 'POST' })
+
+// ── Completed Materials ────────────────────────────────────────────────
+export const getCompletedMaterials = (start, end) =>
+  request(`/materials/completed?start=${start}&end=${end}`)
+
+// ── Run Comparison ──────────────────────────────────────────────────────
+export const getArchivedRuns = () => request('/schedule/archive/runs')
+export const compareRuns = (runA, runB) =>
+  request(`/schedule/compare/runs?run_a=${encodeURIComponent(runA)}&run_b=${encodeURIComponent(runB)}`)
+export const compareRunToActual = (runId) =>
+  request(`/schedule/compare/actual?run_id=${encodeURIComponent(runId)}`)
 
 // ── Engine 2: Priority Simulation ───────────────────────────────────────
 export const simulatePriority = (orders, timeLimitSeconds) =>

@@ -1,22 +1,33 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from 'recharts'
+import clsx from 'clsx'
 
 import PageHeader from '../components/PageHeader'
 import StatTile from '../components/StatTile'
 import GanttChart from '../components/GanttChart'
+import BatchBubbleChart from '../components/BatchBubbleChart'
+import ScheduleTable from '../components/ScheduleTable'
 import { LoadingPanel, EmptyPanel, ErrorPanel } from '../components/LoadingState'
-import { useToast } from '../hooks/useToast'
-import { generateSchedule, getCurrentSchedule } from '../api/client'
+import { getCurrentSchedule } from '../api/client'
 
-const SHIFT_WORKING_MINS = 480
+const FILTERS = [
+  { key: 'all', label: 'All' },
+  { key: 'scheduled', label: 'Scheduled' },
+  { key: 'no_fixture', label: 'No-fixture caveat' },
+  { key: 'excluded', label: 'Excluded' },
+  { key: 'safety_stock', label: 'Safety stock' },
+]
+
+function classify(a) {
+  if (!a.machine_name) return 'excluded'
+  if (a.remark) return 'no_fixture'
+  return 'scheduled'
+}
 
 export default function ScheduleView() {
   const [assignments, setAssignments] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [generating, setGenerating] = useState(false)
   const [error, setError] = useState(null)
-  const [lastResult, setLastResult] = useState(null)
-  const toast = useToast()
+  const [filter, setFilter] = useState('all')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -35,169 +46,89 @@ export default function ScheduleView() {
     load()
   }, [load])
 
-  const handleGenerate = async () => {
-    setGenerating(true)
-    try {
-      const result = await generateSchedule()
-      setLastResult(result)
-      if (result.status === 'OPTIMAL' || result.status === 'FEASIBLE') {
-        toast.success(
-          `Schedule generated (${result.status}) — ${result.assignments?.length ?? 0} assignments`,
-        )
-        await load()
-      } else {
-        toast.error(`Solver returned ${result.status}. No schedule written.`)
-      }
-    } catch (e) {
-      toast.error(`Generation failed: ${e.message}`)
-    } finally {
-      setGenerating(false)
-    }
-  }
-
-  // ── Derived KPIs ──────────────────────────────────────────────────────
   const stats = useMemo(() => {
-    if (!assignments || assignments.length === 0) return null
-    const orders = new Set(assignments.map((a) => a.production_order))
-    const machines = new Set(assignments.map((a) => a.machine_name))
-    const dates = new Set(assignments.map((a) => a.scheduled_date))
-
-    // Average utilization per machine (consumed minutes / (slots × 480))
-    const byMachineSlot = {}
+    if (!assignments) return null
+    let scheduled = 0, noFixture = 0, excluded = 0, safetyStock = 0
     for (const a of assignments) {
-      const slotKey = `${a.machine_name}|${a.scheduled_date}|${a.shift}`
-      byMachineSlot[slotKey] = (byMachineSlot[slotKey] || 0) + (a.end_offset_min - a.start_offset_min)
+      const c = classify(a)
+      if (c === 'scheduled') scheduled++
+      else if (c === 'no_fixture') noFixture++
+      else excluded++
+      if (a.is_safety_stock) safetyStock++
     }
-    const utilValues = Object.values(byMachineSlot).map((m) => Math.min(100, (m / SHIFT_WORKING_MINS) * 100))
-    const avgUtil = utilValues.length
-      ? Math.round(utilValues.reduce((s, v) => s + v, 0) / utilValues.length)
-      : 0
-
-    // Per-machine utilization for bar chart
-    const machineConsumed = {}
-    const machineSlotCount = {}
-    for (const a of assignments) {
-      machineConsumed[a.machine_name] =
-        (machineConsumed[a.machine_name] || 0) + (a.end_offset_min - a.start_offset_min)
-    }
-    for (const key of Object.keys(byMachineSlot)) {
-      const [m] = key.split('|')
-      machineSlotCount[m] = (machineSlotCount[m] || 0) + 1
-    }
-    const machineUtilization = Array.from(machines)
-      .map((m) => ({
-        machine: m,
-        utilization: machineSlotCount[m]
-          ? Math.round(Math.min(100, (machineConsumed[m] / (machineSlotCount[m] * SHIFT_WORKING_MINS)) * 100))
-          : 0,
-      }))
-      .sort((a, b) => b.utilization - a.utilization)
-
-    return {
-      orderCount: orders.size,
-      machineCount: machines.size,
-      dateCount: dates.size,
-      avgUtil,
-      machineUtilization,
-    }
+    return { scheduled, noFixture, excluded, safetyStock, total: assignments.length }
   }, [assignments])
+
+  const filtered = useMemo(() => {
+    if (!assignments) return []
+    if (filter === 'all') return assignments
+    if (filter === 'safety_stock') return assignments.filter((a) => a.is_safety_stock)
+    return assignments.filter((a) => classify(a) === filter)
+  }, [assignments, filter])
 
   return (
     <div>
       <PageHeader
-        title="Schedule"
-        subtitle="Shift-level Gantt across all machines · generated by Engine 1 (CP-SAT)"
-        actions={
-          <button className="btn-primary" onClick={handleGenerate} disabled={generating}>
-            {generating ? 'Generating…' : 'Generate Schedule'}
-          </button>
-        }
+        title="Pending Load Queue"
+        subtitle="Visual representation of MCH_SCHEDULE_OUTPUT · Engine 1 (Model E)"
       />
 
       <div className="p-6 space-y-6">
-        {lastResult && (
-          <div className="card px-4 py-3 flex items-center gap-4 text-sm">
-            <span className="font-medium text-slate-700">Last run:</span>
-            <StatusPill status={lastResult.status} />
-            {lastResult.objective_value != null && (
-              <span className="text-slate-500">
-                Objective: <span className="font-mono">{lastResult.objective_value.toFixed(1)}</span>
-              </span>
-            )}
-            <span className="text-slate-400 text-xs">Run ID: {lastResult.run_id}</span>
-          </div>
-        )}
-
         {loading && <LoadingPanel label="Loading current schedule…" />}
         {!loading && error && <ErrorPanel message={error} onRetry={load} />}
 
         {!loading && !error && (!assignments || assignments.length === 0) && (
           <EmptyPanel
             title="No schedule generated yet"
-            hint="Click 'Generate Schedule' to run Engine 1 against the current WIP orders and machine capacity."
+            hint="Go to Overview and click 'Generate Schedule' to run Engine 1 against current WIP orders."
           />
         )}
 
         {!loading && !error && assignments && assignments.length > 0 && stats && (
           <>
-            {/* KPI row — clear at a glance */}
+            {/* KPI row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatTile label="Orders scheduled" value={stats.orderCount} tone="brand" />
-              <StatTile label="Machines in use" value={stats.machineCount} />
-              <StatTile label="Horizon (days)" value={stats.dateCount} />
-              <StatTile
-                label="Avg. shift utilization"
-                value={`${stats.avgUtil}%`}
-                tone={stats.avgUtil >= 85 ? 'breach' : stats.avgUtil >= 50 ? 'brand' : 'neutral'}
-              />
+              <StatTile label="Scheduled" value={stats.scheduled} tone="brand" />
+              <StatTile label="No-fixture caveat" value={stats.noFixture} tone="atrisk" />
+              <StatTile label="Excluded" value={stats.excluded} tone="breach" />
+              <StatTile label="Safety stock" value={stats.safetyStock} tone="sky" />
             </div>
 
-            {/* Utilization bar chart */}
+            {/* Bubble chart */}
             <div className="card p-4">
-              <h3 className="text-sm font-semibold text-slate-700 mb-3">Utilization by Machine</h3>
-              <ResponsiveContainer width="100%" height={Math.max(160, stats.machineUtilization.length * 32)}>
-                <BarChart data={stats.machineUtilization} layout="vertical" margin={{ left: 8, right: 24 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 11 }} />
-                  <YAxis type="category" dataKey="machine" width={90} tick={{ fontSize: 11 }} />
-                  <Tooltip formatter={(v) => [`${v}%`, 'Utilization']} />
-                  <Bar dataKey="utilization" radius={[0, 4, 4, 0]} barSize={16}>
-                    {stats.machineUtilization.map((entry, i) => (
-                      <Cell
-                        key={i}
-                        fill={
-                          entry.utilization >= 85
-                            ? '#dc2626'
-                            : entry.utilization >= 50
-                              ? '#2563eb'
-                              : '#94a3b8'
-                        }
-                      />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <h3 className="section-title mb-0">Orders by Valve Size × Class</h3>
+              <BatchBubbleChart assignments={assignments} />
             </div>
 
             {/* Gantt chart */}
             <div className="card p-4">
-              <h3 className="text-sm font-semibold text-slate-700 mb-3">Gantt — Machine × Shift</h3>
+              <h3 className="section-title mb-0">Gantt — Machine Timeline</h3>
               <GanttChart assignments={assignments} />
+            </div>
+
+            {/* Filter chips + table */}
+            <div className="card p-4">
+              <div className="flex items-center gap-2 mb-4">
+                {FILTERS.map((f) => (
+                  <button
+                    key={f.key}
+                    onClick={() => setFilter(f.key)}
+                    className={clsx(
+                      'px-3 py-1.5 rounded-full text-xs font-medium transition-colors',
+                      filter === f.key
+                        ? 'bg-accent text-ink-950'
+                        : 'bg-ink-700 text-text-muted hover:bg-ink-600',
+                    )}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              <ScheduleTable rows={filtered} />
             </div>
           </>
         )}
       </div>
     </div>
   )
-}
-
-function StatusPill({ status }) {
-  const styles = {
-    OPTIMAL: 'bg-risk-safeBg text-risk-safe',
-    FEASIBLE: 'bg-brand-100 text-brand-700',
-    INFEASIBLE: 'bg-risk-breachBg text-risk-breach',
-    MODEL_INVALID: 'bg-risk-breachBg text-risk-breach',
-    UNKNOWN: 'bg-slate-100 text-slate-500',
-  }
-  return <span className={`badge ${styles[status] || styles.UNKNOWN}`}>{status}</span>
 }

@@ -37,13 +37,13 @@ export function ToastProvider({ children }) {
             key={t.id}
             className={clsx(
               'card px-4 py-3 text-sm shadow-popover flex items-start gap-2 animate-[fadeIn_0.15s_ease-out]',
-              t.tone === 'success' && 'border-l-4 border-l-risk-safe',
-              t.tone === 'error' && 'border-l-4 border-l-risk-breach',
-              t.tone === 'info' && 'border-l-4 border-l-brand-500',
+              t.tone === 'success' && 'border-l-4 border-l-status-safe',
+              t.tone === 'error' && 'border-l-4 border-l-status-risk',
+              t.tone === 'info' && 'border-l-4 border-l-sky',
             )}
           >
-            <span className="flex-1 text-slate-700">{t.message}</span>
-            <button className="text-slate-400 hover:text-slate-600" onClick={() => dismiss(t.id)}>
+            <span className="flex-1 text-text">{t.message}</span>
+            <button className="text-text-faint hover:text-text" onClick={() => dismiss(t.id)}>
               ×
             </button>
           </div>

@@ -15,11 +15,11 @@ function isValidDate(dateStr) {
 }
 
 function urgencyTone(cdd) {
-  if (!isValidDate(cdd)) return { label: 'Safety stock', tone: 'text-slate-400', ring: 'ring-slate-200' }
+  if (!isValidDate(cdd)) return { label: 'Safety stock', tone: 'text-text-faint', ring: 'ring-ink-600' }
   const days = differenceInCalendarDays(parseISO(String(cdd)), new Date())
-  if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: 'text-risk-breach', ring: 'ring-red-200' }
-  if (days <= 7) return { label: `${days}d left`, tone: 'text-risk-atrisk', ring: 'ring-amber-200' }
-  return { label: `${days}d left`, tone: 'text-risk-safe', ring: 'ring-green-200' }
+  if (days < 0) return { label: `${Math.abs(days)}d overdue`, tone: 'text-status-risk', ring: 'ring-red-200' }
+  if (days <= 7) return { label: `${days}d left`, tone: 'text-status-warn', ring: 'ring-amber-200' }
+  return { label: `${days}d left`, tone: 'text-status-safe', ring: 'ring-green-200' }
 }
 
 /** Draggable WIP order card. Drop onto the "elevate tray" in OrderBoard to queue for Engine 2 simulation. */
@@ -48,38 +48,38 @@ export default function OrderCard({ order, selected, onToggle }) {
       className={clsx(
         'card p-3 cursor-grab active:cursor-grabbing select-none transition-all',
         'hover:shadow-popover hover:-translate-y-0.5',
-        selected && 'ring-2 ring-brand-500 border-brand-300',
+        selected && 'ring-2 ring-accent border-accent',
         isDragging && 'opacity-40',
       )}
       title="Drag to the Elevate tray, or click to select for simulation"
     >
       <div className="flex items-start justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-slate-800">{order.production_order}</p>
-          <p className="text-xs text-slate-500">{order.item}</p>
+          <p className="text-sm font-semibold text-text">{order.production_order}</p>
+          <p className="text-xs text-text-muted">{order.item}</p>
         </div>
         <span className={clsx('badge ring-1 ring-inset text-[11px]', urgency.tone, urgency.ring)}>
           {urgency.label}
         </span>
       </div>
 
-      <div className="mt-2.5 flex items-center justify-between text-[11px] text-slate-500">
+      <div className="mt-2.5 flex items-center justify-between text-[11px] text-text-muted">
         <span>CDD {isValidDate(order.cdd) ? format(parseISO(String(order.cdd)), 'MMM d, yyyy') : '—'}</span>
         <span>{order.operations} op{order.operations !== 1 ? 's' : ''} left</span>
       </div>
 
       <div className="mt-2 flex items-center gap-2">
-        <div className="flex-1 h-1.5 rounded-full bg-slate-100 overflow-hidden">
-          <div className="h-full rounded-full bg-brand-500" style={{ width: `${progressPct}%` }} />
+        <div className="flex-1 h-1.5 rounded-full bg-ink-700 overflow-hidden">
+          <div className="h-full rounded-full bg-accent-soft0" style={{ width: `${progressPct}%` }} />
         </div>
-        <span className="text-[10px] text-slate-400 tabular-nums w-20 text-right">
+        <span className="text-[10px] text-text-faint tabular-nums w-20 text-right">
           {order.balance_qty_total} pcs left
         </span>
       </div>
 
       {selected && (
-        <div className="mt-2 flex items-center gap-1 text-[11px] font-medium text-brand-600">
-          <span className="h-1.5 w-1.5 rounded-full bg-brand-600" /> Queued for elevation
+        <div className="mt-2 flex items-center gap-1 text-[11px] font-medium text-accent">
+          <span className="h-1.5 w-1.5 rounded-full bg-accent" /> Queued for elevation
         </div>
       )}
     </div>

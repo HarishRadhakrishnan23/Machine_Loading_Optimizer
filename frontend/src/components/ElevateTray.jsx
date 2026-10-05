@@ -15,16 +15,16 @@ export default function ElevateTray({ queued, onAdd, onRemove, onSimulate, simul
       ref={drop}
       className={clsx(
         'card p-4 border-2 border-dashed transition-colors sticky top-4',
-        isOver ? 'border-brand-500 bg-brand-50' : 'border-slate-200',
+        isOver ? 'border-accent bg-accent-soft' : 'border-ink-600',
       )}
     >
-      <h3 className="text-sm font-semibold text-slate-800 mb-1">Elevate & Simulate</h3>
-      <p className="text-xs text-slate-500 mb-3">
+      <h3 className="text-sm font-semibold text-text mb-1">Elevate & Simulate</h3>
+      <p className="text-xs text-text-muted mb-3">
         Drag order cards here (or click them) to queue a priority-elevation simulation with Engine 2.
       </p>
 
       {queued.length === 0 ? (
-        <div className="rounded-lg bg-slate-50 border border-slate-100 py-6 text-center text-xs text-slate-400">
+        <div className="rounded-lg bg-ink-900 border border-ink-700 py-6 text-center text-xs text-text-faint">
           Drop orders here
         </div>
       ) : (
@@ -32,11 +32,11 @@ export default function ElevateTray({ queued, onAdd, onRemove, onSimulate, simul
           {queued.map((id) => (
             <li
               key={id}
-              className="flex items-center justify-between rounded-lg bg-brand-50 px-2.5 py-1.5 text-sm text-brand-800"
+              className="flex items-center justify-between rounded-lg bg-accent-soft px-2.5 py-1.5 text-sm text-accent"
             >
               <span className="font-medium">{id}</span>
               <button
-                className="text-brand-400 hover:text-brand-700"
+                className="text-accent hover:text-accent"
                 onClick={() => onRemove(id)}
                 aria-label={`Remove ${id}`}
               >

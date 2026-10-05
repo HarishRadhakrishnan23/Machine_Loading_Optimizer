@@ -1,11 +1,12 @@
 """
 main.py — FastAPI Backend for TOV Machine Loading Optimizer.
 
-Exposes 9 REST endpoints orchestrating Engines 1 & 2 and ERP data access.
+Exposes 10 REST endpoints orchestrating Engines 1 & 2 and ERP data access.
 
 Endpoints:
   POST   /schedule/generate          Engine 1: generate schedule
   GET    /schedule/current           Read latest MCH_SCHEDULE_OUTPUT
+  POST   /schedule/freeze            Archive current MCH_SCHEDULE_OUTPUT into MCH_SCHEDULE_OUTPUT_ARCHIVE
   POST   /priority/simulate          Engine 2: simulate elevation
   GET    /orders/wip                 Read active WIP orders
   GET    /machines/capacity          Read resolved capacity for horizon
@@ -20,11 +21,16 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from db import (
+    archive_schedule_output,
+    read_archived_run_completions,
+    read_archived_runs,
+    read_completed_materials,
     read_wip_orders,
     read_machine_master,
     read_machine_daily,
@@ -34,8 +40,16 @@ from db import (
     read_holiday_calendar,
 )
 from models import (
+    ActualCompareResponse,
+    ActualOrderStatus,
+    ArchivedRunsResponse,
+    ArchivedRunSummary,
+    CompletedMaterialsResponse,
     Config,
+    FreezeScheduleResponse,
     RiskReport,
+    RunCompareOrderDiff,
+    RunCompareResponse,
     ScheduleGenerateResponse,
     SimulationRequest,
 )
@@ -210,12 +224,153 @@ def get_current_schedule():
                 "remark": row["REMARK"] if pd.notna(row["REMARK"]) else None,
                 "order_completion_date": _d(row["ORDER_COMPLETION_DATE"]),
                 "order_completion_shift": row["ORDER_COMPLETION_SHIFT"] if pd.notna(row["ORDER_COMPLETION_SHIFT"]) else None,
+                "generated_at": _ts(row["GENERATED_AT"]),
             }
             for _, row in df.iterrows()
         ]
         return {"assignments": assignments, "count": len(assignments)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read schedule: {e}")
+
+
+@app.get("/materials/completed", tags=["Engine 1"], response_model=CompletedMaterialsResponse)
+def get_completed_materials(start: date = Query(...), end: date = Query(...)):
+    """
+    Completed Materials page — "how many materials completed between these
+    two dates" (your manager's ask). Counted from LIVE MCH_SCHEDULE_OUTPUT's
+    ORDER_COMPLETION_DATE only (never MCH_SCHEDULE_OUTPUT_ARCHIVE).
+    """
+    try:
+        order_count, total_quantity = read_completed_materials(start, end)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to compute completed materials: {e}")
+    return CompletedMaterialsResponse(start=start, end=end, order_count=order_count, total_quantity=total_quantity)
+
+
+@app.get("/schedule/archive/runs", tags=["Engine 1"], response_model=ArchivedRunsResponse)
+def get_archived_runs():
+    """Run Comparison page's run picker — every RUN_ID ever frozen via /schedule/freeze, newest first."""
+    try:
+        df = read_archived_runs()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list archived runs: {e}")
+    runs = [
+        ArchivedRunSummary(run_id=row["RUN_ID"], generated_at=row["GENERATED_AT"], row_count=int(row["ROW_COUNT"]))
+        for _, row in df.iterrows()
+    ]
+    return ArchivedRunsResponse(runs=runs)
+
+
+@app.get("/schedule/compare/runs", tags=["Engine 1"], response_model=RunCompareResponse)
+def compare_archived_runs(run_a: str = Query(...), run_b: str = Query(...)):
+    """
+    Run Comparison page — "plan vs. plan": diffs two frozen
+    MCH_SCHEDULE_OUTPUT_ARCHIVE snapshots by PRODUCTION_ORDER's
+    ORDER_COMPLETION_DATE (e.g. the Oct 1 run vs. the Oct 3 run, after a few
+    new orders landed in MCH_WIP in between).
+    """
+    try:
+        df_a = read_archived_run_completions(run_a)
+        df_b = read_archived_run_completions(run_b)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read archived runs: {e}")
+
+    a_by_order = {row["PRODUCTION_ORDER"]: row["ORDER_COMPLETION_DATE"] for _, row in df_a.iterrows()}
+    b_by_order = {row["PRODUCTION_ORDER"]: row["ORDER_COMPLETION_DATE"] for _, row in df_b.iterrows()}
+
+    orders_a, orders_b = set(a_by_order), set(b_by_order)
+    removed = sorted(orders_a - orders_b)
+    added = sorted(orders_b - orders_a)
+
+    changed = []
+    unchanged_count = 0
+    for order_id in sorted(orders_a & orders_b):
+        old_date, new_date = a_by_order[order_id], b_by_order[order_id]
+        old_d = old_date.date() if pd.notna(old_date) else None
+        new_d = new_date.date() if pd.notna(new_date) else None
+        if old_d == new_d:
+            unchanged_count += 1
+        else:
+            delta = (new_d - old_d).days if (old_d is not None and new_d is not None) else None
+            changed.append(RunCompareOrderDiff(
+                production_order=order_id, old_completion_date=old_d, new_completion_date=new_d, delta_days=delta,
+            ))
+
+    return RunCompareResponse(
+        run_a=run_a, run_b=run_b, added=added, removed=removed, changed=changed, unchanged_count=unchanged_count,
+    )
+
+
+@app.get("/schedule/compare/actual", tags=["Engine 1"], response_model=ActualCompareResponse)
+def compare_archived_run_to_actual(run_id: str = Query(...)):
+    """
+    Run Comparison page — "plan vs. actual": an archived RUN_ID's planned
+    completions against what TODAY's live MCH_WIP actually shows. An order
+    from the archived run no longer present in live MCH_WIP is treated as
+    completed; one still present reports its current OPERATION/balance as
+    real-world progress (CLAUDE.md Run Comparison note — your own call on
+    how to read Oct 1's plan against Oct 30's reality).
+    """
+    try:
+        planned_df = read_archived_run_completions(run_id)
+        wip_df = read_wip_orders()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to compare run to actual: {e}")
+
+    planned_orders = {row["PRODUCTION_ORDER"]: row["ORDER_COMPLETION_DATE"] for _, row in planned_df.iterrows()}
+    live_orders = set(wip_df["PRODUCTION_ORDER"]) if not wip_df.empty else set()
+
+    orders = []
+    completed_count = in_progress_count = 0
+    for order_id, planned_date in planned_orders.items():
+        planned_d = planned_date.date() if pd.notna(planned_date) else None
+        if order_id not in live_orders:
+            completed_count += 1
+            orders.append(ActualOrderStatus(
+                production_order=order_id, planned_completion_date=planned_d, status="completed",
+            ))
+        else:
+            in_progress_count += 1
+            order_rows = wip_df[wip_df["PRODUCTION_ORDER"] == order_id].sort_values("OPERATION")
+            balance = order_rows["QUANTITY_ORDERED"] - order_rows["QUANTITY_COMPLETED"] - order_rows["QUANTITY_REJECTED"].fillna(0)
+            pending = order_rows[balance > 0]
+            current_row = pending.iloc[0] if not pending.empty else order_rows.iloc[-1]
+            current_balance = balance.loc[current_row.name]
+            orders.append(ActualOrderStatus(
+                production_order=order_id, planned_completion_date=planned_d, status="in_progress",
+                current_operation_no=float(current_row["OPERATION"]),
+                current_task=current_row["TASK"],
+                current_balance_qty=int(current_balance),
+            ))
+
+    return ActualCompareResponse(
+        run_id=run_id, as_of=date.today(), completed_count=completed_count,
+        in_progress_count=in_progress_count, orders=orders,
+    )
+
+
+@app.post("/schedule/freeze", tags=["Engine 1"], response_model=FreezeScheduleResponse)
+def freeze_schedule():
+    """
+    "Freeze schedule" — copies whatever is currently in MCH_SCHEDULE_OUTPUT,
+    as-is, into MCH_SCHEDULE_OUTPUT_ARCHIVE for historical backup and
+    representation. Triggered by the frontend's "Freeze schedule" button.
+
+    Does NOT touch MCH_SCHEDULE_OUTPUT itself (read-only copy) and does NOT
+    re-run Engine 1 — it snapshots the most recent /schedule/generate output.
+    The archive is append-only: nothing already archived is ever deleted by
+    this application; re-freezing the same RUN_ID just replaces that RUN_ID's
+    own archived rows (idempotent), never anyone else's.
+
+    Returns:
+      - run_id: the RUN_ID that was archived (None if MCH_SCHEDULE_OUTPUT was empty)
+      - rows_archived: number of rows copied
+    """
+    try:
+        run_id, rows_archived = archive_schedule_output()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Freeze schedule failed: {e}")
+    return FreezeScheduleResponse(run_id=run_id, rows_archived=rows_archived)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

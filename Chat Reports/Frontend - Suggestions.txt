@@ -1,0 +1,15 @@
+Questions I need answered before planning further:
+
+1. "Completed materials from date X to date Y" — MCH_WIP has no completion-date column in the schema (only QUANTITY_COMPLETED, a running total, no timestamp). What should "completed between two dates" mean here — e.g., based on ORDER_COMPLETION_DATE from the latest MCH_SCHEDULE_OUTPUT/archive snapshot (i.e., "this many orders are scheduled to complete in this window"), or do you have another real completion-date source I'm not aware of?
+Answer: It should be based on ORDER_COMPLETION_DATE from the latest MCH_SCHEDULE_OUTPUT/archive snapshot (i.e., "this many orders are scheduled to complete in this window"). From MCH_SCHEDULE_OUTPUT basically (Do not take any data from MCH_SCHEDULE_OUTPUT_ARCHIVE., it simply for storage purposes only.
+
+2. RUN_ID comparison, "planned vs. actual" — comparing two archived plans (e.g. Oct 1 vs Oct 3) is straightforward with MCH_SCHEDULE_OUTPUT_ARCHIVE (diff ORDER_COMPLETION_DATE/SCHEDULED_DATE per order). But "planned vs. actually completed" (Oct 1 plan vs. Oct 30 reality) needs a ground-truth "what really finished when" source — same gap as Q1. Is that also meant to come from QUANTITY_COMPLETED deltas in MCH_WIP over time, snapshotted somehow? Right now nothing snapshots MCH_WIP itself.
+Answer: See the MCH_WIP on Oct 30 will give the required "actually completed" information nah, whatever the orders that are exsiting on Oct 1 but not not in Oct 30 is completed., and if there is a pending qty or what operation is going for a particular order., every detail of actual is there on Oct 30 right. We can use that to compare na 
+
+3. New Order Forecast / ML Metrics pages — these existed because the prototype used sklearn regression. Model E has no model to report accuracy on, and no "predict a hypothetical order's lead time" capability as designed. Do you want to: (a) drop both entirely, (b) keep "New Order" but reframe it as "run Engine 1 with a hypothetical order injected" (real dispatch simulation, not ML — more work), or (c) something else?
+Answer:  (a) drop both entirely
+
+4. Colour palette — the prototype's dark navy/orange/sky-blue scheme (Emerson orange accent) reads well and I'd propose keeping it as our "strict colour pattern" base for Samantha, just formalized into a proper design-token set (CSS variables) rather than inline hex everywhere like the Dash version. Any objection, or did you want something different for the new identity?
+Answer:  No objections., please go ahead
+
+But I am not convinced with Overview., I dont want it to be a Overview dashboard., rather I want it to be the face of the Project and I want it to be visually dynamic and elegant to look at., add suggest some features, transitions or text formatters (But elegant., and used by my office so be professional too. And I dont want these scheduled vs. excluded breakdown (803 scheduled / 977 no-fixture / 3225 excluded currently), CDD attainment % (your real 28.5% stat), a REMARK-category breakdown anol here and Keep in mind to provide Generate schedule, Freeze Schdule buttons and also a time window while clicking them to show the percentage of time elapsed.

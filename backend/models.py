@@ -241,6 +241,81 @@ class SchedulerResult(BaseModel):
 ELEVATED_URGENCY_WEIGHT: float = 999_999.0
 
 
+class FreezeScheduleResponse(BaseModel):
+    """What POST /schedule/freeze returns — a copy-forward of the current
+    MCH_SCHEDULE_OUTPUT into MCH_SCHEDULE_OUTPUT_ARCHIVE (append-only history,
+    never touched by /schedule/generate's delete-then-insert)."""
+
+    run_id: Optional[str]
+    rows_archived: int
+
+
+class CompletedMaterialsResponse(BaseModel):
+    """GET /materials/completed?start=&end= — your manager's ask: how many
+    materials complete in a date window, counted from live MCH_SCHEDULE_OUTPUT's
+    ORDER_COMPLETION_DATE (never the archive)."""
+
+    start: date
+    end: date
+    order_count: int
+    total_quantity: int
+
+
+class ArchivedRunSummary(BaseModel):
+    run_id: str
+    generated_at: datetime
+    row_count: int
+
+
+class ArchivedRunsResponse(BaseModel):
+    runs: list[ArchivedRunSummary]
+
+
+class RunCompareOrderDiff(BaseModel):
+    """One changed order's completion-date delta between two archived runs."""
+
+    production_order: str
+    old_completion_date: Optional[date]
+    new_completion_date: Optional[date]
+    delta_days: Optional[int]
+
+
+class RunCompareResponse(BaseModel):
+    """GET /schedule/compare/runs?run_a=&run_b= — per-order diff between two
+    frozen MCH_SCHEDULE_OUTPUT_ARCHIVE snapshots."""
+
+    run_a: str
+    run_b: str
+    added: list[str]  # present in run_b only
+    removed: list[str]  # present in run_a only (e.g. no longer in WIP by run_b's time)
+    changed: list[RunCompareOrderDiff]  # present in both, completion date differs
+    unchanged_count: int
+
+
+class ActualOrderStatus(BaseModel):
+    """One archived-run order's real-world outcome as of today's live MCH_WIP."""
+
+    production_order: str
+    planned_completion_date: Optional[date]
+    status: str  # "completed" | "in_progress"
+    current_operation_no: Optional[float] = None
+    current_task: Optional[str] = None
+    current_balance_qty: Optional[int] = None
+
+
+class ActualCompareResponse(BaseModel):
+    """GET /schedule/compare/actual?run_id= — an archived plan vs. what live
+    MCH_WIP shows today. An order from the archived run absent from live WIP
+    is treated as completed (CLAUDE.md Run Comparison note); one still present
+    reports its current operation/balance as real-world progress."""
+
+    run_id: str
+    as_of: date
+    completed_count: int
+    in_progress_count: int
+    orders: list[ActualOrderStatus]
+
+
 class SimulationRequest(BaseModel):
     """Payload for POST /priority/simulate — the order(s) the planner wants elevated."""
 

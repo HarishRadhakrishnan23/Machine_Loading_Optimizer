@@ -70,7 +70,7 @@ export default function ImpactAnalyser() {
             <StatTile label="Breach" value={report.breach_count} tone="breach" />
           </div>
           <div className="card p-4">
-            <h3 className="text-sm font-semibold text-slate-700 mb-1">Risk Distribution</h3>
+            <h3 className="text-sm font-semibold text-text mb-1">Risk Distribution</h3>
             <ResponsiveContainer width="100%" height={160}>
               <PieChart>
                 <Pie
@@ -95,23 +95,23 @@ export default function ImpactAnalyser() {
         {/* Top impacted highlight strip */}
         {report.top_impacted.length > 0 && (
           <div className="card p-4">
-            <h3 className="text-sm font-semibold text-slate-700 mb-3">Top {report.top_impacted.length} Most Impacted</h3>
+            <h3 className="text-sm font-semibold text-text mb-3">Top {report.top_impacted.length} Most Impacted</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
               {report.top_impacted.map((r) => (
-                <div key={r.order} className="rounded-lg border border-slate-200 p-3">
+                <div key={r.order} className="rounded-lg border border-ink-600 p-3">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-semibold text-sm text-slate-800">{r.order}</span>
+                    <span className="font-semibold text-sm text-text">{r.order}</span>
                     <RiskBadge flag={r.risk_flag} size="sm" />
                   </div>
                   <p
                     className={clsx(
                       'text-lg font-bold tabular-nums',
-                      (r.slip_days ?? 0) > 0 ? 'text-risk-breach' : 'text-risk-safe',
+                      (r.slip_days ?? 0) > 0 ? 'text-status-risk' : 'text-status-safe',
                     )}
                   >
                     {r.slip_days != null ? `${r.slip_days > 0 ? '+' : ''}${r.slip_days}d` : 'N/A'}
                   </p>
-                  <p className="text-[11px] text-slate-400">slip vs. baseline</p>
+                  <p className="text-[11px] text-text-faint">slip vs. baseline</p>
                 </div>
               ))}
             </div>
@@ -121,7 +121,7 @@ export default function ImpactAnalyser() {
         {/* Full detail table */}
         <div className="card p-4">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-slate-700">All Impacted Orders</h3>
+            <h3 className="text-sm font-semibold text-text">All Impacted Orders</h3>
             <div className="flex items-center gap-2">
               {FILTERS.map((f) => (
                 <button
@@ -129,7 +129,7 @@ export default function ImpactAnalyser() {
                   onClick={() => setFilter(f)}
                   className={clsx(
                     'text-xs px-2.5 py-1 rounded-full font-medium transition-colors',
-                    filter === f ? 'bg-brand-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
+                    filter === f ? 'bg-accent text-ink-950' : 'bg-ink-700 text-text-muted hover:bg-ink-600',
                   )}
                 >
                   {f === 'ALL' ? 'All' : f.replace('_', ' ')}
@@ -144,7 +144,7 @@ export default function ImpactAnalyser() {
             <div className="overflow-x-auto thin-scroll">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-xs text-slate-400 uppercase tracking-wide border-b border-slate-200">
+                  <tr className="text-left text-xs text-text-faint uppercase tracking-wide border-b border-ink-600">
                     <th className="py-2 pr-4">Order</th>
                     <th className="py-2 pr-4">Old Completion</th>
                     <th className="py-2 pr-4">New Completion</th>
@@ -157,20 +157,20 @@ export default function ImpactAnalyser() {
                     <th className="py-2 pr-4">Risk</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className="divide-y divide-ink-700">
                   {rows.map((r) => (
-                    <tr key={r.order} className="hover:bg-slate-50">
-                      <td className="py-2 pr-4 font-medium text-slate-800">{r.order}</td>
-                      <td className="py-2 pr-4 text-slate-500">{r.old_completion_date || '—'}</td>
-                      <td className="py-2 pr-4 text-slate-500">{r.new_completion_date || '—'}</td>
+                    <tr key={r.order} className="hover:bg-ink-900">
+                      <td className="py-2 pr-4 font-medium text-text">{r.order}</td>
+                      <td className="py-2 pr-4 text-text-muted">{r.old_completion_date || '—'}</td>
+                      <td className="py-2 pr-4 text-text-muted">{r.new_completion_date || '—'}</td>
                       <td
                         className={clsx(
                           'py-2 pr-4 font-semibold tabular-nums',
                           (r.slip_days ?? 0) > 0
-                            ? 'text-risk-breach'
+                            ? 'text-status-risk'
                             : (r.slip_days ?? 0) < 0
-                              ? 'text-risk-safe'
-                              : 'text-slate-500',
+                              ? 'text-status-safe'
+                              : 'text-text-muted',
                         )}
                       >
                         {r.slip_days != null ? `${r.slip_days > 0 ? '+' : ''}${r.slip_days}` : 'N/A'}

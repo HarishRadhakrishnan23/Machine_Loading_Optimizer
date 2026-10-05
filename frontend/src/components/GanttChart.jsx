@@ -1,15 +1,9 @@
 import { useMemo, useState } from 'react'
-import clsx from 'clsx'
 
-const SHIFTS = ['first', 'second', 'third']
-const SHIFT_LABEL = { first: '1st', second: '2nd', third: '3rd' }
-// Assumed wall-clock shift length for utilization % display only (matches CLAUDE.md WORKING_MINS=480 default).
-const SHIFT_WORKING_MINS = 480
-
-// Deterministic color per item/task code so the same job always gets the same color.
+// Deterministic color per task code so the same job always gets the same color.
 const PALETTE = [
-  '#2563eb', '#0891b2', '#7c3aed', '#c026d3', '#dc2626',
-  '#d97706', '#16a34a', '#4f46e5', '#0d9488', '#be185d',
+  '#f97316', '#38bdf8', '#a78bfa', '#f472b6', '#fb7185',
+  '#fbbf24', '#34d399', '#818cf8', '#2dd4bf', '#f87171',
 ]
 function colorFor(key) {
   let hash = 0
@@ -17,171 +11,137 @@ function colorFor(key) {
   return PALETTE[Math.abs(hash) % PALETTE.length]
 }
 
+const PX_PER_HOUR = 10
+const ROW_HEIGHT = 34
+
 /**
- * Gantt chart: rows = machines, columns = dates, each date split into 3 shift lanes.
- * Each lane shows stacked task bars sized by consumed minutes, plus a utilization %
- * strip so machine load is visible at a glance without opening anything.
+ * Gantt chart: rows = machines, x-axis = real continuous time (START_TIMESTAMP →
+ * END_TIMESTAMP, Model E §E.14) — NOT the retired shift-offset lattice. Bars are
+ * positioned/sized by actual elapsed minutes, can span shifts/days. Rows whose
+ * REMARK carries the "no fixture/locator match" caveat (still scheduled, §E.11)
+ * render normally but flag it in the tooltip; fully excluded rows (no machine,
+ * no timestamps) never reach this chart at all.
  */
 export default function GanttChart({ assignments }) {
   const [hovered, setHovered] = useState(null)
 
-  const { machines, dates, byMachineDateShift } = useMemo(() => {
-    const machineSet = new Set()
-    const dateSet = new Set()
-    const grouped = {}
+  const { machines, bars, rangeStart, totalHours, dayMarkers } = useMemo(() => {
+    const timed = assignments.filter((a) => a.start_timestamp && a.end_timestamp && a.machine_name)
+    if (timed.length === 0) return { machines: [], bars: [], rangeStart: null, totalHours: 0, dayMarkers: [] }
 
-    for (const a of assignments) {
-      machineSet.add(a.machine_name)
-      dateSet.add(a.scheduled_date)
-      const key = `${a.machine_name}|${a.scheduled_date}|${a.shift}`
-      if (!grouped[key]) grouped[key] = []
-      grouped[key].push(a)
-    }
+    const machineSet = new Set(timed.map((a) => a.machine_name))
+    const starts = timed.map((a) => new Date(a.start_timestamp).getTime())
+    const ends = timed.map((a) => new Date(a.end_timestamp).getTime())
+    const rangeStartMs = Math.min(...starts)
+    const rangeEndMs = Math.max(...ends)
+    const totalHrs = (rangeEndMs - rangeStartMs) / 3_600_000
 
-    // Fill the full contiguous date range (not just dates with activity) — otherwise
-    // an idle day silently disappears from the timeline instead of reading as "idle".
-    const sortedDates = Array.from(dateSet).sort()
-    let filledDates = sortedDates
-    if (sortedDates.length > 0) {
-      filledDates = []
-      const cursor = new Date(sortedDates[0])
-      const last = new Date(sortedDates[sortedDates.length - 1])
-      while (cursor <= last) {
-        filledDates.push(cursor.toISOString().slice(0, 10))
-        cursor.setDate(cursor.getDate() + 1)
+    const bars = timed.map((a) => {
+      const s = new Date(a.start_timestamp).getTime()
+      const e = new Date(a.end_timestamp).getTime()
+      return {
+        ...a,
+        leftHours: (s - rangeStartMs) / 3_600_000,
+        widthHours: Math.max(0.15, (e - s) / 3_600_000),
       }
+    })
+
+    // Day gridlines across the visible range.
+    const dayMarkers = []
+    const cursor = new Date(rangeStartMs)
+    cursor.setHours(0, 0, 0, 0)
+    while (cursor.getTime() < rangeEndMs) {
+      dayMarkers.push({
+        leftHours: (cursor.getTime() - rangeStartMs) / 3_600_000,
+        label: cursor.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      })
+      cursor.setDate(cursor.getDate() + 1)
     }
 
-    return {
-      machines: Array.from(machineSet).sort(),
-      dates: filledDates,
-      byMachineDateShift: grouped,
-    }
+    return { machines: Array.from(machineSet).sort(), bars, rangeStart: rangeStartMs, totalHours: totalHrs, dayMarkers }
   }, [assignments])
 
   if (machines.length === 0) {
-    return null
+    return <p className="text-sm text-text-faint py-8 text-center">No scheduled rows with real timestamps yet.</p>
   }
+
+  const trackWidth = Math.max(600, totalHours * PX_PER_HOUR)
 
   return (
     <div className="relative">
-      <div className="overflow-x-auto thin-scroll border border-slate-200 rounded-xl">
-        <table className="border-collapse text-xs w-full">
-          <thead>
-            <tr>
-              <th className="sticky left-0 z-10 bg-slate-50 border-b border-r border-slate-200 px-3 py-2 text-left font-semibold text-slate-600 min-w-[140px]">
-                Machine
-              </th>
-              {dates.map((d) => (
-                <th
-                  key={d}
-                  colSpan={3}
-                  className="border-b border-l border-slate-200 bg-slate-50 px-1 py-2 text-center font-semibold text-slate-600 min-w-[150px]"
+      <div className="overflow-x-auto thin-scroll border border-ink-600 rounded-xl bg-ink-900">
+        <div style={{ width: trackWidth + 140 }}>
+          {/* Day header */}
+          <div className="flex sticky top-0 z-10 bg-ink-900 border-b border-ink-600">
+            <div className="w-[140px] shrink-0" />
+            <div className="relative flex-1" style={{ height: 28 }}>
+              {dayMarkers.map((d, i) => (
+                <div
+                  key={i}
+                  className="absolute top-0 h-full border-l border-ink-600 text-[10px] text-text-faint font-mono pl-1.5 pt-1.5"
+                  style={{ left: d.leftHours * PX_PER_HOUR }}
                 >
-                  {new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                </th>
+                  {d.label}
+                </div>
               ))}
-            </tr>
-            <tr>
-              <th className="sticky left-0 z-10 bg-slate-50 border-b border-r border-slate-200"></th>
-              {dates.map((d) =>
-                SHIFTS.map((s) => (
-                  <th
-                    key={d + s}
-                    className="border-b border-l border-slate-100 bg-slate-50/70 px-1 py-1 text-center text-[10px] font-medium text-slate-400"
-                  >
-                    {SHIFT_LABEL[s]}
-                  </th>
-                )),
-              )}
-            </tr>
-          </thead>
-          <tbody>
-            {machines.map((m) => (
-              <tr key={m} className="group">
-                <td className="sticky left-0 z-10 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 px-3 py-2 font-medium text-slate-700 whitespace-nowrap">
-                  {m}
-                </td>
-                {dates.map((d) =>
-                  SHIFTS.map((s) => {
-                    const key = `${m}|${d}|${s}`
-                    const tasks = byMachineDateShift[key] || []
-                    const consumed = tasks.reduce(
-                      (sum, t) => sum + (t.end_offset_min - t.start_offset_min),
-                      0,
-                    )
-                    const utilization = Math.min(100, Math.round((consumed / SHIFT_WORKING_MINS) * 100))
+            </div>
+          </div>
+
+          {/* Machine rows */}
+          {machines.map((m) => (
+            <div key={m} className="flex border-b border-ink-700 group">
+              <div className="w-[140px] shrink-0 px-3 flex items-center text-xs font-medium text-text group-hover:bg-ink-800 sticky left-0 bg-ink-900 z-[5] truncate">
+                {m}
+              </div>
+              <div className="relative flex-1" style={{ height: ROW_HEIGHT }}>
+                {dayMarkers.map((d, i) => (
+                  <div
+                    key={i}
+                    className="absolute top-0 h-full border-l border-ink-700/60"
+                    style={{ left: d.leftHours * PX_PER_HOUR }}
+                  />
+                ))}
+                {bars
+                  .filter((b) => b.machine_name === m)
+                  .map((b, i) => {
+                    const cellKey = `${m}-${i}`
+                    const hasCaveat = Boolean(b.remark)
+                    const color = colorFor(b.task || b.production_order)
                     return (
-                      <td
-                        key={key}
-                        className="border-l border-b border-slate-100 p-1.5 align-top"
-                        style={{ minWidth: 90 }}
+                      <div
+                        key={cellKey}
+                        className="absolute top-1.5 rounded flex items-center text-[10px] font-semibold cursor-pointer transition-opacity"
+                        style={{
+                          left: b.leftHours * PX_PER_HOUR,
+                          width: Math.max(4, b.widthHours * PX_PER_HOUR),
+                          height: ROW_HEIGHT - 12,
+                          backgroundColor: color,
+                          opacity: hovered && hovered !== cellKey ? 0.35 : 0.92,
+                          borderBottom: hasCaveat ? '2px dashed #eab308' : 'none',
+                        }}
+                        onMouseEnter={() => setHovered(cellKey)}
+                        onMouseLeave={() => setHovered(null)}
+                        title={
+                          `${b.production_order} · Op ${b.operation_no} (${b.task || '—'})\n` +
+                          `${b.balance_qty} pcs${b.is_safety_stock ? ' · safety stock' : ''}\n` +
+                          `${new Date(b.start_timestamp).toLocaleString()} → ${new Date(b.end_timestamp).toLocaleString()}` +
+                          (hasCaveat ? `\n⚠ ${b.remark}` : '')
+                        }
                       >
-                        <div className="relative rounded bg-slate-50 overflow-hidden flex flex-col gap-1">
-                          {tasks.length === 0 ? (
-                            <div className="h-12 flex items-center justify-center text-slate-300 text-[10px]">
-                              idle
-                            </div>
-                          ) : (
-                            <div className="space-y-0.5 p-1">
-                              {tasks.map((t, i) => {
-                                const widthPct = Math.max(
-                                  12,
-                                  ((t.end_offset_min - t.start_offset_min) / SHIFT_WORKING_MINS) * 100,
-                                )
-                                const color = colorFor(t.task || t.production_order)
-                                const cellKey = `${key}-${i}`
-                                // Abbreviate: show task code if available, else last 6 chars of order
-                                const label = t.task ? t.task : t.production_order.slice(-6)
-                                return (
-                                  <div
-                                    key={cellKey}
-                                    className="rounded flex items-center justify-center text-slate-700 text-[10px] font-bold cursor-pointer hover:shadow-md transition-all"
-                                    style={{
-                                      backgroundColor: color,
-                                      height: '20px',
-                                      minWidth: '100%',
-                                      opacity: hovered && hovered !== cellKey ? 0.45 : 0.9,
-                                    }}
-                                    onMouseEnter={() => setHovered(cellKey)}
-                                    onMouseLeave={() => setHovered(null)}
-                                    title={`${t.production_order} · Op ${t.operation_no}\n${t.balance_qty} pcs · ${Math.round((t.end_offset_min - t.start_offset_min) / 60)}m`}
-                                  >
-                                    <span className="truncate px-1 text-white drop-shadow-sm">{label}</span>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          )}
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-1">
-                          <div className="flex-1 h-1 rounded-full bg-slate-100 overflow-hidden">
-                            <div
-                              className={clsx(
-                                'h-full rounded-full',
-                                utilization >= 85
-                                  ? 'bg-risk-breach'
-                                  : utilization >= 50
-                                    ? 'bg-brand-500'
-                                    : 'bg-slate-300',
-                              )}
-                              style={{ width: `${utilization}%` }}
-                            />
-                          </div>
-                          <span className="text-[9px] text-slate-400 w-7 text-right">{utilization}%</span>
-                        </div>
-                      </td>
+                        <span className="truncate px-1.5 text-ink-950 drop-shadow-sm">
+                          {b.task || b.production_order.slice(-6)}
+                        </span>
+                      </div>
                     )
-                  }),
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                  })}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
-      <p className="mt-2 text-[11px] text-slate-400">
-        Bar width ∝ minutes consumed · thin strip below each shift = utilization % of shift capacity ·
-        hover a bar for order / operation detail.
+      <p className="mt-2 text-[11px] text-text-faint">
+        Bar position/width ∝ real START_TIMESTAMP → END_TIMESTAMP (continuous time) · dashed amber underline =
+        no fixture/locator match caveat · hover a bar for detail.
       </p>
     </div>
   )

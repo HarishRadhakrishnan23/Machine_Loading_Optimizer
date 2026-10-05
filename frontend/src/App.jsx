@@ -5,20 +5,28 @@ import clsx from 'clsx'
 
 import { ToastProvider } from './hooks/useToast'
 import { SimulationProvider } from './hooks/useSimulationReport'
+import Overview from './views/Overview'
 import ScheduleView from './views/ScheduleView'
+import MachineUtilisation from './views/MachineUtilisation'
+import CompletedMaterials from './views/CompletedMaterials'
+import RunComparison from './views/RunComparison'
 import OrderBoard from './views/OrderBoard'
 import ImpactAnalyser from './views/ImpactAnalyser'
 import MachineAvailability from './views/MachineAvailability'
 
 const TABS = [
-  { key: 'schedule', label: 'Schedule', icon: '📅' },
-  { key: 'orders', label: 'Order Board', icon: '📋' },
-  { key: 'impact', label: 'Impact Analyser', icon: '⚠️' },
-  { key: 'machines', label: 'Machines & Settings', icon: '⚙️' },
+  { key: 'overview', label: 'Overview', icon: '◈' },
+  { key: 'pending', label: 'Pending Load Queue', icon: '☰' },
+  { key: 'utilisation', label: 'Machine Utilisation', icon: '▦' },
+  { key: 'completed', label: 'Completed Materials', icon: '✓' },
+  { key: 'compare', label: 'Run Comparison', icon: '⇄' },
+  { key: 'orders', label: 'Order Board', icon: '▤', group: 'What-If (Engine 2)' },
+  { key: 'impact', label: 'Impact Analyser', icon: '△', group: 'What-If (Engine 2)' },
+  { key: 'machines', label: 'Machines & Settings', icon: '⚙' },
 ]
 
 export default function App() {
-  const [active, setActive] = useState('schedule')
+  const [active, setActive] = useState('overview')
 
   return (
     <ToastProvider>
@@ -26,39 +34,60 @@ export default function App() {
         <DndProvider backend={HTML5Backend}>
           <div className="min-h-screen flex">
             {/* Sidebar */}
-            <aside className="w-60 shrink-0 bg-slate-900 text-slate-200 flex flex-col">
-              <div className="px-5 py-5 border-b border-slate-800">
-                <p className="text-sm font-semibold text-white leading-tight">TOV Machine Loading</p>
-                <p className="text-xs text-slate-400">Optimizer</p>
+            <aside className="w-64 shrink-0 bg-ink-900 text-text flex flex-col border-r border-ink-600">
+              <div className="px-5 py-5 border-b border-ink-600 flex items-center gap-2.5">
+                <span className="text-accent text-xl">⚙</span>
+                <div>
+                  <p className="text-sm font-semibold text-text leading-tight tracking-wide">SAMANTHA</p>
+                  <p className="text-[11px] text-text-muted font-mono">Machine Loading Scheduler</p>
+                </div>
               </div>
-              <nav className="flex-1 px-2 py-4 flex flex-col gap-1">
-                {TABS.map((tab) => (
-                  <button
-                    key={tab.key}
-                    onClick={() => setActive(tab.key)}
-                    className={clsx(
-                      'flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-left transition-colors',
-                      active === tab.key
-                        ? 'bg-brand-600 text-white'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white',
+              <nav className="flex-1 px-2 py-4 flex flex-col gap-1 overflow-y-auto">
+                {TABS.map((tab, i) => (
+                  <div key={tab.key}>
+                    {tab.group && (TABS[i - 1]?.group !== tab.group) && (
+                      <p className="px-3 pt-4 pb-1 text-[10px] font-mono uppercase tracking-widest text-text-faint">
+                        {tab.group}
+                      </p>
                     )}
-                  >
-                    <span className="text-base">{tab.icon}</span>
-                    {tab.label}
-                  </button>
+                    <button
+                      onClick={() => setActive(tab.key)}
+                      className={clsx(
+                        'w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-left transition-colors',
+                        active === tab.key
+                          ? 'bg-accent text-ink-950'
+                          : 'text-text-muted hover:bg-ink-700 hover:text-text',
+                      )}
+                    >
+                      <span className="text-base w-4 text-center">{tab.icon}</span>
+                      {tab.label}
+                    </button>
+                  </div>
                 ))}
               </nav>
-              <div className="px-4 py-4 border-t border-slate-800 text-[11px] text-slate-500">
+              <div className="px-4 py-4 border-t border-ink-600 text-[11px] text-text-faint font-mono">
                 Emerson Process Management
                 <br />
                 TOV Valve Manufacturing
               </div>
             </aside>
 
-            {/* Main content — all 4 views stay mounted so state/data persists across tab switches */}
-            <main className="flex-1 min-w-0 bg-slate-50 overflow-y-auto h-screen">
-              <div className={active === 'schedule' ? '' : 'hidden'}>
+            {/* Main content — all views stay mounted so state/data persists across tab switches */}
+            <main className="flex-1 min-w-0 bg-ink-950 overflow-y-auto h-screen relative">
+              <div className={active === 'overview' ? '' : 'hidden'}>
+                <Overview />
+              </div>
+              <div className={active === 'pending' ? '' : 'hidden'}>
                 <ScheduleView />
+              </div>
+              <div className={active === 'utilisation' ? '' : 'hidden'}>
+                <MachineUtilisation />
+              </div>
+              <div className={active === 'completed' ? '' : 'hidden'}>
+                <CompletedMaterials />
+              </div>
+              <div className={active === 'compare' ? '' : 'hidden'}>
+                <RunComparison />
               </div>
               <div className={active === 'orders' ? '' : 'hidden'}>
                 <OrderBoard onNavigateToImpact={() => setActive('impact')} />
@@ -68,6 +97,11 @@ export default function App() {
               </div>
               <div className={active === 'machines' ? '' : 'hidden'}>
                 <MachineAvailability />
+              </div>
+
+              {/* Trademark — tiny, transparent, bottom corner (Frontend doc) */}
+              <div className="pointer-events-none fixed bottom-2 right-3 text-[10px] text-text-faint/40 font-mono select-none">
+                developed by Harish Radhakrishnan
               </div>
             </main>
           </div>

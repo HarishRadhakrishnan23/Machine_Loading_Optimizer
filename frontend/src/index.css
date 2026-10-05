@@ -7,36 +7,43 @@
     @apply antialiased;
   }
   body {
-    @apply bg-slate-50 text-slate-900;
+    @apply bg-ink-950 text-text font-sans;
   }
 }
 
 @layer components {
   .card {
-    @apply bg-white rounded-xl border border-slate-200 shadow-card;
+    @apply bg-ink-800 rounded-xl border border-ink-600 shadow-card;
   }
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium
       transition-colors duration-150 disabled:opacity-50 disabled:cursor-not-allowed;
   }
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800;
+    @apply btn bg-accent text-ink-950 font-semibold hover:bg-accent-hover active:bg-accent;
   }
   .btn-secondary {
-    @apply btn bg-white text-slate-700 border border-slate-300 hover:bg-slate-50;
+    @apply btn bg-ink-700 text-text border border-ink-600 hover:bg-ink-600;
   }
   .btn-ghost {
-    @apply btn text-slate-600 hover:bg-slate-100;
+    @apply btn text-text-muted hover:bg-ink-700 hover:text-text;
   }
   .input {
-    @apply w-full rounded-lg border border-slate-300 px-3 py-2 text-sm
-      focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500;
+    @apply w-full rounded-lg border border-ink-600 bg-ink-900 px-3 py-2 text-sm text-text
+      focus:outline-none focus:ring-2 focus:ring-accent focus:border-accent;
   }
   .label {
-    @apply block text-xs font-medium text-slate-500 uppercase tracking-wide mb-1;
+    @apply block text-[11px] font-semibold text-text-muted uppercase tracking-widest mb-1 font-mono;
   }
   .badge {
     @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold;
+  }
+  .section-title {
+    @apply text-[13px] font-semibold uppercase tracking-widest text-text-muted font-mono
+      border-b border-ink-600 pb-2.5 mb-4;
+  }
+  .kpi-value {
+    @apply text-4xl font-bold leading-none font-sans;
   }
 }
 
@@ -46,7 +53,7 @@
   width: 8px;
 }
 .thin-scroll::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: #30363d;
   border-radius: 4px;
 }
 .thin-scroll::-webkit-scrollbar-track {

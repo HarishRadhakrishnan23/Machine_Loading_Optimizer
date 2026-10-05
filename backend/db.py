@@ -215,6 +215,57 @@ def write_schedule_output(schedule_rows: list[dict]) -> int:
     return len(schedule_rows)
 
 
+def archive_schedule_output() -> tuple[Optional[str], int]:
+    """
+    "Freeze schedule" — copies every row currently in MCH_SCHEDULE_OUTPUT, as-is
+    at this instant, into MCH_SCHEDULE_OUTPUT_ARCHIVE for historical backup/
+    representation (CLAUDE.md "Freeze schedule" archive note). Unlike
+    MCH_SCHEDULE_OUTPUT itself, the archive is append-only — nothing is ever
+    deleted from it by this application; every freeze just adds another
+    RUN_ID's worth of rows alongside whatever was archived before.
+
+    A row's PRODUCTION_ORDER/OPERATION_NO/LINE_NO PK could already exist in
+    the archive from an earlier freeze of the same RUN_ID (re-freezing without
+    an intervening regenerate) — handled by deleting that RUN_ID's own prior
+    archive rows first, so a freeze is idempotent per RUN_ID rather than
+    erroring on a duplicate key.
+
+    Returns (run_id, rows_archived) — run_id is None and rows_archived is 0 if
+    MCH_SCHEDULE_OUTPUT is currently empty (nothing to freeze yet).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT RUN_ID FROM MCH_SCHEDULE_OUTPUT")
+        run_ids = [r[0] for r in cursor.fetchall()]
+        if not run_ids:
+            return None, 0
+
+        cursor.execute(
+            """
+            DELETE FROM MCH_SCHEDULE_OUTPUT_ARCHIVE
+            WHERE RUN_ID IN (SELECT DISTINCT RUN_ID FROM MCH_SCHEDULE_OUTPUT)
+            """
+        )
+        cursor.execute(
+            """
+            INSERT INTO MCH_SCHEDULE_OUTPUT_ARCHIVE
+            (RUN_ID, PRODUCTION_ORDER, OPERATION_NO, LINE_NO, TASK, WORK_CENTER, SHIFT,
+             SCHEDULED_DATE, BALANCE_QTY, GENERATED_AT, BATCH_KEY, IS_SAFETY_STOCK,
+             FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK,
+             ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT)
+            SELECT
+             RUN_ID, PRODUCTION_ORDER, OPERATION_NO, LINE_NO, TASK, WORK_CENTER, SHIFT,
+             SCHEDULED_DATE, BALANCE_QTY, GENERATED_AT, BATCH_KEY, IS_SAFETY_STOCK,
+             FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK,
+             ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT
+            FROM MCH_SCHEDULE_OUTPUT
+            """
+        )
+        archived = cursor.rowcount
+        conn.commit()
+    return run_ids[0], archived
+
+
 def write_sim_results(sim_rows: list[dict], sim_id: str) -> int:
     """
     Write Engine 2 simulation results to MCH_SIM_RESULTS.
@@ -257,6 +308,80 @@ def write_sim_results(sim_rows: list[dict], sim_id: str) -> int:
         conn.commit()
 
     return rows_inserted
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Frontend-support reads (Overview / Completed Materials / Run Comparison pages)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def read_completed_materials(start_date: date, end_date: date) -> tuple[int, int]:
+    """
+    "Number of materials completed from date X to date Y" (manager's ask,
+    CLAUDE.md/Frontend doc) — counted from the LIVE MCH_SCHEDULE_OUTPUT only
+    (never the archive), keyed on ORDER_COMPLETION_DATE. One row per order is
+    used (its own last/highest OPERATION_NO row) to avoid double-counting an
+    order's BALANCE_QTY across every one of its operation rows.
+
+    Returns (order_count, total_quantity).
+    """
+    with get_connection() as conn:
+        df = pd.read_sql(
+            """
+            SELECT PRODUCTION_ORDER, OPERATION_NO, BALANCE_QTY
+            FROM MCH_SCHEDULE_OUTPUT
+            WHERE ORDER_COMPLETION_DATE BETWEEN TO_DATE(:start_date, 'YYYY-MM-DD')
+                                            AND TO_DATE(:end_date, 'YYYY-MM-DD')
+            """,
+            conn,
+            params={"start_date": start_date.strftime("%Y-%m-%d"), "end_date": end_date.strftime("%Y-%m-%d")},
+        )
+
+    if df.empty:
+        return 0, 0
+
+    last_op_rows = df.loc[df.groupby("PRODUCTION_ORDER")["OPERATION_NO"].idxmax()]
+    order_count = len(last_op_rows)
+    total_quantity = int(last_op_rows["BALANCE_QTY"].sum())
+    return order_count, total_quantity
+
+
+def read_archived_runs() -> pd.DataFrame:
+    """
+    List every RUN_ID ever frozen into MCH_SCHEDULE_OUTPUT_ARCHIVE, newest
+    first — feeds the Run Comparison page's run picker.
+
+    Returns: DataFrame with columns (RUN_ID, GENERATED_AT, ROW_COUNT).
+    """
+    with get_connection() as conn:
+        return pd.read_sql(
+            """
+            SELECT RUN_ID, MIN(GENERATED_AT) AS GENERATED_AT, COUNT(*) AS ROW_COUNT
+            FROM MCH_SCHEDULE_OUTPUT_ARCHIVE
+            GROUP BY RUN_ID
+            ORDER BY GENERATED_AT DESC
+            """,
+            conn,
+        )
+
+
+def read_archived_run_completions(run_id: str) -> pd.DataFrame:
+    """
+    One row per PRODUCTION_ORDER for a given archived RUN_ID — its
+    ORDER_COMPLETION_DATE/SHIFT (identical across all of that order's rows,
+    CLAUDE.md §E.14, so DISTINCT collapses it to one row per order safely).
+
+    Returns: DataFrame with columns (PRODUCTION_ORDER, ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT).
+    """
+    with get_connection() as conn:
+        return pd.read_sql(
+            """
+            SELECT DISTINCT PRODUCTION_ORDER, ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT
+            FROM MCH_SCHEDULE_OUTPUT_ARCHIVE
+            WHERE RUN_ID = :run_id
+            """,
+            conn,
+            params={"run_id": run_id},
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

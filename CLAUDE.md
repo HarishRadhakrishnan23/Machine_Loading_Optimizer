@@ -372,6 +372,39 @@ Full DDL with indexes: `backend/testing/model_e_schedule_output_schema.sql`. **T
 
 **No historical retention.** Each `/schedule/generate` run DELETEs all existing rows before writing the new schedule.
 
+### schedule_output_archive → MCH_SCHEDULE_OUTPUT_ARCHIVE (Engine 1 writes, append-only) — Model E
+```sql
+CREATE TABLE MCH_SCHEDULE_OUTPUT_ARCHIVE (
+    RUN_ID                  VARCHAR2(36)   NOT NULL,
+    PRODUCTION_ORDER        VARCHAR2(9)    NOT NULL,
+    OPERATION_NO            NUMBER         NOT NULL,
+    LINE_NO                 NUMBER         DEFAULT 1 NOT NULL,
+    TASK                    VARCHAR2(51),
+    WORK_CENTER             VARCHAR2(49),
+    SHIFT                   VARCHAR2(10),
+    SCHEDULED_DATE          DATE,
+    BALANCE_QTY             NUMBER         NOT NULL,
+    GENERATED_AT            TIMESTAMP(6)   NOT NULL,
+    BATCH_KEY               VARCHAR2(100),
+    IS_SAFETY_STOCK         CHAR(1)        DEFAULT 'N',
+    FIXTURE_ID              VARCHAR2(40),
+    LOCATOR_ID              VARCHAR2(40),
+    START_TIMESTAMP         TIMESTAMP(6),
+    END_TIMESTAMP           TIMESTAMP(6),
+    REMARK                  VARCHAR2(200),
+    ORDER_COMPLETION_DATE   DATE,
+    ORDER_COMPLETION_SHIFT  VARCHAR2(10),
+    CONSTRAINT PK_MCH_SCHEDULE_OUTPUT_ARCHIVE
+        PRIMARY KEY (PRODUCTION_ORDER, OPERATION_NO, LINE_NO)
+);
+-- plus non-unique indexes on RUN_ID, FIXTURE_ID, LOCATOR_ID
+```
+- Identical column shape to `MCH_SCHEDULE_OUTPUT`, but **append-only** — never DELETEd wholesale by this application, unlike the live table.
+- Purpose: when a planner clicks the frontend's **"Freeze schedule"** button, the schedule currently sitting in `MCH_SCHEDULE_OUTPUT` at that instant is copied, as-is, into this table for historical backup/representation. This gives planners a point-in-time snapshot they can look back on even after the next `/schedule/generate` run deletes-and-replaces the live table.
+- `POST /schedule/freeze` (new endpoint — see FastAPI backend section) is the only thing that writes here. It does **not** re-run Engine 1 and does **not** touch `MCH_SCHEDULE_OUTPUT` itself — a pure read-then-insert copy.
+- **Idempotent per RUN_ID**: since `MCH_SCHEDULE_OUTPUT` holds exactly one run at a time (its own RUN_ID is audit-only, not part of its PK), freezing deletes that same RUN_ID's own rows from the archive first, then re-inserts — so clicking "Freeze schedule" twice on the same unchanged live schedule does not duplicate rows or error on the archive's PK. Rows from a *different*, earlier RUN_ID already in the archive are never touched.
+- `db.archive_schedule_output()` implements this; `backend/testing/model_e_schedule_output_schema.sql`'s sibling DDL (applied manually, same as the live table) is this table's authoritative schema reference.
+
 ### sim_results → MCH_SIM_RESULTS (Engine 2 writes) — unchanged
 ```sql
 CREATE TABLE MCH_SIM_RESULTS (
@@ -410,9 +443,10 @@ Credentials stored in `.env` (never committed to git). Local dev DSN: `localhost
 
 Framework: FastAPI | ASGI server: Uvicorn | Port: 8000
 
-### Endpoints (9 total — unchanged surface, response shapes need Model E migration)
+### Endpoints (10 total — response shapes need Model E migration, see E-5 status)
 - POST /schedule/generate — triggers Engine 1, writes to MCH_SCHEDULE_OUTPUT
 - GET  /schedule/current — reads latest MCH_SCHEDULE_OUTPUT, returns Gantt data (needs to drop offset fields, add REMARK/ORDER_COMPLETION_DATE/ORDER_COMPLETION_SHIFT/LINE_NO)
+- POST /schedule/freeze — copies the current MCH_SCHEDULE_OUTPUT into MCH_SCHEDULE_OUTPUT_ARCHIVE (append-only historical snapshot). Triggered by the frontend's "Freeze schedule" button. Does not re-run Engine 1, does not touch MCH_SCHEDULE_OUTPUT. Idempotent per RUN_ID.
 - POST /priority/simulate — triggers Engine 2 with payload `{orders: [...]}`, writes to MCH_SIM_RESULTS
 - GET  /orders/wip — returns active MCH_WIP rows (CT > 0, routable, balance_qty > 0)
 - GET  /machines/capacity — returns resolved machine availability for next N days
@@ -432,7 +466,7 @@ CORS enabled for React frontend origin. Schedule regeneration: manual trigger on
 Framework: React 18 + Vite | Styling: TailwindCSS | Charts: Recharts | Drag-and-drop: React DnD
 
 ### Four main views
-1. **Schedule view** — Gantt chart per machine. Needs migration to render against `START_TIMESTAMP`/`END_TIMESTAMP` directly (continuous time) instead of the retired shift-offset fields; should surface `REMARK` and `ORDER_COMPLETION_DATE`/`SHIFT`.
+1. **Schedule view** — Gantt chart per machine. Needs migration to render against `START_TIMESTAMP`/`END_TIMESTAMP` directly (continuous time) instead of the retired shift-offset fields; should surface `REMARK` and `ORDER_COMPLETION_DATE`/`SHIFT`. Needs a **"Freeze schedule"** button that calls `POST /schedule/freeze` (archives the current schedule into `MCH_SCHEDULE_OUTPUT_ARCHIVE` for historical backup — see Write tables).
 2. **Order board** — WIP order cards, drag-to-reprioritise, trigger Engine 2 simulation.
 3. **Impact analyser** — MCH_SIM_RESULTS: risk scores, slip days, SAFE/AT_RISK/BREACH badges.
 4. **Machine availability & settings** — read-only view of MCH_MACHINE_AVAILABILITY_BY_DATE + settings panel for the Model E config.json shape.
@@ -501,6 +535,8 @@ tov-mlo/
 │   │                                /priority/simulate (Engine 2) still call Model C-era code — not yet migrated.
 │   ├── db.py                     ← Oracle connection pool + read/write helpers. write_schedule_output /
 │   │                                delete_schedule_output rewritten for the Model E schema.
+│   │                                archive_schedule_output copies MCH_SCHEDULE_OUTPUT into the
+│   │                                append-only MCH_SCHEDULE_OUTPUT_ARCHIVE ("Freeze schedule").
 │   ├── model_e_data.py           ← adapts live Oracle DataFrames into the dispatch engine's plain input types
 │   │                                (RawWipRow/RoutingIndex/FixtureIndex/DevicePool/ResolvedAvailability).
 │   ├── model_e_pipeline.py       ← the single entry point: data load → dispatch_orders → dispatch_orchestrator
