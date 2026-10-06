@@ -108,7 +108,7 @@ export default function App() {
               </div>
 
               {/* Trademark — tiny, transparent, bottom corner (Frontend doc) */}
-              <div className="pointer-events-none fixed bottom-2 right-3 text-[10px] text-text-muted/70 font-mono select-none">
+              <div className="pointer-events-none fixed bottom-2 right-8 text-[10px] text-text-muted/70 font-mono select-none">
                 Developed by Harish Radhakrishnan
               </div>
             </main>
