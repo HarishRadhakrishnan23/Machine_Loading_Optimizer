@@ -93,7 +93,7 @@ export default function RunComparison() {
           <>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <StatTile label="Added orders" value={result.added.length} tone="sky" sub="in run B only" />
-              <StatTile label="Removed orders" value={result.removed.length} tone="atrisk" sub="in run A only" />
+              <StatTile label="Completed orders" value={result.removed.length} tone="atrisk" sub="in run A only" />
               <StatTile label="Completion date changed" value={result.changed.length} tone="breach" />
             </div>
             <p className="text-xs text-text-faint">Unchanged: {result.unchanged_count} orders</p>
@@ -124,7 +124,7 @@ export default function RunComparison() {
 
             {result.removed.length > 0 && (
               <div className="card p-4">
-                <h3 className="section-title mb-0">Removed Orders — only in Run A</h3>
+                <h3 className="section-title mb-0">Completed Orders — only in Run A</h3>
                 <div className="overflow-x-auto thin-scroll max-h-72">
                   <table className="w-full text-xs">
                     <thead>

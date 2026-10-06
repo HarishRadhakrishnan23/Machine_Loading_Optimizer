@@ -124,7 +124,7 @@ export default function Overview() {
         <ScheduleActionCard
           icon="▶"
           title="Generate Schedule"
-          description="Runs Engine 1 (Model E) end-to-end against live Oracle data and writes a fresh MCH_SCHEDULE_OUTPUT."
+          description="Runs Engine 1 end-to-end against live Oracle data and writes a fresh Schdule Output."
           actionLabel="Generate Schedule"
           phases={GENERATE_PHASES}
           estimatedSeconds={GENERATE_ESTIMATE_SECONDS}
@@ -138,6 +138,21 @@ export default function Overview() {
             `${res.rows_written} rows · ${res.scheduled_count} scheduled · ${res.scheduled_no_fixture_count} no-fixture · ${res.excluded_count} excluded`
           }
         />
+
+        <ScheduleActionCard
+          icon="⇩"
+          title="Export to Excel"
+          description="Downloads the current MCH_SCHEDULE_OUTPUT (all rows) as an .xlsx workbook."
+          actionLabel="Export to Excel"
+          phases={null}
+          onRun={async () => {
+            const filename = await exportScheduleExcel()
+            toast.success(`Downloaded ${filename}`)
+            return { filename }
+          }}
+          formatResult={(res) => `Saved ${res.filename}`}
+        />
+        
         <ScheduleActionCard
           icon="⧉"
           title="Freeze Schedule"
@@ -156,19 +171,6 @@ export default function Overview() {
           formatResult={(res) =>
             res.rows_archived === 0 ? 'Nothing to freeze' : `${res.rows_archived} rows archived`
           }
-        />
-        <ScheduleActionCard
-          icon="⇩"
-          title="Export to Excel"
-          description="Downloads the current MCH_SCHEDULE_OUTPUT (all rows) as an .xlsx workbook."
-          actionLabel="Export to Excel"
-          phases={null}
-          onRun={async () => {
-            const filename = await exportScheduleExcel()
-            toast.success(`Downloaded ${filename}`)
-            return { filename }
-          }}
-          formatResult={(res) => `Saved ${res.filename}`}
         />
       </motion.div>
     </div>
