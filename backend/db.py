@@ -384,6 +384,24 @@ def read_archived_run_completions(run_id: str) -> pd.DataFrame:
         )
 
 
+def read_live_schedule_completions() -> pd.DataFrame:
+    """
+    One row per PRODUCTION_ORDER from the LIVE MCH_SCHEDULE_OUTPUT — its
+    ORDER_COMPLETION_DATE/SHIFT. Same shape as read_archived_run_completions,
+    but for "compare an archived run against the current schedule" (Run
+    Comparison page's Run B = "Current Schedule (live)" option) rather than
+    two archived runs.
+    """
+    with get_connection() as conn:
+        return pd.read_sql(
+            """
+            SELECT DISTINCT PRODUCTION_ORDER, ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT
+            FROM MCH_SCHEDULE_OUTPUT
+            """,
+            conn,
+        )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Convenience read-all function (data refresh)
 # ─────────────────────────────────────────────────────────────────────────────

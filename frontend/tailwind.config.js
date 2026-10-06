@@ -5,7 +5,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Samantha design tokens — carried over from the prototype's dark
+        // Apeiron design tokens — carried over from the prototype's dark
         // navy/orange/sky-blue identity (Frontend doc: "always follow a
         // strict colour pattern"), formalized here instead of inline hex.
         ink: {

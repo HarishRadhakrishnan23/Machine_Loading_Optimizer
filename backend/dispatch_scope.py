@@ -74,18 +74,25 @@ class ScopeOutcome(str, Enum):
 
 
 REMARKS: dict[ScopeOutcome, Optional[str]] = {
-    ScopeOutcome.EXCLUDED_CT_ZERO: "CT = 0 — excluded",
-    ScopeOutcome.EXCLUDED_BALANCE_ZERO: "Balance Qty <= 0 — fully accounted for",
-    ScopeOutcome.EXCLUDED_QAINSP: "QAINSP — manual QA gate, excluded from scheduling",
-    ScopeOutcome.EXCLUDED_PN10: "CLASS = PN10 — excluded, no routing/fixture setup yet",
+    # Plain ASCII hyphens only, never an em dash (U+2014) or other non-Latin-1
+    # character — the live Oracle schema's REMARK column sits under a
+    # WE8ISO8859P1 (Latin-1) database characterset, which cannot represent
+    # U+2014 at all; python-oracledb silently substitutes an unmappable
+    # character with a corrupted byte on insert rather than raising, so this
+    # was a real, previously undetected data-corruption bug (every REMARK
+    # using an em dash came back as "...0x{garbage}..." on read).
+    ScopeOutcome.EXCLUDED_CT_ZERO: "CT = 0 - excluded",
+    ScopeOutcome.EXCLUDED_BALANCE_ZERO: "Balance Qty <= 0 - fully accounted for",
+    ScopeOutcome.EXCLUDED_QAINSP: "QAINSP - manual QA gate, excluded from scheduling",
+    ScopeOutcome.EXCLUDED_PN10: "CLASS = PN10 - excluded, no routing/fixture setup yet",
     ScopeOutcome.EXCLUDED_NO_ROUTING: "No routing entry for this TASK",
     ScopeOutcome.EXCLUDED_NO_MACHINE_FOR_COMBO: (
         "TASK has routing entries, but none match this exact SIZE~CLASS~MOC~DESIGN"
     ),
     ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE: (
-        "Fixture/locator device not in inventory — cannot schedule"
+        "Fixture/locator device not in inventory - cannot schedule"
     ),
-    ScopeOutcome.SCHEDULED_NO_FIXTURE: "No fixture/locator match — scheduled via plain routing",
+    ScopeOutcome.SCHEDULED_NO_FIXTURE: "No fixture/locator match - scheduled via plain routing",
     ScopeOutcome.SCHEDULED: None,
 }
 

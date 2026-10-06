@@ -52,17 +52,17 @@ export default function ScheduleActionCard({
   }
 
   return (
-    <div className="card p-6 flex flex-col gap-4 relative overflow-hidden">
+    <div className="card p-6 flex flex-col gap-4 relative overflow-hidden h-full">
       <div className="flex items-start gap-3">
-        <span className="text-2xl text-accent">{icon}</span>
-        <div className="flex-1">
+        <span className="text-2xl text-accent shrink-0">{icon}</span>
+        <div className="flex-1 min-w-0">
           <p className="text-base font-semibold text-text">{title}</p>
-          <p className="text-sm text-text-muted mt-0.5">{description}</p>
+          <p className="text-sm text-text-muted mt-0.5 break-words">{description}</p>
         </div>
       </div>
 
       <button
-        className="btn-primary w-full"
+        className="btn-primary w-full mt-auto"
         onClick={handleRun}
         disabled={running}
       >

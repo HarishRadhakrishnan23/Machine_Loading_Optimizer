@@ -5,11 +5,13 @@ import clsx from 'clsx'
 
 import { ToastProvider } from './hooks/useToast'
 import { SimulationProvider } from './hooks/useSimulationReport'
+import HoneycombBackground from './components/HoneycombBackground'
 import Overview from './views/Overview'
 import ScheduleView from './views/ScheduleView'
 import MachineUtilisation from './views/MachineUtilisation'
 import CompletedMaterials from './views/CompletedMaterials'
 import RunComparison from './views/RunComparison'
+import DownloadArchive from './views/DownloadArchive'
 import OrderBoard from './views/OrderBoard'
 import ImpactAnalyser from './views/ImpactAnalyser'
 import MachineAvailability from './views/MachineAvailability'
@@ -20,6 +22,7 @@ const TABS = [
   { key: 'utilisation', label: 'Machine Utilisation', icon: '▦' },
   { key: 'completed', label: 'Completed Materials', icon: '✓' },
   { key: 'compare', label: 'Run Comparison', icon: '⇄' },
+  { key: 'download', label: 'Download Archive', icon: '⇩' },
   { key: 'orders', label: 'Order Board', icon: '▤', group: 'What-If (Engine 2)' },
   { key: 'impact', label: 'Impact Analyser', icon: '△', group: 'What-If (Engine 2)' },
   { key: 'machines', label: 'Machines & Settings', icon: '⚙' },
@@ -33,12 +36,14 @@ export default function App() {
       <SimulationProvider>
         <DndProvider backend={HTML5Backend}>
           <div className="min-h-screen flex">
+            <HoneycombBackground />
+
             {/* Sidebar */}
             <aside className="w-64 shrink-0 bg-ink-900 text-text flex flex-col border-r border-ink-600">
               <div className="px-5 py-5 border-b border-ink-600 flex items-center gap-2.5">
                 <span className="text-accent text-xl">⚙</span>
                 <div>
-                  <p className="text-sm font-semibold text-text leading-tight tracking-wide">SAMANTHA</p>
+                  <p className="text-sm font-semibold text-text leading-tight tracking-wide">APEIRON</p>
                   <p className="text-[11px] text-text-muted font-mono">Machine Loading Scheduler</p>
                 </div>
               </div>
@@ -68,12 +73,12 @@ export default function App() {
               <div className="px-4 py-4 border-t border-ink-600 text-[11px] text-text-faint font-mono">
                 Emerson Process Management
                 <br />
-                TOV Valve Manufacturing
+                Valve Manufacturing
               </div>
             </aside>
 
             {/* Main content — all views stay mounted so state/data persists across tab switches */}
-            <main className="flex-1 min-w-0 bg-ink-950 overflow-y-auto h-screen relative">
+            <main className="flex-1 min-w-0 overflow-y-auto h-screen relative">
               <div className={active === 'overview' ? '' : 'hidden'}>
                 <Overview />
               </div>
@@ -89,6 +94,9 @@ export default function App() {
               <div className={active === 'compare' ? '' : 'hidden'}>
                 <RunComparison />
               </div>
+              <div className={active === 'download' ? '' : 'hidden'}>
+                <DownloadArchive />
+              </div>
               <div className={active === 'orders' ? '' : 'hidden'}>
                 <OrderBoard onNavigateToImpact={() => setActive('impact')} />
               </div>
@@ -100,8 +108,8 @@ export default function App() {
               </div>
 
               {/* Trademark — tiny, transparent, bottom corner (Frontend doc) */}
-              <div className="pointer-events-none fixed bottom-2 right-3 text-[10px] text-text-faint/40 font-mono select-none">
-                developed by Harish Radhakrishnan
+              <div className="pointer-events-none fixed bottom-2 right-3 text-[10px] text-text-muted/70 font-mono select-none">
+                Developed by Harish Radhakrishnan
               </div>
             </main>
           </div>

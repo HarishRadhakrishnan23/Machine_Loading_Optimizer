@@ -280,14 +280,22 @@ class RunCompareOrderDiff(BaseModel):
     delta_days: Optional[int]
 
 
+class RunCompareOrder(BaseModel):
+    """One order that's only present on one side of a run comparison (added/removed)."""
+
+    production_order: str
+    completion_date: Optional[date]
+
+
 class RunCompareResponse(BaseModel):
     """GET /schedule/compare/runs?run_a=&run_b= — per-order diff between two
-    frozen MCH_SCHEDULE_OUTPUT_ARCHIVE snapshots."""
+    frozen MCH_SCHEDULE_OUTPUT_ARCHIVE snapshots (run_b="current" means the
+    live MCH_SCHEDULE_OUTPUT instead of a second archived run)."""
 
     run_a: str
     run_b: str
-    added: list[str]  # present in run_b only
-    removed: list[str]  # present in run_a only (e.g. no longer in WIP by run_b's time)
+    added: list[RunCompareOrder]  # present in run_b only, with run_b's completion date
+    removed: list[RunCompareOrder]  # present in run_a only, with run_a's completion date
     changed: list[RunCompareOrderDiff]  # present in both, completion date differs
     unchanged_count: int
 

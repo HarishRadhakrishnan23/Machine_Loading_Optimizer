@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 
-import { generateSchedule, freezeSchedule, getCurrentSchedule } from '../api/client'
+import { generateSchedule, freezeSchedule, exportScheduleExcel, getCurrentSchedule } from '../api/client'
 import { useToast } from '../hooks/useToast'
 import ScheduleActionCard from '../components/ScheduleActionCard'
 
@@ -61,13 +61,27 @@ export default function Overview() {
           className="relative"
         >
           <p className="text-[11px] font-mono uppercase tracking-[0.2em] text-accent mb-3">
-            Emerson Process Management · TOV Valve Manufacturing
+            Emerson Process Management · Valve Manufacturing
           </p>
-          <h1 className="text-5xl font-bold tracking-tight text-text">
-            Samantha
-          </h1>
+          <div className="relative inline-block">
+            {/* Soft blurred glow copy, sitting behind the crisp text */}
+            <h1
+              aria-hidden="true"
+              className="title-gradient absolute inset-0 text-6xl font-bold tracking-tight blur-xl opacity-60 select-none"
+            >
+              Apeiron
+            </h1>
+            <h1 className="title-gradient relative text-6xl font-bold tracking-tight">Apeiron</h1>
+            <motion.div
+              className="h-[3px] rounded-full mt-2"
+              style={{ background: 'linear-gradient(90deg, #f97316, #38bdf8)', transformOrigin: 'left' }}
+              initial={{ scaleX: 0 }}
+              animate={{ scaleX: 1 }}
+              transition={{ delay: 0.4, duration: 0.9, ease: 'easeOut' }}
+            />
+          </div>
           <p className="text-lg text-text-muted mt-2 max-w-2xl">
-            The Machine Loading Scheduler — a deterministic, continuous-time dispatch engine that turns
+            The Machine Loading Scheduler - a deterministic, continuous-time dispatch engine that turns
             every pending valve order into a shop-floor-realistic schedule, governed by real fixture and
             locator availability, not guesswork.
           </p>
@@ -105,7 +119,7 @@ export default function Overview() {
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.3, duration: 0.5 }}
-        className="px-10 pb-14 grid grid-cols-1 md:grid-cols-2 gap-5 max-w-4xl"
+        className="px-10 pb-14 grid grid-cols-1 md:grid-cols-3 gap-5 max-w-5xl"
       >
         <ScheduleActionCard
           icon="▶"
@@ -142,6 +156,19 @@ export default function Overview() {
           formatResult={(res) =>
             res.rows_archived === 0 ? 'Nothing to freeze' : `${res.rows_archived} rows archived`
           }
+        />
+        <ScheduleActionCard
+          icon="⇩"
+          title="Export to Excel"
+          description="Downloads the current MCH_SCHEDULE_OUTPUT (all rows) as an .xlsx workbook."
+          actionLabel="Export to Excel"
+          phases={null}
+          onRun={async () => {
+            const filename = await exportScheduleExcel()
+            toast.success(`Downloaded ${filename}`)
+            return { filename }
+          }}
+          formatResult={(res) => `Saved ${res.filename}`}
         />
       </motion.div>
     </div>

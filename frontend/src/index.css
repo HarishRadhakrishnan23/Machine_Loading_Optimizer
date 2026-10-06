@@ -47,6 +47,22 @@
   }
 }
 
+/* Overview hero title — slow-shimmering gradient text (Space Grotesk, elegant not flashy) */
+.title-gradient {
+  background: linear-gradient(100deg, #f97316 0%, #fb923c 25%, #38bdf8 55%, #f97316 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: title-shimmer 10s ease-in-out infinite;
+}
+@keyframes title-shimmer {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
 /* Custom scrollbar for Gantt / dense tables */
 .thin-scroll::-webkit-scrollbar {
   height: 8px;

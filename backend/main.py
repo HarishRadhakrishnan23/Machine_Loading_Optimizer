@@ -1,11 +1,13 @@
 """
 main.py — FastAPI Backend for TOV Machine Loading Optimizer.
 
-Exposes 10 REST endpoints orchestrating Engines 1 & 2 and ERP data access.
+Exposes 12 REST endpoints orchestrating Engines 1 & 2 and ERP data access.
 
 Endpoints:
   POST   /schedule/generate          Engine 1: generate schedule
   GET    /schedule/current           Read latest MCH_SCHEDULE_OUTPUT
+  GET    /schedule/export            Download current MCH_SCHEDULE_OUTPUT as .xlsx
+  GET    /schedule/archive/export    Download one archived RUN_ID's rows as .xlsx
   POST   /schedule/freeze            Archive current MCH_SCHEDULE_OUTPUT into MCH_SCHEDULE_OUTPUT_ARCHIVE
   POST   /priority/simulate          Engine 2: simulate elevation
   GET    /orders/wip                 Read active WIP orders
@@ -16,6 +18,7 @@ Endpoints:
   PUT    /config                     Update config.json
 """
 
+import io
 import json
 from datetime import date, datetime
 from pathlib import Path
@@ -24,11 +27,12 @@ from typing import Optional
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from db import (
     archive_schedule_output,
     read_archived_run_completions,
+    read_live_schedule_completions,
     read_archived_runs,
     read_completed_materials,
     read_wip_orders,
@@ -48,6 +52,7 @@ from models import (
     Config,
     FreezeScheduleResponse,
     RiskReport,
+    RunCompareOrder,
     RunCompareOrderDiff,
     RunCompareResponse,
     ScheduleGenerateResponse,
@@ -233,6 +238,112 @@ def get_current_schedule():
         raise HTTPException(status_code=500, detail=f"Failed to read schedule: {e}")
 
 
+_SCHEDULE_COLUMN_RENAME = {
+    "PRODUCTION_ORDER": "Production Order", "OPERATION_NO": "Operation No", "LINE_NO": "Line No",
+    "TASK": "Task", "WORK_CENTER": "Machine", "SHIFT": "Shift", "SCHEDULED_DATE": "Scheduled Date",
+    "BALANCE_QTY": "Balance Qty", "BATCH_KEY": "Batch Key", "IS_SAFETY_STOCK": "Safety Stock",
+    "FIXTURE_ID": "Fixture", "LOCATOR_ID": "Locator", "START_TIMESTAMP": "Start Timestamp",
+    "END_TIMESTAMP": "End Timestamp", "REMARK": "Remark", "ORDER_COMPLETION_DATE": "Order Completion Date",
+    "ORDER_COMPLETION_SHIFT": "Order Completion Shift", "RUN_ID": "Run ID", "GENERATED_AT": "Generated At",
+}
+
+
+def _schedule_rows_to_xlsx_response(df: pd.DataFrame, sheet_name: str, filename: str) -> StreamingResponse:
+    """
+    Shared MCH_SCHEDULE_OUTPUT-shaped DataFrame -> downloadable .xlsx builder,
+    used by both /schedule/export (current live table) and
+    /schedule/archive/export (one frozen RUN_ID from the archive table) —
+    same 19-column shape in both tables, so one renderer serves both.
+    """
+    df = df.rename(columns=_SCHEDULE_COLUMN_RENAME)
+    for col in ("Scheduled Date", "Order Completion Date"):
+        df[col] = pd.to_datetime(df[col]).dt.date
+    for col in ("Start Timestamp", "End Timestamp", "Generated At"):
+        df[col] = pd.to_datetime(df[col]).dt.tz_localize(None)
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name=sheet_name, index=False)
+        worksheet = writer.sheets[sheet_name]
+        for i, col in enumerate(df.columns, start=1):
+            width = max(12, min(30, int(df[col].astype(str).str.len().max() or 10) + 2))
+            worksheet.column_dimensions[worksheet.cell(row=1, column=i).column_letter].width = width
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/schedule/export", tags=["Engine 1"])
+def export_current_schedule():
+    """
+    Exports the ENTIRE current MCH_SCHEDULE_OUTPUT (no row cap, unlike
+    /schedule/current's 5000-row display limit) as a downloadable .xlsx
+    workbook — the Overview page's "Export to Excel" button.
+    """
+    from db import get_connection
+
+    try:
+        with get_connection() as conn:
+            df = pd.read_sql(
+                """
+                SELECT PRODUCTION_ORDER, OPERATION_NO, LINE_NO, TASK, WORK_CENTER,
+                       SHIFT, SCHEDULED_DATE, BALANCE_QTY, BATCH_KEY, IS_SAFETY_STOCK,
+                       FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK,
+                       ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT, RUN_ID, GENERATED_AT
+                FROM MCH_SCHEDULE_OUTPUT
+                ORDER BY PRODUCTION_ORDER, OPERATION_NO
+                """,
+                conn,
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read schedule for export: {e}")
+
+    if df.empty:
+        raise HTTPException(status_code=404, detail="No schedule generated yet — nothing to export")
+
+    filename = f"schedule_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return _schedule_rows_to_xlsx_response(df, "MCH_SCHEDULE_OUTPUT", filename)
+
+
+@app.get("/schedule/archive/export", tags=["Engine 1"])
+def export_archived_run(run_id: str = Query(...)):
+    """
+    Download Archive page — scans MCH_SCHEDULE_OUTPUT_ARCHIVE for every row
+    matching the given RUN_ID and returns them as a downloadable .xlsx
+    workbook. Distinct from /schedule/export: this reads the append-only
+    archive table, filtered to one frozen run, never the live table.
+    """
+    from db import get_connection
+
+    try:
+        with get_connection() as conn:
+            df = pd.read_sql(
+                """
+                SELECT PRODUCTION_ORDER, OPERATION_NO, LINE_NO, TASK, WORK_CENTER,
+                       SHIFT, SCHEDULED_DATE, BALANCE_QTY, BATCH_KEY, IS_SAFETY_STOCK,
+                       FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK,
+                       ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT, RUN_ID, GENERATED_AT
+                FROM MCH_SCHEDULE_OUTPUT_ARCHIVE
+                WHERE RUN_ID = :run_id
+                ORDER BY PRODUCTION_ORDER, OPERATION_NO
+                """,
+                conn,
+                params={"run_id": run_id},
+            )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read archived run for export: {e}")
+
+    if df.empty:
+        raise HTTPException(status_code=404, detail=f"No archived rows found for RUN_ID {run_id!r}")
+
+    filename = f"archive_{run_id[:8]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return _schedule_rows_to_xlsx_response(df, "MCH_SCHEDULE_OUTPUT_ARCHIVE", filename)
+
+
 @app.get("/materials/completed", tags=["Engine 1"], response_model=CompletedMaterialsResponse)
 def get_completed_materials(start: date = Query(...), end: date = Query(...)):
     """
@@ -261,6 +372,39 @@ def get_archived_runs():
     return ArchivedRunsResponse(runs=runs)
 
 
+def _diff_completions(df_a: pd.DataFrame, df_b: pd.DataFrame, run_a: str, run_b: str) -> RunCompareResponse:
+    """
+    Shared diff core for both /schedule/compare/runs (archived vs. archived)
+    and /schedule/compare/runs/to-current (archived vs. the live table) —
+    same 2-column (PRODUCTION_ORDER, ORDER_COMPLETION_DATE) shape either way.
+    """
+    a_by_order = {row["PRODUCTION_ORDER"]: row["ORDER_COMPLETION_DATE"] for _, row in df_a.iterrows()}
+    b_by_order = {row["PRODUCTION_ORDER"]: row["ORDER_COMPLETION_DATE"] for _, row in df_b.iterrows()}
+
+    def _d(v):
+        return v.date() if pd.notna(v) else None
+
+    orders_a, orders_b = set(a_by_order), set(b_by_order)
+    removed = [RunCompareOrder(production_order=o, completion_date=_d(a_by_order[o])) for o in sorted(orders_a - orders_b)]
+    added = [RunCompareOrder(production_order=o, completion_date=_d(b_by_order[o])) for o in sorted(orders_b - orders_a)]
+
+    changed = []
+    unchanged_count = 0
+    for order_id in sorted(orders_a & orders_b):
+        old_d, new_d = _d(a_by_order[order_id]), _d(b_by_order[order_id])
+        if old_d == new_d:
+            unchanged_count += 1
+        else:
+            delta = (new_d - old_d).days if (old_d is not None and new_d is not None) else None
+            changed.append(RunCompareOrderDiff(
+                production_order=order_id, old_completion_date=old_d, new_completion_date=new_d, delta_days=delta,
+            ))
+
+    return RunCompareResponse(
+        run_a=run_a, run_b=run_b, added=added, removed=removed, changed=changed, unchanged_count=unchanged_count,
+    )
+
+
 @app.get("/schedule/compare/runs", tags=["Engine 1"], response_model=RunCompareResponse)
 def compare_archived_runs(run_a: str = Query(...), run_b: str = Query(...)):
     """
@@ -274,31 +418,23 @@ def compare_archived_runs(run_a: str = Query(...), run_b: str = Query(...)):
         df_b = read_archived_run_completions(run_b)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read archived runs: {e}")
+    return _diff_completions(df_a, df_b, run_a, run_b)
 
-    a_by_order = {row["PRODUCTION_ORDER"]: row["ORDER_COMPLETION_DATE"] for _, row in df_a.iterrows()}
-    b_by_order = {row["PRODUCTION_ORDER"]: row["ORDER_COMPLETION_DATE"] for _, row in df_b.iterrows()}
 
-    orders_a, orders_b = set(a_by_order), set(b_by_order)
-    removed = sorted(orders_a - orders_b)
-    added = sorted(orders_b - orders_a)
-
-    changed = []
-    unchanged_count = 0
-    for order_id in sorted(orders_a & orders_b):
-        old_date, new_date = a_by_order[order_id], b_by_order[order_id]
-        old_d = old_date.date() if pd.notna(old_date) else None
-        new_d = new_date.date() if pd.notna(new_date) else None
-        if old_d == new_d:
-            unchanged_count += 1
-        else:
-            delta = (new_d - old_d).days if (old_d is not None and new_d is not None) else None
-            changed.append(RunCompareOrderDiff(
-                production_order=order_id, old_completion_date=old_d, new_completion_date=new_d, delta_days=delta,
-            ))
-
-    return RunCompareResponse(
-        run_a=run_a, run_b=run_b, added=added, removed=removed, changed=changed, unchanged_count=unchanged_count,
-    )
+@app.get("/schedule/compare/runs/to-current", tags=["Engine 1"], response_model=RunCompareResponse)
+def compare_archived_run_to_current(run_a: str = Query(...)):
+    """
+    Run Comparison page — Run B = "Current Schedule (live)": diffs one
+    archived RUN_ID against the LIVE MCH_SCHEDULE_OUTPUT (not the archive),
+    using the exact same completion-date diff as plan-vs-plan — just with
+    one side read from the live table instead of a second frozen run.
+    """
+    try:
+        df_a = read_archived_run_completions(run_a)
+        df_b = read_live_schedule_completions()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to compare run to current schedule: {e}")
+    return _diff_completions(df_a, df_b, run_a, "current")
 
 
 @app.get("/schedule/compare/actual", tags=["Engine 1"], response_model=ActualCompareResponse)

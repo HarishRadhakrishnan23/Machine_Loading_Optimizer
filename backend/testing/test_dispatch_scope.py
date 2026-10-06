@@ -44,7 +44,7 @@ def test_ct_zero_excluded():
     print("\n=== CYCLE_TIME = 0 ===")
     outcome = classify_operation(replace(CLEAN, cycle_time=0.0))
     check("outcome == EXCLUDED_CT_ZERO", outcome == ScopeOutcome.EXCLUDED_CT_ZERO)
-    check('REMARK == "CT = 0 — excluded"', remark_for(outcome) == "CT = 0 — excluded")
+    check('REMARK == "CT = 0 - excluded"', remark_for(outcome) == "CT = 0 - excluded")
     check("is excluded", is_excluded(outcome))
 
 
@@ -88,10 +88,10 @@ def test_no_fixture_match_is_scheduled_with_caveat():
     print("\n=== No fixture/locator match: SCHEDULED anyway, REMARK is a caveat not an exclusion ===")
     outcome = classify_operation(replace(CLEAN, has_fixture_locator_match=False))
     check("outcome == SCHEDULED_NO_FIXTURE", outcome == ScopeOutcome.SCHEDULED_NO_FIXTURE)
-    check("NOT excluded — this row still gets a machine", not is_excluded(outcome))
+    check("NOT excluded - this row still gets a machine", not is_excluded(outcome))
     check(
-        'REMARK == "No fixture/locator match — scheduled via plain routing"',
-        remark_for(outcome) == "No fixture/locator match — scheduled via plain routing",
+        'REMARK == "No fixture/locator match - scheduled via plain routing"',
+        remark_for(outcome) == "No fixture/locator match - scheduled via plain routing",
     )
 
 
