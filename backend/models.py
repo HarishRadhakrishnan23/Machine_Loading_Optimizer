@@ -60,6 +60,15 @@ class Config(BaseModel):
     planned_order_start_buffer_days: int = 1  # §E.1/§E.8
     risk_safe_threshold_days: int = 5  # Engine 2 SAFE/AT_RISK/BREACH threshold
     dev_max_orders: int = 0  # dev knob; 0 = full dataset (production)
+    # Soft-launch extension on top of §E.6's hard window (default off — zero
+    # behavior change unless explicitly enabled): a committed order just past
+    # the hard window may ride an existing in-window run's already-mounted
+    # fixture/locator for free, but ONLY when the full speculative check
+    # (same mechanism as §E.10) confirms it delays no committed order
+    # anywhere. See dispatch_consolidation_window.is_soft_eligible /
+    # dispatch_orchestrator._decide_soft_merge.
+    allow_soft_consolidation_beyond_window: bool = False
+    soft_consolidation_max_extra_days: int = 90  # bounds how far past the hard window a candidate may still be considered
 
 
 # ─────────────────────────────────────────────────────────────────────────────

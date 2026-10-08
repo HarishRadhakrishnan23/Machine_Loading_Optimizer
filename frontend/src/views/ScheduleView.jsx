@@ -70,7 +70,7 @@ export default function ScheduleView() {
     <div>
       <PageHeader
         title="Pending Load Queue"
-        subtitle="Visual representation of MCH_SCHEDULE_OUTPUT · Engine 1 (Model E)"
+        subtitle="Visual representation of Scheduler's Output · Aperion Scheduler"
       />
 
       <div className="p-6 space-y-6">
@@ -88,10 +88,10 @@ export default function ScheduleView() {
           <>
             {/* KPI row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatTile label="Scheduled" value={stats.scheduled} tone="brand" />
-              <StatTile label="No-fixture caveat" value={stats.noFixture} tone="atrisk" />
-              <StatTile label="Excluded" value={stats.excluded} tone="breach" />
-              <StatTile label="Safety stock" value={stats.safetyStock} tone="sky" />
+              <StatTile label="Scheduled" value={stats.scheduled} sub="operations" tone="brand" />
+              <StatTile label="No-fixture caveat" value={stats.noFixture} sub="operations" tone="atrisk" />
+              <StatTile label="Excluded" value={stats.excluded} sub="operations" tone="breach" />
+              <StatTile label="Safety stock" value={stats.safetyStock} sub="operations" tone="sky" />
             </div>
 
             {/* Bubble chart */}

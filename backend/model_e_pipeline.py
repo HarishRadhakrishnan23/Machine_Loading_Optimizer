@@ -78,6 +78,8 @@ def generate_schedule(config: dict, run_date: date) -> ScheduleGenerateResult:
         planned_order_start_buffer_days=config["planned_order_start_buffer_days"],
         heavy_operations=frozenset(config["heavy_operations"]),
         enable_safety_stock_speculation=True,
+        allow_soft_consolidation_beyond_window=config.get("allow_soft_consolidation_beyond_window", False),
+        soft_consolidation_max_extra_days=config.get("soft_consolidation_max_extra_days", 0),
     )
 
     run_id, oracle_rows = to_oracle_rows(final_rows)

@@ -69,12 +69,19 @@ shows completion" convention.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import Optional
 
 from dispatch_batching import ChargedStep
-from dispatch_engine import PlacedOperation, SafetyStockResolver, _place_fixture_run, _place_no_fixture_op, plan_task_pool
+from dispatch_engine import (
+    PlacedOperation,
+    SafetyStockResolver,
+    _place_fixture_run,
+    _place_no_fixture_op,
+    _recompute_charges,
+    plan_task_pool,
+)
 from dispatch_orders import ExcludedOperation, OrderChain, ScheduledOperation
 from dispatch_parallel import Branch, evaluate_branches_in_parallel
 from dispatch_planned_release import ORDER_STATUS_PLANNED, compute_planned_earliest_start
@@ -96,6 +103,11 @@ class WorkItem:
     op_by_id: dict[str, ScheduledOperation]
     run_steps: Optional[list[ChargedStep]]
     no_fixture_op: Optional[ScheduledOperation]
+    # Opt-in soft-consolidation-beyond-window candidates for THIS run (see
+    # dispatch_engine.TaskPoolPlan.soft_candidates_by_run) — None/empty unless
+    # `allow_soft_consolidation_beyond_window` is on. Never set on a
+    # no_fixture_op WorkItem (merging only concerns fixture runs).
+    soft_merge_candidates: Optional[list[ChargedStep]] = None
 
 
 @dataclass(frozen=True)
@@ -128,7 +140,13 @@ def _initial_ready_at(first_op: ScheduledOperation, day_zero: date, planned_orde
     return start_of_day(day_zero)
 
 
-def _build_work_items(order_chains: list[OrderChain], today: date, window_days: int) -> list[WorkItem]:
+def _build_work_items(
+    order_chains: list[OrderChain],
+    today: date,
+    window_days: int,
+    allow_soft_consolidation: bool = False,
+    soft_max_extra_days: int = 0,
+) -> list[WorkItem]:
     """
     Flattens every (depth, task) pool into individually-resumable WorkItems.
     Entirely deterministic and precomputable up front — see `WorkItem` and
@@ -143,12 +161,33 @@ def _build_work_items(order_chains: list[OrderChain], today: date, window_days: 
                 op = chain.schedulable[depth]
                 by_task.setdefault(op.task, []).append(op)
         for task in sorted(by_task):  # deterministic order — required for reproducible runs
-            plan = plan_task_pool(by_task[task], today, window_days)
-            for run_steps in plan.fixture_runs:
-                items.append(WorkItem(depth, task, plan.op_by_id, run_steps, None))
+            plan = plan_task_pool(by_task[task], today, window_days, allow_soft_consolidation, soft_max_extra_days)
+            for run_idx, run_steps in enumerate(plan.fixture_runs):
+                soft_candidates = plan.soft_candidates_by_run.get(run_idx)
+                items.append(WorkItem(depth, task, plan.op_by_id, run_steps, None, soft_candidates))
             for op in plan.no_fixture_ops:
                 items.append(WorkItem(depth, task, plan.op_by_id, None, op))
     return items
+
+
+def _should_skip(item: WorkItem, skip_keys: frozenset[tuple[int, str]]) -> bool:
+    """
+    True iff every member of this WorkItem has already been placed as part
+    of an earlier soft-consolidation merge (see `_decide_soft_merge`) — its
+    rows already exist under the run it was merged into, so placing it again
+    here would duplicate output. Never true for a no_fixture_op WorkItem
+    (merging only ever concerns fixture runs) or when the feature is off
+    (`skip_keys` empty, the default — zero behavior change).
+
+    Keyed on (depth, order_id), NOT order_id alone: the same order appears
+    in a SEPARATE, unrelated WorkItem at every depth (its op10, op20, ...),
+    and a merge at one depth must never cause a later depth's legitimate
+    placement of that same order to be skipped too — that was a real bug
+    caught by live-data E-6 validation (the row count came up short).
+    """
+    if not skip_keys or item.run_steps is None:
+        return False
+    return all((item.depth, s.order_id) in skip_keys for s in item.run_steps)
 
 
 def _place_work_item(
@@ -181,6 +220,7 @@ def _continuation_verdict(
     availability: AvailabilityFn,
     day_zero: date,
     cooling_minutes: float,
+    skip_keys: frozenset[tuple[int, str]] = frozenset(),
 ) -> frozenset[str]:
     """
     Module-level (picklable) continuation used as a speculative branch's
@@ -192,8 +232,16 @@ def _continuation_verdict(
     during this continuation always appends. Batching membership is already
     fixed (baked into each WorkItem), so `today`/`window_days` play no part
     in placement and aren't needed here at all.
+
+    `skip_keys`: (depth, order_id) pairs whose WorkItem was already placed
+    earlier IN THIS SAME BRANCH via a soft-consolidation merge (see
+    `_decide_soft_merge`) — this branch's own copy of "already accounted
+    for," never the real (main-process) skip set, since each branch forks
+    its own.
     """
     for i in range(resume_index, len(work_items)):
+        if _should_skip(work_items[i], skip_keys):
+            continue
         for placed in _place_work_item(work_items[i], ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes):
             placed_by_order.setdefault(placed.production_order, []).append(placed)
 
@@ -207,6 +255,75 @@ def _continuation_verdict(
         if placements[-1].end.day > cdd:
             breached.add(order_id)
     return frozenset(breached)
+
+
+def _evaluate_two_options(
+    option_a_calls: list[list[ChargedStep]],
+    option_b_calls: list[list[ChargedStep]],
+    skip_for_a: frozenset[tuple[int, str]],
+    skip_for_b: frozenset[tuple[int, str]],
+    op_by_id: dict,
+    work_items: list[WorkItem],
+    current_index: int,
+    ready_at: dict[str, TimePoint],
+    machine_free_at: dict[str, TimePoint],
+    pool: DevicePool,
+    placed_by_order: dict[str, list[PlacedOperation]],
+    cdd_by_order: dict[str, Optional[date]],
+    availability: AvailabilityFn,
+    day_zero: date,
+    cooling_minutes: float,
+) -> bool:
+    """
+    The shared §E.10-style fork/place-once/continue/compare core, used by
+    BOTH the safety-stock append-vs-defer decision and the soft-
+    consolidation include-vs-exclude decision — one fork/compare mechanism,
+    never duplicated. Each option is a list of `_place_fixture_run` calls
+    (one run each — §E.10's "defer" needs several: the committed portion
+    plus one solo run per deferred safety-stock member; soft-consolidation's
+    options are each just one call). Forks state twice, places option_a /
+    option_b once each into its own fork, continues each fork through every
+    remaining WorkItem (skipping `skip_for_a`/`skip_for_b` in that branch's
+    own continuation — members already placed by this decision, never to be
+    placed again later), runs both continuations in parallel processes, and
+    accepts option_a iff it introduces no committed breach beyond option_b's
+    own (`a_breaches <= b_breaches`, not "a has zero breaches" — a breach
+    elsewhere in the plant might be unrelated to this decision entirely).
+    """
+
+    def _fork():
+        return (
+            dict(ready_at),
+            dict(machine_free_at),
+            pool.clone(),
+            {k: list(v) for k, v in placed_by_order.items()},
+        )
+
+    def _run_calls(calls, ready, machines, forked_pool, placed):
+        for steps in calls:
+            for row in _place_fixture_run(steps, op_by_id, ready, machines, forked_pool, availability, day_zero, cooling_minutes):
+                placed.setdefault(row.production_order, []).append(row)
+
+    a_ready, a_machines, a_pool, a_placed = _fork()
+    _run_calls(option_a_calls, a_ready, a_machines, a_pool, a_placed)
+
+    b_ready, b_machines, b_pool, b_placed = _fork()
+    _run_calls(option_b_calls, b_ready, b_machines, b_pool, b_placed)
+
+    branches = [
+        Branch(
+            "a", _continuation_verdict,
+            (work_items, current_index + 1, a_ready, a_machines, a_pool, a_placed,
+             cdd_by_order, availability, day_zero, cooling_minutes, skip_for_a),
+        ),
+        Branch(
+            "b", _continuation_verdict,
+            (work_items, current_index + 1, b_ready, b_machines, b_pool, b_placed,
+             cdd_by_order, availability, day_zero, cooling_minutes, skip_for_b),
+        ),
+    ]
+    results = evaluate_branches_in_parallel(branches)
+    return results["a"] <= results["b"]
 
 
 def _make_committed_safe_resolver(
@@ -230,51 +347,59 @@ def _make_committed_safe_resolver(
         committed_steps = [s for s in run_steps if op_by_id[s.order_id].cdd is not None]
         safety_steps = [s for s in run_steps if op_by_id[s.order_id].cdd is None]
 
-        def _fork():
-            return (
-                dict(ready_at),
-                dict(machine_free_at),
-                pool.clone(),
-                {k: list(v) for k, v in placed_by_order.items()},
-            )
-
-        # Branch "append": place run_steps exactly as originally sequenced.
-        append_ready, append_machines, append_pool, append_placed = _fork()
-        for row in _place_fixture_run(run_steps, op_by_id, append_ready, append_machines, append_pool, availability, day_zero, cooling_minutes):
-            append_placed.setdefault(row.production_order, []).append(row)
-
-        # Branch "defer": committed portion now; safety portion becomes its
-        # own solo run(s) — identical consequence to a machine-selection dropout.
-        defer_ready, defer_machines, defer_pool, defer_placed = _fork()
-        defer_rows: list[PlacedOperation] = []
-        if committed_steps:
-            defer_rows.extend(
-                _place_fixture_run(committed_steps, op_by_id, defer_ready, defer_machines, defer_pool, availability, day_zero, cooling_minutes)
-            )
-        for step in safety_steps:
-            solo = ChargedStep(step.order_id, step.fixture, step.locator, "fixture_change", run_index=-1)
-            defer_rows.extend(
-                _place_fixture_run([solo], op_by_id, defer_ready, defer_machines, defer_pool, availability, day_zero, cooling_minutes)
-            )
-        for row in defer_rows:
-            defer_placed.setdefault(row.production_order, []).append(row)
-
-        branches = [
-            Branch(
-                "append", _continuation_verdict,
-                (work_items, current_index + 1, append_ready, append_machines, append_pool, append_placed,
-                 cdd_by_order, availability, day_zero, cooling_minutes),
-            ),
-            Branch(
-                "defer", _continuation_verdict,
-                (work_items, current_index + 1, defer_ready, defer_machines, defer_pool, defer_placed,
-                 cdd_by_order, availability, day_zero, cooling_minutes),
-            ),
+        # "append": run_steps exactly as originally sequenced.
+        option_a_calls = [run_steps]
+        # "defer": committed portion now; each safety-stock member becomes
+        # its own solo run — identical consequence to a machine-selection dropout.
+        option_b_calls = [committed_steps] if committed_steps else []
+        option_b_calls += [
+            [ChargedStep(s.order_id, s.fixture, s.locator, "fixture_change", run_index=-1)] for s in safety_steps
         ]
-        results = evaluate_branches_in_parallel(branches)
-        return results["append"] <= results["defer"]
+
+        return _evaluate_two_options(
+            option_a_calls, option_b_calls, frozenset(), frozenset(),
+            op_by_id, work_items, current_index, ready_at, machine_free_at, pool, placed_by_order, cdd_by_order,
+            availability, day_zero, cooling_minutes,
+        )
 
     return resolve
+
+
+def _decide_soft_merge(
+    run_steps: list[ChargedStep],
+    soft_candidates: list[ChargedStep],
+    depth: int,
+    op_by_id: dict,
+    work_items: list[WorkItem],
+    current_index: int,
+    ready_at: dict[str, TimePoint],
+    machine_free_at: dict[str, TimePoint],
+    pool: DevicePool,
+    placed_by_order: dict[str, list[PlacedOperation]],
+    cdd_by_order: dict[str, Optional[date]],
+    availability: AvailabilityFn,
+    day_zero: date,
+    cooling_minutes: float,
+) -> bool:
+    """
+    The soft-launch "consolidation beyond the §E.6 window" extension's own
+    decision, reusing `_evaluate_two_options` — the exact same fork/continue/
+    compare mechanism §E.10 uses, not a second one. "Include": the run
+    extended with `soft_candidates` (charges recomputed fresh — appending
+    changes what charge_type the appended members, and possibly the
+    existing tail, actually owe). "Exclude": the run unchanged; each soft
+    candidate's own already-built solo WorkItem (further down `work_items`)
+    places it normally later, exactly like today's hard-rule behavior.
+    Accepts "include" iff it introduces no committed breach beyond leaving
+    the candidates out (`<=`, same risk posture as §E.10 everywhere else).
+    """
+    merged_steps = _recompute_charges(run_steps + soft_candidates)
+    skip_keys = frozenset((depth, s.order_id) for s in soft_candidates)
+    return _evaluate_two_options(
+        [merged_steps], [run_steps], skip_keys, frozenset(),
+        op_by_id, work_items, current_index, ready_at, machine_free_at, pool, placed_by_order, cdd_by_order,
+        availability, day_zero, cooling_minutes,
+    )
 
 
 def run_dispatch_simulation(
@@ -288,6 +413,8 @@ def run_dispatch_simulation(
     planned_order_start_buffer_days: int,
     heavy_operations: frozenset[str] = frozenset(),
     enable_safety_stock_speculation: bool = False,
+    allow_soft_consolidation_beyond_window: bool = False,
+    soft_consolidation_max_extra_days: int = 0,
 ) -> list[FinalRow]:
     """
     Produce the full set of output rows for every order in `order_chains` —
@@ -299,6 +426,14 @@ def run_dispatch_simulation(
     like a light operation) — existing callers see no behavior change. Set
     it True (with a non-empty `heavy_operations`) to get the real §E.10
     full speculative check described in this module's docstring.
+
+    `allow_soft_consolidation_beyond_window=False` (the default) preserves
+    §E.6 as a pure hard rule with zero behavior change for every existing
+    caller. Set it True (with `soft_consolidation_max_extra_days > 0`) to
+    let a committed order just beyond the window ride an existing in-window
+    run's already-mounted fixture/locator for free, but ONLY when the full
+    speculative check (same mechanism as §E.10, see `_decide_soft_merge`)
+    confirms doing so delays no committed order anywhere.
     """
     ready_at: dict[str, TimePoint] = {}
     for chain in order_chains:
@@ -311,18 +446,53 @@ def run_dispatch_simulation(
         chain.production_order: (chain.schedulable[0].cdd if chain.schedulable else None) for chain in order_chains
     }
 
-    work_items = _build_work_items(order_chains, today, window_days)
+    work_items = _build_work_items(
+        order_chains, today, window_days, allow_soft_consolidation_beyond_window, soft_consolidation_max_extra_days
+    )
+
+    # Real (main-process) record of which (depth, order_id) WorkItems got
+    # placed early via a soft-consolidation merge — their own later solo
+    # WorkItem must then be skipped, never placed twice. Keyed on
+    # (depth, order_id), NOT order_id alone: the same order has a SEPARATE,
+    # unrelated WorkItem at every depth (its op10, op20, ...), and a merge at
+    # one depth must never skip a later depth's legitimate placement of that
+    # same order — a real bug caught by live-data E-6 validation (short row
+    # count). Always empty when the feature is off.
+    merged_keys: set[tuple[int, str]] = set()
 
     for i, item in enumerate(work_items):
+        if _should_skip(item, frozenset(merged_keys)):
+            continue
+
         resolver = None
         if enable_safety_stock_speculation and heavy_operations:
             resolver = _make_committed_safe_resolver(
                 work_items, i, ready_at, machine_free_at, pool, placed_by_order, cdd_by_order,
                 availability, day_zero, cooling_minutes,
             )
+
+        effective_item = item
+        merged_order_ids_this_item: frozenset[str] = frozenset()
+        if allow_soft_consolidation_beyond_window and item.run_steps is not None and item.soft_merge_candidates:
+            accepted = _decide_soft_merge(
+                item.run_steps, item.soft_merge_candidates, item.depth, item.op_by_id,
+                work_items, i, ready_at, machine_free_at, pool, placed_by_order, cdd_by_order,
+                availability, day_zero, cooling_minutes,
+            )
+            if accepted:
+                merged_steps = _recompute_charges(item.run_steps + item.soft_merge_candidates)
+                effective_item = WorkItem(item.depth, item.task, item.op_by_id, merged_steps, None, None)
+                merged_order_ids_this_item = frozenset(s.order_id for s in item.soft_merge_candidates)
+                merged_keys.update((item.depth, oid) for oid in merged_order_ids_this_item)
+
         for placed in _place_work_item(
-            item, ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes, heavy_operations, resolver
+            effective_item, ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes, heavy_operations, resolver
         ):
+            # REMARK: flag a soft-consolidated member distinctly from an
+            # ordinary in-window append — "why is this far-CDD order on the
+            # same machine as a near one" is otherwise non-obvious.
+            if placed.production_order in merged_order_ids_this_item:
+                placed = replace(placed, remark=(placed.remark or "") + "; soft-consolidated beyond window (speculatively confirmed safe)")
             placed_by_order[placed.production_order].append(placed)
 
     return _assemble_final_rows(order_chains, placed_by_order)

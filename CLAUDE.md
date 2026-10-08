@@ -174,7 +174,9 @@ Runtime parameters editable via UI, stored as JSON at `backend/config.json`, nev
   "protect_committed_over_safety": true,
   "planned_order_start_buffer_days": 1,
   "risk_safe_threshold_days": 5,
-  "dev_max_orders": 0
+  "dev_max_orders": 0,
+  "allow_soft_consolidation_beyond_window": false,
+  "soft_consolidation_max_extra_days": 90
 }
 ```
 
@@ -185,6 +187,8 @@ Runtime parameters editable via UI, stored as JSON at `backend/config.json`, nev
 - `planned_order_start_buffer_days` (Model E §1/§8): days added to a Planned order's `PRODUCTION_START_DATE_AND_TIME` to get its earliest-start date. Default 1.
 - `risk_safe_threshold_days`: Engine 2 SAFE/AT_RISK/BREACH threshold (unchanged from prior models).
 - `dev_max_orders`: dev knob, limit scheduling to top-N most urgent orders for fast iteration. 0 = full dataset (production).
+- `allow_soft_consolidation_beyond_window` (Model E §6 soft-launch extension): `false` by default — zero behavior change. Set `true` to let a committed order just past the hard window ride an existing in-window run's mount for free, speculatively checked first. See §6.
+- `soft_consolidation_max_extra_days`: bounds how far past the hard window a candidate may still be considered when the extension above is on. Default 90.
 
 **Retired with Model C/CP-SAT (no longer meaningful under a deterministic dispatch simulator):** `batch_bonus_months`, `batch_bonus_value`, `downstream_queue_bonus_value`, `ageing_normalization_days`, `machine_priority_epsilon`, `engine2_time_limit_seconds`, `scheduling_horizon_safety_factor`, `scheduling_horizon_buffer_days`, `solver_workers`, `solver_time_limit_seconds`, `setup_penalty_weight` — these existed to shape a CP-SAT objective function or size a CP-SAT horizon; Model E has neither. `backend/config.json` and `models.py::Config` still need to be migrated to this shape (tracked as implementation work, not yet done).
 
@@ -251,6 +255,8 @@ An order is eligible to be pulled into a fixture-run consolidation (§4 step 2) 
 
 **This is a hard cutoff, not a soft preference — there is no escape hatch.** An order beyond the window is simply never eligible for consolidation, regardless of machine idleness, downstream impact, or anything else. (An earlier draft of this rule had a "delays no committed order" override; that override was deliberately removed — §6 is now evaluated purely on the window number, nothing else.) `batch_consolidation_window_days` remains a plain config value — changing it (e.g. 60 → 90) takes effect immediately with no code change, since the cutoff is read from config on every call, never hardcoded.
 
+**Soft-launch extension (opt-in, off by default): `allow_soft_consolidation_beyond_window` / `soft_consolidation_max_extra_days`.** §E.6 above stays a true hard rule with zero exception for the default/production config. This is a SEPARATE, bounded layer on top, for the specific case of raising machine utilization by letting an idle fixture mount be reused: a committed order (never safety stock — that has its own §E.10 mechanism) whose CDD falls past the hard window but still within `soft_consolidation_max_extra_days` beyond it may be offered as a candidate to ride an existing in-window run's already-mounted fixture/locator for free — but **only** after the exact same full speculative check §E.10 uses (fork state, run two continuations — "include" vs. "exclude" — in parallel OS processes, accept "include" only if it introduces no committed-order breach anywhere beyond what "exclude" already has). Rejected candidates fall back to today's exact hard-rule behavior (their own solo fixture run, no different from the feature being off). See `dispatch_consolidation_window.is_soft_eligible`, `dispatch_engine._compute_soft_candidates`, `dispatch_orchestrator._decide_soft_merge`/`_evaluate_two_options` (the shared fork/continue/compare core now used by both this and §E.10), and `backend/testing/test_soft_consolidation.py`. Live-data E-6 validation (`backend/testing/e6_validate_soft_consolidation.py`) confirmed: all existing invariants hold with the feature on, zero committed orders newly breach CDD, and the extra speculative forks cost real but bounded runtime (~+25% on the live backlog tested, a handful of candidate merges found and correctly evaluated — most rejected on this particular backlog, since its fixture pool is already tightly booked; a real finding about the backlog, not a defect in the check).
+
 ### E.7 — Continuous timeline, no capacity cap
 
 - Time is continuous wall-clock minutes. There is **no discrete shift-slot lattice** and **no per-machine capacity cap** — every machine can take infinite work; what governs timing is fixture/locator/machine availability, not a minute budget.
@@ -295,14 +301,18 @@ If `(SIZE_INCH, CLASS, MOC, DESIGN, TASK)` has **no** row in `MCH_ITEMWISE_FIXTU
 An operation is **scheduled** (consumes real machine/fixture/locator time) iff **all** hold: `CYCLE_TIME > 0`, `balance_qty > 0`, `WORK_CENTER` does not contain `'QAINSP'`, `CLASS != 'PN10'`, and it has a routing entry in `MCH_MACHINE_PRIORITY`.
 
 **Every eligible order-operation from MCH_WIP now always produces a row in `MCH_SCHEDULE_OUTPUT`, scheduled or not.** When it is not scheduled, `WORK_CENTER`/`SHIFT`/`SCHEDULED_DATE`/fixture fields are left NULL and `REMARK` explains why, in plain language, e.g.:
-- `"CT = 0 — excluded"`
-- `"Balance Qty <= 0 — fully accounted for"`
-- `"QAINSP — manual QA gate, excluded from scheduling"`
-- `"CLASS = PN10 — excluded, no routing/fixture setup yet"`
+- `"CT = 0 - excluded"`
+- `"Balance Qty <= 0 - fully accounted for"`
+- `"QAINSP - manual QA gate, excluded from scheduling"`
+- `"CLASS = PN10 - excluded, no routing/fixture setup yet"`
 - `"No routing entry for this TASK"`
-- `"No fixture/locator match — scheduled via plain routing"` (this one **is** scheduled — see §11 — REMARK is a caveat, not an exclusion, in this case)
+- `"No fixture/locator match - scheduled via plain routing"` (this one **is** scheduled — see §11 — REMARK is a caveat, not an exclusion, in this case)
+
+(REMARK strings are always plain ASCII, never an em dash or other non-Latin-1 character — the live Oracle schema's REMARK column sits under a `WE8ISO8859P1` characterset, which silently corrupts anything it can't represent on insert rather than raising. This bit a real em-dash once; see `dispatch_scope.py`'s own note.)
 
 An op with genuinely no routing entry is the only case still bridged transparently in precedence (the next schedulable op connects directly to the last schedulable one), matching prior models.
+
+**REMARK also explains every SCHEDULED row's placement, not just an excluded or no-fixture-caveat one** — which machine it landed on, why (a fresh fixture run vs. riding an existing mount for free, a new locator sub-batch, a machine-selection dropout, a deferred-then-requeued safety-stock member, or a §E.6 soft-consolidation merge), and whether other capable machines existed. This is the mechanism for answering "why is machine X idle for a shift/day/month" — read what every OTHER order's REMARK says instead of guessing; a machine listed as a capable-but-not-chosen candidate on other orders explains its own idle time. Kept short (no machine-name lists, just counts) since REMARK is VARCHAR2(200) and device/machine names can be long; `dispatch_writer.py` also defensively truncates as a last resort. See `dispatch_engine._placement_remark` and the soft-merge/dropout/deferred tagging in `_place_fixture_run`/`dispatch_orchestrator.py`.
 
 ### E.13 — Solver architecture
 

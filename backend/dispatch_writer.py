@@ -25,6 +25,28 @@ from typing import Optional
 from dispatch_orchestrator import FinalRow
 from shift_clock import timepoint_to_datetime
 
+REMARK_MAX_LEN = 200  # Oracle MCH_SCHEDULE_OUTPUT.REMARK is VARCHAR2(200)
+
+
+def _truncate_remark(remark: Optional[str]) -> Optional[str]:
+    """
+    Defensive cap at REMARK's actual Oracle column width. REMARK now also
+    explains SCHEDULED placements (machine/batching reasoning, soft-merge/
+    dropout/deferred tags — see dispatch_engine._placement_remark and
+    dispatch_orchestrator's soft-merge tagging), composed from several
+    concatenated pieces, so this is the one place that guarantees none of
+    them can ever silently overflow the column regardless of how they were
+    built upstream.
+    """
+    if remark is None or len(remark) <= REMARK_MAX_LEN:
+        return remark
+    # Plain ASCII only — never a Unicode ellipsis (U+2026). The live Oracle
+    # schema's REMARK column sits under a WE8ISO8859P1 (Latin-1) database
+    # characterset, which silently corrupts any character it can't represent
+    # on insert rather than raising (see dispatch_scope.py's own REMARKS
+    # dict, fixed for the exact same reason after it shipped with an em dash).
+    return remark[: REMARK_MAX_LEN - 3] + "..."
+
 
 def to_oracle_row(row: FinalRow, run_id: str, generated_at: datetime) -> dict:
     """One MCH_SCHEDULE_OUTPUT row, column names matching the DDL exactly."""
@@ -45,7 +67,7 @@ def to_oracle_row(row: FinalRow, run_id: str, generated_at: datetime) -> dict:
         "LOCATOR_ID": row.locator_id,
         "START_TIMESTAMP": timepoint_to_datetime(row.start) if row.start is not None else None,
         "END_TIMESTAMP": timepoint_to_datetime(row.end) if row.end is not None else None,
-        "REMARK": row.remark,
+        "REMARK": _truncate_remark(row.remark),
         "ORDER_COMPLETION_DATE": row.order_completion_date,
         "ORDER_COMPLETION_SHIFT": row.order_completion_shift,
     }

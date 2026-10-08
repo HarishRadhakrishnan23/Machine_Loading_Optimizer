@@ -124,7 +124,7 @@ export default function Overview() {
         <ScheduleActionCard
           icon="▶"
           title="Generate Schedule"
-          description="Runs Engine 1 end-to-end against live Oracle data and writes a fresh Schdule Output."
+          description="Runs Scheduler engine end-to-end against live Oracle data and writes a fresh Schdule Output."
           actionLabel="Generate Schedule"
           phases={GENERATE_PHASES}
           estimatedSeconds={GENERATE_ESTIMATE_SECONDS}
@@ -142,7 +142,7 @@ export default function Overview() {
         <ScheduleActionCard
           icon="⇩"
           title="Export to Excel"
-          description="Downloads the current MCH_SCHEDULE_OUTPUT (all rows) as an .xlsx workbook."
+          description="Downloads the current Schedule's Output (all rows) as an .xlsx workbook."
           actionLabel="Export to Excel"
           phases={null}
           onRun={async () => {
@@ -156,7 +156,7 @@ export default function Overview() {
         <ScheduleActionCard
           icon="⧉"
           title="Freeze Schedule"
-          description="Archives the current MCH_SCHEDULE_OUTPUT into MCH_SCHEDULE_OUTPUT_ARCHIVE for historical record."
+          description="Archives the current Schedule's Output into Schedule Output's ARCHIVE for historical record."
           actionLabel="Freeze Schedule"
           phases={null}
           onRun={async () => {

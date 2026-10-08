@@ -54,7 +54,7 @@ export default function DownloadArchive() {
 
   return (
     <div>
-      <PageHeader title="Download Archive" subtitle="Export every row of one frozen RUN_ID from MCH_SCHEDULE_OUTPUT_ARCHIVE as an .xlsx workbook" />
+      <PageHeader title="Download Archive" subtitle="Export every row of one frozen Archive data as an .xlsx workbook" />
       <div className="p-6 max-w-2xl">
         {error && <ErrorPanel message={error} />}
         {!runs && !error && <LoadingPanel label="Loading archived runs…" />}

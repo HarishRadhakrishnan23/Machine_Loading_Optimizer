@@ -38,7 +38,7 @@ entire span).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from typing import Callable, Optional
 
@@ -57,6 +57,7 @@ from dispatch_batching import (
     run_priority_walk,
 )
 from dispatch_consolidation_window import is_consolidation_eligible as window_eligible
+from dispatch_consolidation_window import is_soft_eligible as soft_window_eligible
 from dispatch_machine_selection import RunMember, select_machine
 from dispatch_orders import ScheduledOperation
 from dispatch_pool import DevicePool
@@ -180,6 +181,29 @@ def _recompute_charges(steps: list[ChargedStep]) -> list[ChargedStep]:
     return result
 
 
+def _placement_remark(step: ChargedStep, op: ScheduledOperation, machine: str) -> str:
+    """
+    REMARK also explains a SCHEDULED row's placement, not just an excluded
+    or no-fixture-caveat one: which machine it landed on and why (a fresh
+    fixture run vs. riding an existing mount for free), plus whether other
+    capable machines existed. Reading every order's REMARK is how a machine
+    sitting idle for a shift/day/month gets explained — "why isn't X on
+    M2" is answered by seeing M2 listed as a capable-but-not-chosen
+    candidate on the orders that landed elsewhere instead. Kept short
+    (no machine-name lists) since REMARK is VARCHAR2(200) and device/machine
+    names can be long.
+    """
+    reason = {
+        "fixture_change": f"new fixture run on {machine} (fixture {step.fixture})",
+        "locator_change": f"new locator sub-batch on {machine} (locator {step.locator})",
+        "none": f"appended on {machine}, same fixture+locator already mounted",
+    }[step.charge_type]
+    candidates = {c.machine for c in op.candidates}
+    if len(candidates) > 1:
+        reason += f"; {len(candidates)} capable machines, earliest-free chosen"
+    return reason
+
+
 def _group_steps_by_run(steps: list[ChargedStep]) -> list[list[ChargedStep]]:
     runs: dict[int, list[ChargedStep]] = {}
     for step in steps:
@@ -275,27 +299,45 @@ def _place_fixture_run(
                 balance_qty=op.balance_qty,
                 batch_key=op.batch_key,
                 is_safety_stock=op.is_safety_stock,
-                remark=op.remark,
+                remark=_placement_remark(step, op, machine),
             )
         )
         ready_at[step.order_id] = end
 
     machine_free_at[machine] = advance_clock(run_end, cooling_minutes, machine, availability)
 
-    for step in dropped_steps + deferred_steps:
-        # Re-run each dropped/deferred member as its own single-member
-        # fixture run — same mechanism, just a pool of one (it pays
-        # fixture_change again, since it's no longer riding along with the
-        # run it was dropped/deferred from).
+    for step in dropped_steps:
+        # Re-run each dropped member as its own single-member fixture run —
+        # same mechanism, just a pool of one (it pays fixture_change again,
+        # since it's no longer riding along with the run it was dropped from).
         solo = ChargedStep(step.order_id, step.fixture, step.locator, "fixture_change", run_index=-1)
-        placed.extend(
-            _place_fixture_run(
-                [solo], op_by_id, ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes,
-                heavy_operations, resolve_safety_stock,
-            )
-        )
+        for p in _place_fixture_run(
+            [solo], op_by_id, ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes,
+            heavy_operations, resolve_safety_stock,
+        ):
+            tag = "; no common machine covered the whole run" if p.production_order == step.order_id else ""
+            placed.append(p if not tag else _retagged(p, tag))
+
+    for step in deferred_steps:
+        # §E.10: this safety-stock member was deferred rather than riding
+        # the committed portion's mount for free — re-run as its own solo
+        # fixture run, same consequence as a machine-selection dropout above.
+        solo = ChargedStep(step.order_id, step.fixture, step.locator, "fixture_change", run_index=-1)
+        for p in _place_fixture_run(
+            [solo], op_by_id, ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes,
+            heavy_operations, resolve_safety_stock,
+        ):
+            tag = "; safety stock deferred from mixed heavy-op run (would have delayed a committed order)" if p.production_order == step.order_id else ""
+            placed.append(p if not tag else _retagged(p, tag))
 
     return placed
+
+
+def _retagged(p: PlacedOperation, suffix: str) -> PlacedOperation:
+    """Appends a short suffix to an already-built PlacedOperation's REMARK —
+    PlacedOperation is frozen, so this is the one place that rebuilds it
+    rather than mutating in place."""
+    return replace(p, remark=(p.remark or "") + suffix)
 
 
 def _place_no_fixture_op(
@@ -319,6 +361,15 @@ def _place_no_fixture_op(
     machine_free_at[machine] = advance_clock(end, cooling_minutes, machine, availability)
     ready_at[op.production_order] = end  # this order's NEXT schedulable op must not start before this one ends
 
+    # §E.11's own REMARK ("No fixture/locator match - scheduled via plain
+    # routing") is a caveat, not an exclusion — still enriched with WHERE it
+    # landed, same as a fixture-run placement, so machine-utilization gaps
+    # are explainable here too.
+    note = f" - on {machine}"
+    if len(candidates) > 1:
+        note += f"; {len(candidates)} capable machines, earliest-free chosen"
+    remark = (op.remark + note) if op.remark else note.lstrip(" -")
+
     return PlacedOperation(
         production_order=op.production_order,
         operation_no=op.operation_no,
@@ -331,7 +382,7 @@ def _place_no_fixture_op(
         balance_qty=op.balance_qty,
         batch_key=op.batch_key,
         is_safety_stock=op.is_safety_stock,
-        remark=op.remark,
+        remark=remark,
     )
 
 
@@ -356,9 +407,74 @@ class TaskPoolPlan:
     op_by_id: dict[str, ScheduledOperation]
     fixture_runs: list[list[ChargedStep]]
     no_fixture_ops: list[ScheduledOperation]  # already priority-sorted
+    # Opt-in "soft consolidation beyond the window" (see dispatch_consolidation_
+    # window.is_soft_eligible): fixture_runs[i]'s index -> the list of
+    # out-of-window-but-soft-eligible solo-run ChargedSteps that SHARE run i's
+    # exact (fixture, locator) and could ride its mount for free, pending the
+    # full speculative check (dispatch_orchestrator's job — this layer only
+    # identifies the candidates, never decides or mutates timeline/pool state).
+    # Empty unless `allow_soft_consolidation` was passed to plan_task_pool.
+    soft_candidates_by_run: dict[int, list[ChargedStep]] = field(default_factory=dict)
 
 
-def plan_task_pool(ops: list[ScheduledOperation], today: date, window_days: int) -> TaskPoolPlan:
+def _compute_soft_candidates(
+    fixture_runs: list[list[ChargedStep]],
+    op_by_id: dict[str, ScheduledOperation],
+    today: date,
+    window_days: int,
+    soft_max_extra_days: int,
+) -> dict[int, list[ChargedStep]]:
+    """
+    Identifies which solo fixture runs are out-of-window-but-soft-eligible
+    candidates, and which OTHER (genuinely committed, in-window) run in the
+    same pool they could ride for free. Every out-of-window order is
+    ALWAYS alone in its own run under the hard §E.6 walk (the window's
+    `is_consolidation_eligible` filter removes it from every append pool
+    regardless of whose run is anchoring — not just the run it would have
+    matched — so it can never be appended to ANYTHING today, including
+    another out-of-window order's run). That's what makes "solo run" a
+    reliable signal for "this is a candidate," not just a coincidence.
+
+    Matches on the target run's own FIRST step's (fixture, locator) — the
+    exact same identity rule §E.4 steps (a)/(b) already use for a free
+    append — so a candidate only ever gets offered a merge it would have
+    qualified for on its own terms, had the window not blocked it.
+    A target that is itself a solo soft-candidate is skipped (this links
+    candidates to an established committed run, not to each other).
+    """
+    soft_candidates_by_run: dict[int, list[ChargedStep]] = {}
+    claimed: set[str] = set()
+    for run_idx, run_steps in enumerate(fixture_runs):
+        if len(run_steps) != 1:
+            continue
+        step = run_steps[0]
+        if step.order_id in claimed:
+            continue
+        cdd = op_by_id[step.order_id].cdd
+        if not soft_window_eligible(cdd, today, window_days, soft_max_extra_days):
+            continue
+        for target_idx, target_steps in enumerate(fixture_runs):
+            if target_idx == run_idx or not target_steps:
+                continue
+            if len(target_steps) == 1:
+                target_cdd = op_by_id[target_steps[0].order_id].cdd
+                if soft_window_eligible(target_cdd, today, window_days, soft_max_extra_days):
+                    continue  # don't link one candidate to another candidate
+            anchor = target_steps[0]
+            if anchor.fixture == step.fixture and anchor.locator == step.locator:
+                soft_candidates_by_run.setdefault(target_idx, []).append(step)
+                claimed.add(step.order_id)
+                break
+    return soft_candidates_by_run
+
+
+def plan_task_pool(
+    ops: list[ScheduledOperation],
+    today: date,
+    window_days: int,
+    allow_soft_consolidation: bool = False,
+    soft_max_extra_days: int = 0,
+) -> TaskPoolPlan:
     """Pure planning step — see `TaskPoolPlan`. No machine/timeline/pool involvement."""
     if not ops:
         return TaskPoolPlan({}, [], [])
@@ -406,8 +522,12 @@ def plan_task_pool(ops: list[ScheduledOperation], today: date, window_days: int)
         steps = run_priority_walk(batchable, is_consolidation_eligible=_is_eligible)
         fixture_runs = _group_steps_by_run(steps)
 
+    soft_candidates_by_run: dict[int, list[ChargedStep]] = {}
+    if fixture_runs and allow_soft_consolidation:
+        soft_candidates_by_run = _compute_soft_candidates(fixture_runs, op_by_id, today, window_days, soft_max_extra_days)
+
     no_fixture_sorted = sorted(no_fixture_ops, key=lambda o: ranks[o.production_order])
-    return TaskPoolPlan(op_by_id, fixture_runs, no_fixture_sorted)
+    return TaskPoolPlan(op_by_id, fixture_runs, no_fixture_sorted, soft_candidates_by_run)
 
 
 def dispatch_task_pool(

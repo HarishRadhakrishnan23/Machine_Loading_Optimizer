@@ -20,7 +20,7 @@ const TABS = [
   { key: 'overview', label: 'Overview', icon: '◈' },
   { key: 'pending', label: 'Pending Load Queue', icon: '☰' },
   { key: 'utilisation', label: 'Machine Utilisation', icon: '▦' },
-  { key: 'completed', label: 'Completed Materials', icon: '✓' },
+  { key: 'completed', label: 'Planned Completion', icon: '✓' },
   { key: 'compare', label: 'Run Comparison', icon: '⇄' },
   { key: 'download', label: 'Download Archive', icon: '⇩' },
   { key: 'orders', label: 'Order Board', icon: '▤', group: 'What-If (Engine 2)' },

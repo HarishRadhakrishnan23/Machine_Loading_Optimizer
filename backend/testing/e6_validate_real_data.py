@@ -87,17 +87,23 @@ def main():
     keys = [(r.production_order, r.operation_no) for r in rows]
     all_pass &= check("No duplicate (PRODUCTION_ORDER, OPERATION_NO) pairs", len(keys) == len(set(keys)))
 
-    # 3. REMARK coverage.
-    scheduled_clean = [r for r in rows if r.machine is not None and r.remark is None]
-    scheduled_no_fixture = [r for r in rows if r.machine is not None and r.remark is not None]
+    # 3. REMARK coverage. REMARK now also explains every SCHEDULED
+    # placement (not just excluded/caveat rows — see dispatch_engine.
+    # _placement_remark), so "no-fixture caveat" is distinguished by its
+    # distinctive substring, not by remark-is-None any more.
+    scheduled_no_fixture = [r for r in rows if r.machine is not None and r.remark and "No fixture/locator match" in r.remark]
+    scheduled_clean = [
+        r for r in rows
+        if r.machine is not None and not (r.remark and "No fixture/locator match" in r.remark)
+    ]
     excluded = [r for r in rows if r.machine is None]
     all_pass &= check(
         f"Every excluded row has a REMARK ({len(excluded)} excluded rows checked)",
         all(r.remark is not None for r in excluded),
     )
     all_pass &= check(
-        f"Every scheduled row either has no REMARK or the no-fixture caveat ({len(scheduled_no_fixture)} with caveat)",
-        all("No fixture/locator match" in r.remark for r in scheduled_no_fixture),
+        f"Every scheduled row has a non-empty REMARK explaining its placement ({len(rows) - len(excluded)} scheduled rows checked)",
+        all(r.remark for r in rows if r.machine is not None),
     )
     print(f"  scheduled (clean): {len(scheduled_clean)}, scheduled (no-fixture caveat): {len(scheduled_no_fixture)}, excluded: {len(excluded)}")
 

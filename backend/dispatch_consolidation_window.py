@@ -41,3 +41,22 @@ def is_consolidation_eligible(cdd: Optional[date], today: date, window_days: int
     rule change here has one place to land.
     """
     return is_within_window(cdd, today, window_days)
+
+
+def is_soft_eligible(cdd: Optional[date], today: date, window_days: int, max_extra_days: int) -> bool:
+    """
+    The opt-in "soft consolidation beyond the window" extension (config:
+    `allow_soft_consolidation_beyond_window` / `soft_consolidation_max_extra_days`).
+    §E.6 itself stays a hard rule with no exception — this is a SEPARATE,
+    bounded, speculatively-checked opt-in layered on top (see
+    dispatch_engine._compute_soft_candidates / dispatch_orchestrator's
+    soft-merge decision): a committed order (cdd is not None — safety stock
+    has its own §E.10 mechanism, this is not it) whose CDD falls PAST the
+    hard window but still within `max_extra_days` beyond it may be offered
+    as a candidate to ride an existing in-window run's already-mounted
+    fixture/locator, subject to the full speculative "delays no committed
+    order" check before it's ever actually accepted.
+    """
+    if cdd is None or is_within_window(cdd, today, window_days):
+        return False
+    return (cdd - today).days <= window_days + max_extra_days

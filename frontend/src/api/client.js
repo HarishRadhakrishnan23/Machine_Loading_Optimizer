@@ -73,8 +73,11 @@ export const exportArchivedRunExcel = (runId) =>
   downloadFile(`/schedule/archive/export?run_id=${encodeURIComponent(runId)}`, 'archive_export.xlsx')
 
 // ── Completed Materials ────────────────────────────────────────────────
-export const getCompletedMaterials = (start, end) =>
-  request(`/materials/completed?start=${start}&end=${end}`)
+export const getCompletedMaterials = (start, end, runId) =>
+  request(
+    `/materials/completed?start=${start}&end=${end}` +
+      (runId && runId !== 'current' ? `&run_id=${encodeURIComponent(runId)}` : ''),
+  )
 
 // ── Run Comparison ──────────────────────────────────────────────────────
 export const getArchivedRuns = () => request('/schedule/archive/runs')

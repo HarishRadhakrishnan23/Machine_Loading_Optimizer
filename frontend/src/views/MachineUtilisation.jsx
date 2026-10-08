@@ -47,8 +47,14 @@ export default function MachineUtilisation() {
       if (start < horizonStart || start >= horizonEnd) continue
       const minutes = (new Date(a.end_timestamp) - start) / 60000
       busyByMachine[a.machine_name] = (busyByMachine[a.machine_name] || 0) + minutes
-      if (!ordersByMachine[a.machine_name]) ordersByMachine[a.machine_name] = new Set()
-      ordersByMachine[a.machine_name].add(a.production_order)
+      if (!ordersByMachine[a.machine_name]) ordersByMachine[a.machine_name] = new Map()
+      // Per order, keep only its highest OPERATION_NO row's qty on this
+      // machine — avoids double-counting the same physical pieces across
+      // that order's multiple operation rows.
+      const existing = ordersByMachine[a.machine_name].get(a.production_order)
+      if (!existing || a.operation_no > existing.operation_no) {
+        ordersByMachine[a.machine_name].set(a.production_order, { operation_no: a.operation_no, qty: a.balance_qty || 0 })
+      }
       if (a.task) {
         loadByTask[a.task] = (loadByTask[a.task] || 0) + minutes
         if (!ordersByTask[a.task]) ordersByTask[a.task] = new Set()
@@ -64,7 +70,11 @@ export default function MachineUtilisation() {
     const machines = Array.from(new Set([...Object.keys(busyByMachine), ...Object.keys(availByMachine)]))
 
     const ordersQueued = machines
-      .map((m) => ({ machine: m, orders: ordersByMachine[m]?.size || 0 }))
+      .map((m) => {
+        const orderMap = ordersByMachine[m]
+        const qty = orderMap ? [...orderMap.values()].reduce((sum, o) => sum + o.qty, 0) : 0
+        return { machine: m, orders: orderMap?.size || 0, qty }
+      })
       .filter((d) => d.orders > 0)
       .sort((a, b) => b.orders - a.orders)
 
@@ -106,7 +116,7 @@ export default function MachineUtilisation() {
     <div>
       <PageHeader
         title="Machine Utilisation"
-        subtitle={`Orders queued, utilisation vs. ${OEE_TARGET}% OEE target, and load share by operation — ${HORIZON_DAYS}-day horizon`}
+        subtitle={`Orders queued, utilisation vs. ${OEE_TARGET}% OEE target, and load share by operation : ${HORIZON_DAYS}-day horizon`}
       />
       <div className="p-6 space-y-6">
         {loading && <LoadingPanel label="Loading machine utilisation…" />}
@@ -130,6 +140,10 @@ export default function MachineUtilisation() {
                       contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8 }}
                       labelStyle={{ color: '#f97316', fontWeight: 600 }}
                       itemStyle={{ color: '#e6edf3' }}
+                      formatter={(v, name, props) => [
+                        name === 'orders' ? `${v} orders · ${props.payload.qty} pieces` : v,
+                        'Queued',
+                      ]}
                     />
                     <Bar dataKey="orders" radius={[0, 4, 4, 0]} barSize={14} fill="#f97316" />
                   </BarChart>

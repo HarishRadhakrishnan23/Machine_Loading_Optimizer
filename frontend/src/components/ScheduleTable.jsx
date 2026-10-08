@@ -13,8 +13,10 @@ const COLUMNS = [
   { accessorKey: 'operation_no', header: 'Op' },
   { accessorKey: 'task', header: 'Task' },
   { accessorKey: 'machine_name', header: 'Machine', cell: (i) => i.getValue() ?? '—' },
-  { accessorKey: 'shift', header: 'Shift', cell: (i) => i.getValue() ?? '—' },
-  { accessorKey: 'scheduled_date', header: 'Date', cell: (i) => i.getValue() ?? '—' },
+  { accessorKey: 'scheduled_date', header: 'Start Date', cell: (i) => i.getValue() ?? '—' },
+  { accessorKey: 'shift', header: 'Start Shift', cell: (i) => i.getValue() ?? '—' },
+  { accessorKey: 'order_completion_date', header: 'End Date', cell: (i) => i.getValue() ?? '—' },
+  { accessorKey: 'order_completion_shift', header: 'End Shift', cell: (i) => i.getValue() ?? '—' },
   { accessorKey: 'balance_qty', header: 'Qty' },
   { accessorKey: 'batch_key', header: 'Batch Key', cell: (i) => <span className="font-mono text-xs">{i.getValue()}</span> },
   {

@@ -345,14 +345,17 @@ def export_archived_run(run_id: str = Query(...)):
 
 
 @app.get("/materials/completed", tags=["Engine 1"], response_model=CompletedMaterialsResponse)
-def get_completed_materials(start: date = Query(...), end: date = Query(...)):
+def get_completed_materials(start: date = Query(...), end: date = Query(...), run_id: Optional[str] = Query(None)):
     """
-    Completed Materials page — "how many materials completed between these
-    two dates" (your manager's ask). Counted from LIVE MCH_SCHEDULE_OUTPUT's
-    ORDER_COMPLETION_DATE only (never MCH_SCHEDULE_OUTPUT_ARCHIVE).
+    Planned Completed Materials page — "how many materials completed
+    between these two dates" (your manager's ask). `run_id` omitted (or
+    "current") reads LIVE MCH_SCHEDULE_OUTPUT; a real RUN_ID instead reads
+    that one frozen run from MCH_SCHEDULE_OUTPUT_ARCHIVE — the page's
+    "check a particular schedule" picker.
     """
+    effective_run_id = None if run_id in (None, "", "current") else run_id
     try:
-        order_count, total_quantity = read_completed_materials(start, end)
+        order_count, total_quantity = read_completed_materials(start, end, run_id=effective_run_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to compute completed materials: {e}")
     return CompletedMaterialsResponse(start=start, end=end, order_count=order_count, total_quantity=total_quantity)

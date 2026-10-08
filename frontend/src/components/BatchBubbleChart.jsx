@@ -5,15 +5,16 @@ import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContaine
 // Distinct, readable-on-dark categorical palette — one color per MOC (material
 // of construction), so e.g. a Carbon Steel batch and a Stainless Steel batch
 // at the same Size×Class are visually distinguishable, not just two orange dots.
+// Deliberately ordered so adjacent entries read as different hue families
+// (not just different shades of red/orange) when assigned in sequence.
 const PALETTE = [
-  '#f97316', '#38bdf8', '#a78bfa', '#f472b6', '#34d399',
-  '#fbbf24', '#818cf8', '#2dd4bf', '#f87171', '#facc15',
+  '#a78bfa', '#34d399', '#f472b6',
+  '#facc15', '#818cf8', '#2dd4bf', '#fb7185', '#a3e635',
 ]
-function colorFor(key) {
-  let hash = 0
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) % PALETTE.length
-  return PALETTE[Math.abs(hash) % PALETTE.length]
-}
+// The two dominant MOCs get fixed, familiar colors rather than whatever the
+// first-seen palette slot happens to land on — Carbon Steel orange, Stainless
+// Steel sky blue, matching the project's established color language elsewhere.
+const FIXED_MOC_COLORS = { 'Carbon Steel': '#f97316', 'Stainless Steel': '#38bdf8' }
 
 /**
  * SIZE × CLASS bubble plot, bubble = distinct order count sharing that
@@ -35,25 +36,62 @@ export default function BatchBubbleChart({ assignments }) {
       const design = parts[3] || ''
       if (!Number.isFinite(size) || !Number.isFinite(cls)) continue
       const k = a.batch_key
-      if (!byKey[k]) byKey[k] = { size, cls, moc, design, orders: new Set(), key: k }
-      byKey[k].orders.add(a.production_order)
+      if (!byKey[k]) byKey[k] = { size, cls, moc, design, orders: new Map(), key: k }
+      // Per order, keep only its highest OPERATION_NO row's qty — avoids
+      // double-counting the same physical pieces across that order's
+      // multiple operation rows (same convention as the backend's
+      // "last operation's balance" completed-materials count).
+      const existing = byKey[k].orders.get(a.production_order)
+      if (!existing || a.operation_no > existing.operation_no) {
+        byKey[k].orders.set(a.production_order, { operation_no: a.operation_no, qty: a.balance_qty || 0 })
+      }
     }
-    const points = Object.values(byKey).map((v) => ({
-      size: v.size,
-      cls: v.cls,
-      count: v.orders.size,
-      key: v.key,
-      moc: v.moc,
-      design: v.design,
-      color: colorFor(v.moc),
-    }))
 
-    // Legend: every distinct MOC present, ranked by total order count.
+    // Stable per-MOC color assignment (by first-seen order), ranked by total
+    // order count afterward for the legend — assignment is index-based, not
+    // hashed, so distinct MOCs never collide onto the same palette slot
+    // (hashing two differently-named MOCs into the same bucket was exactly
+    // why most bubbles all read as "reddish" before).
+    const mocOrder = []
+    for (const v of Object.values(byKey)) {
+      if (!mocOrder.includes(v.moc)) mocOrder.push(v.moc)
+    }
+    let nextPaletteIndex = 0
+    const colorForMoc = {}
+    for (const moc of mocOrder) {
+      if (FIXED_MOC_COLORS[moc]) {
+        colorForMoc[moc] = FIXED_MOC_COLORS[moc]
+      } else {
+        colorForMoc[moc] = PALETTE[nextPaletteIndex % PALETTE.length]
+        nextPaletteIndex++
+      }
+    }
+
+    const points = Object.values(byKey).map((v) => {
+      const qty = [...v.orders.values()].reduce((sum, o) => sum + o.qty, 0)
+      return {
+        size: v.size,
+        cls: v.cls,
+        count: v.orders.size,
+        qty,
+        key: v.key,
+        moc: v.moc,
+        design: v.design,
+        color: colorForMoc[v.moc],
+      }
+    })
+
     const mocCounts = {}
     for (const p of points) mocCounts[p.moc] = (mocCounts[p.moc] || 0) + p.count
     const mocLegend = Object.entries(mocCounts)
       .sort((a, b) => b[1] - a[1])
-      .map(([moc]) => ({ moc, color: colorFor(moc) }))
+      .map(([moc]) => ({ moc, color: colorForMoc[moc] }))
+
+    // Sorted ascending so a categorical Y axis (even row spacing regardless
+    // of the numeric gap between class values, e.g. 300->600 no wider a band
+    // than 100->300) lists them bottom-to-top in the right order — a
+    // category axis takes its row order from first appearance in the data.
+    points.sort((a, b) => a.cls - b.cls)
 
     return { points, mocLegend }
   }, [assignments])
@@ -67,8 +105,8 @@ export default function BatchBubbleChart({ assignments }) {
       <ResponsiveContainer width="100%" height={320}>
         <ScatterChart margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
           <CartesianGrid stroke="#30363d" />
-          <XAxis type="number" dataKey="size" name="Size" unit='"' tick={{ fontSize: 11, fill: '#8b949e' }} />
-          <YAxis type="number" dataKey="cls" name="Class" tick={{ fontSize: 11, fill: '#8b949e' }} />
+          <XAxis type="number" dataKey="size" name="Size" unit='"' domain={[0, 50]} tick={{ fontSize: 11, fill: '#8b949e' }} />
+          <YAxis type="category" dataKey="cls" name="Class" allowDuplicatedCategory={false} tick={{ fontSize: 11, fill: '#8b949e' }} />
           <ZAxis type="number" dataKey="count" range={[60, 900]} name="Orders" />
           <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<BubbleTooltip />} />
           <Scatter data={points} fillOpacity={0.8}>
@@ -123,6 +161,7 @@ function BubbleTooltip({ active, payload }) {
             <p>Class: {payload[0].payload.cls}</p>
             <p>MOC: {payload[0].payload.moc}</p>
             <p className="pt-1 mt-1 border-t border-ink-600 font-semibold">{payload[0].payload.count} orders</p>
+            <p className="font-semibold">{payload[0].payload.qty} pieces</p>
           </div>
         </motion.div>
       )}

@@ -5,5 +5,7 @@
   "protect_committed_over_safety": true,
   "planned_order_start_buffer_days": 1,
   "risk_safe_threshold_days": 5,
-  "dev_max_orders": 0
+  "dev_max_orders": 0,
+  "allow_soft_consolidation_beyond_window": true,
+  "soft_consolidation_max_extra_days": 90
 }

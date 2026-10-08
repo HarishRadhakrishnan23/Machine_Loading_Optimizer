@@ -314,26 +314,38 @@ def write_sim_results(sim_rows: list[dict], sim_id: str) -> int:
 # Frontend-support reads (Overview / Completed Materials / Run Comparison pages)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def read_completed_materials(start_date: date, end_date: date) -> tuple[int, int]:
+def read_completed_materials(start_date: date, end_date: date, run_id: Optional[str] = None) -> tuple[int, int]:
     """
     "Number of materials completed from date X to date Y" (manager's ask,
-    CLAUDE.md/Frontend doc) — counted from the LIVE MCH_SCHEDULE_OUTPUT only
-    (never the archive), keyed on ORDER_COMPLETION_DATE. One row per order is
-    used (its own last/highest OPERATION_NO row) to avoid double-counting an
-    order's BALANCE_QTY across every one of its operation rows.
+    CLAUDE.md/Frontend doc), keyed on ORDER_COMPLETION_DATE. One row per
+    order is used (its own last/highest OPERATION_NO row) to avoid
+    double-counting an order's BALANCE_QTY across every one of its
+    operation rows.
+
+    `run_id=None` (default) reads the LIVE MCH_SCHEDULE_OUTPUT (unchanged
+    behavior). A real RUN_ID instead reads that one frozen run from the
+    append-only MCH_SCHEDULE_OUTPUT_ARCHIVE — the Planned Completed
+    Materials page's "check a particular schedule" picker.
 
     Returns (order_count, total_quantity).
     """
+    table = "MCH_SCHEDULE_OUTPUT" if run_id is None else "MCH_SCHEDULE_OUTPUT_ARCHIVE"
+    run_filter = "" if run_id is None else "AND RUN_ID = :run_id"
+    params = {"start_date": start_date.strftime("%Y-%m-%d"), "end_date": end_date.strftime("%Y-%m-%d")}
+    if run_id is not None:
+        params["run_id"] = run_id
+
     with get_connection() as conn:
         df = pd.read_sql(
-            """
+            f"""
             SELECT PRODUCTION_ORDER, OPERATION_NO, BALANCE_QTY
-            FROM MCH_SCHEDULE_OUTPUT
+            FROM {table}
             WHERE ORDER_COMPLETION_DATE BETWEEN TO_DATE(:start_date, 'YYYY-MM-DD')
                                             AND TO_DATE(:end_date, 'YYYY-MM-DD')
+            {run_filter}
             """,
             conn,
-            params={"start_date": start_date.strftime("%Y-%m-%d"), "end_date": end_date.strftime("%Y-%m-%d")},
+            params=params,
         )
 
     if df.empty:
