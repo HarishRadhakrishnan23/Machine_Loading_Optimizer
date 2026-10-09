@@ -66,7 +66,10 @@ def main():
     pool = build_device_pool(fi_df)
     known_devices = frozenset(pool.quantities.keys())
     availability = build_availability(mm_df, md_df, holiday_df)
-    chains = build_order_chains(raw_rows, routing_index, fixture_index, known_devices)
+    known_machines = frozenset(mm_df["WORK_CENTER"].astype(str).str.strip()) | frozenset(
+        md_df["WORK_CENTER"].astype(str).str.strip()
+    )
+    chains = build_order_chains(raw_rows, routing_index, fixture_index, known_devices, known_machines)
 
     print(f"Loaded {len(wip_df)} WIP rows -> {len(chains)} orders")
 

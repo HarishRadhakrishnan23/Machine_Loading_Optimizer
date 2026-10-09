@@ -17,10 +17,13 @@ const ROW_HEIGHT = 34
 /**
  * Gantt chart: rows = machines, x-axis = real continuous time (START_TIMESTAMP →
  * END_TIMESTAMP, Model E §E.14) — NOT the retired shift-offset lattice. Bars are
- * positioned/sized by actual elapsed minutes, can span shifts/days. Rows whose
- * REMARK carries the "no fixture/locator match" caveat (still scheduled, §E.11)
- * render normally but flag it in the tooltip; fully excluded rows (no machine,
- * no timestamps) never reach this chart at all.
+ * positioned/sized by actual elapsed minutes, can span shifts/days. Every
+ * SCHEDULED row carries a REMARK explaining its placement (§E.12) — including
+ * the §E.11 "no fixture/locator match" caveat, which is a normal outcome, not
+ * a problem, so it renders exactly like any other bar (no warning styling);
+ * the REMARK is still available in the tooltip for anyone who wants the
+ * detail. Fully excluded rows (no machine, no timestamps) never reach this
+ * chart at all.
  */
 export default function GanttChart({ assignments }) {
   const [hovered, setHovered] = useState(null)
@@ -105,7 +108,15 @@ export default function GanttChart({ assignments }) {
                   .filter((b) => b.machine_name === m)
                   .map((b, i) => {
                     const cellKey = `${m}-${i}`
-                    const hasCaveat = Boolean(b.remark)
+                    // A missing fixture_id just means this operation had no
+                    // fixture/locator match and was scheduled via plain
+                    // routing (§E.11) — a normal outcome, not a problem, so
+                    // it's not flagged visually here any more (it used to be
+                    // via `remark`, but every SCHEDULED row carries one now
+                    // — placement reasoning, see
+                    // dispatch_engine._placement_remark — so that signal
+                    // would flag every single bar). Still surfaced in the
+                    // tooltip below for anyone who wants the detail.
                     const color = colorFor(b.task || b.production_order)
                     return (
                       <div
@@ -117,7 +128,6 @@ export default function GanttChart({ assignments }) {
                           height: ROW_HEIGHT - 12,
                           backgroundColor: color,
                           opacity: hovered && hovered !== cellKey ? 0.35 : 0.92,
-                          borderBottom: hasCaveat ? '2px dashed #eab308' : 'none',
                         }}
                         onMouseEnter={() => setHovered(cellKey)}
                         onMouseLeave={() => setHovered(null)}
@@ -125,7 +135,7 @@ export default function GanttChart({ assignments }) {
                           `${b.production_order} · Op ${b.operation_no} (${b.task || '—'})\n` +
                           `${b.balance_qty} pcs${b.is_safety_stock ? ' · safety stock' : ''}\n` +
                           `${new Date(b.start_timestamp).toLocaleString()} → ${new Date(b.end_timestamp).toLocaleString()}` +
-                          (hasCaveat ? `\n⚠ ${b.remark}` : '')
+                          (b.remark ? `\n${b.remark}` : '')
                         }
                       >
                         <span className="truncate px-1.5 text-ink-950 drop-shadow-sm">
@@ -140,8 +150,7 @@ export default function GanttChart({ assignments }) {
         </div>
       </div>
       <p className="mt-2 text-[11px] text-text-faint">
-        Bar position/width ∝ real START_TIMESTAMP → END_TIMESTAMP (continuous time) · dashed amber underline =
-        no fixture/locator match caveat · hover a bar for detail.
+        Bar position/width ∝ real START_TIMESTAMP → END_TIMESTAMP (continuous time) · hover a bar for placement detail.
       </p>
     </div>
   )

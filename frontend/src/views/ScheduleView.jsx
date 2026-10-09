@@ -19,7 +19,15 @@ const FILTERS = [
 
 function classify(a) {
   if (!a.machine_name) return 'excluded'
-  if (a.remark) return 'no_fixture'
+  // Every SCHEDULED row carries a REMARK now (placement reasoning — see
+  // dispatch_engine._placement_remark), not just the §E.11 no-fixture
+  // caveat, so `remark` truthy is no longer the right signal here (it used
+  // to make every single scheduled row misclassify as "no_fixture", which
+  // is why Scheduled showed 0 on an otherwise fully-working schedule).
+  // `fixture_id` is null only for that specific caveat — a real fixture run
+  // always has one, even the literal "NA" sentinel (no device needed, still
+  // a genuine match).
+  if (!a.fixture_id) return 'no_fixture'
   return 'scheduled'
 }
 
@@ -89,7 +97,10 @@ export default function ScheduleView() {
             {/* KPI row */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <StatTile label="Scheduled" value={stats.scheduled} sub="operations" tone="brand" />
-              <StatTile label="No-fixture caveat" value={stats.noFixture} sub="operations" tone="atrisk" />
+              {/* Neutral tone, not a warning tone — this just means the
+                  operation has no fixture/locator on file, not that
+                  anything is wrong; it's still a normal scheduled row. */}
+              <StatTile label="No-fixture caveat" value={stats.noFixture} sub="operations" tone="neutral" />
               <StatTile label="Excluded" value={stats.excluded} sub="operations" tone="breach" />
               <StatTile label="Safety stock" value={stats.safetyStock} sub="operations" tone="sky" />
             </div>

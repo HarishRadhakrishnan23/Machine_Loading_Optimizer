@@ -49,6 +49,25 @@ dispatch_pool.parse_devices before this check ever runs). Per explicit
 confirmation, this fails loudly for just that operation — REMARK explains
 it, never scheduled — rather than guessing a device quantity or silently
 dropping the pool constraint for an unregistered physical device.
+
+A third such addition, found via a live `/schedule/generate` crash
+("date value out of range"): EXCLUDED_NO_AVAILABILITY_DATA. A machine can
+have a routing entry (MCH_MACHINE_PRIORITY) for this exact SIZE~CLASS~MOC~
+DESIGN~TASK combo but ZERO rows of its own in MCH_MACHINE_AVAILABILITY —
+not "closed," genuinely absent, confirmed on live data (machine 2PBX74).
+dispatch_timeline's availability lookup has to return SOME number for a
+(machine, shift) pair it has no data for at all, and 0.0 (closed) is the
+only honest answer — CLAUDE.md never licenses inventing a plausible-looking
+open shift for a machine the ERP has no data for. But a machine closed on
+EVERY shift forever is a dead end `next_open_instant`'s search can never
+escape; left unhandled, it searches forward one day at a time without limit
+until Python's own `date` arithmetic overflows deep inside the shift-advance
+loop, surfacing as an opaque 500 with no indication which machine or order
+caused it. Rather than silently scheduling against a machine with zero real
+data (or crashing obscurely), this is treated exactly like the unknown-
+fixture-device case above: the operation is excluded, REMARK names the gap,
+and the ERP owner has an actionable row to go fix — see
+`dispatch_orders.build_order_chains`'s `known_machines` parameter.
 """
 
 from __future__ import annotations
@@ -68,6 +87,7 @@ class ScopeOutcome(str, Enum):
     EXCLUDED_PN10 = "excluded_pn10"
     EXCLUDED_NO_ROUTING = "excluded_no_routing"
     EXCLUDED_NO_MACHINE_FOR_COMBO = "excluded_no_machine_for_combo"  # see module docstring
+    EXCLUDED_NO_AVAILABILITY_DATA = "excluded_no_availability_data"  # see module docstring
     EXCLUDED_UNKNOWN_FIXTURE_DEVICE = "excluded_unknown_fixture_device"  # see module docstring
     SCHEDULED_NO_FIXTURE = "scheduled_no_fixture"
     SCHEDULED = "scheduled"
@@ -89,6 +109,9 @@ REMARKS: dict[ScopeOutcome, Optional[str]] = {
     ScopeOutcome.EXCLUDED_NO_MACHINE_FOR_COMBO: (
         "TASK has routing entries, but none match this exact SIZE~CLASS~MOC~DESIGN"
     ),
+    ScopeOutcome.EXCLUDED_NO_AVAILABILITY_DATA: (
+        "No availability data for any capable machine - cannot schedule"
+    ),
     ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE: (
         "Fixture/locator device not in inventory - cannot schedule"
     ),
@@ -104,6 +127,7 @@ _EXCLUDED_OUTCOMES = frozenset(
         ScopeOutcome.EXCLUDED_PN10,
         ScopeOutcome.EXCLUDED_NO_ROUTING,
         ScopeOutcome.EXCLUDED_NO_MACHINE_FOR_COMBO,
+        ScopeOutcome.EXCLUDED_NO_AVAILABILITY_DATA,
         ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE,
     }
 )
@@ -132,7 +156,8 @@ class ScopeCheckInputs:
     class_val: str
     has_routing_entry: bool  # this order's TASK appears anywhere in MCH_MACHINE_PRIORITY
     has_machine_for_combo: bool  # >=1 MCH_MACHINE_PRIORITY row matches this exact SIZE~CLASS~MOC~DESIGN + TASK
-    has_fixture_locator_match: bool  # (SIZE,CLASS,MOC,DESIGN,TASK) present in MCH_ITEMWISE_FIXTURE_LOCATOR for >=1 candidate machine
+    has_known_machine_for_combo: bool = True  # >=1 of those candidate machines has its own row in MCH_MACHINE_AVAILABILITY — see EXCLUDED_NO_AVAILABILITY_DATA
+    has_fixture_locator_match: bool = False  # (SIZE,CLASS,MOC,DESIGN,TASK) present in MCH_ITEMWISE_FIXTURE_LOCATOR for >=1 candidate machine
     fixture_locator_devices_known: bool = True  # only consulted when has_fixture_locator_match is True — see EXCLUDED_UNKNOWN_FIXTURE_DEVICE
 
 
@@ -158,6 +183,8 @@ def classify_operation(inputs: ScopeCheckInputs) -> ScopeOutcome:
         return ScopeOutcome.EXCLUDED_NO_ROUTING
     if not inputs.has_machine_for_combo:
         return ScopeOutcome.EXCLUDED_NO_MACHINE_FOR_COMBO
+    if not inputs.has_known_machine_for_combo:
+        return ScopeOutcome.EXCLUDED_NO_AVAILABILITY_DATA
     if not inputs.has_fixture_locator_match:
         return ScopeOutcome.SCHEDULED_NO_FIXTURE
     if not inputs.fixture_locator_devices_known:

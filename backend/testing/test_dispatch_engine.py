@@ -115,8 +115,17 @@ def test_no_fixture_op_bypasses_batching_and_pool():
     check("placed on its own machine M2", plain_row.machine == "M2")
 
 
-def test_run_start_deferred_to_latest_ready_member():
-    print("\n=== Run start waits for the latest-ready member in the run ===")
+def test_run_start_is_per_member_not_gated_by_a_later_members_readiness():
+    print("\n=== A later member's own readiness delays only ITS OWN step, not the whole run ===")
+    # Real bug, caught via live-data E-6 diagnosis of a reported idle-machine
+    # gap (CLAUDE.md §E.7): this run used to compute one upfront max() over
+    # EVERY member's ready_at before placing anything, so O1 — ready at
+    # day-zero — sat waiting (and the machine sat fully idle) until O2's much
+    # later readiness caught up, even though O1 could have started at once.
+    # Fixed: each step starts at max(this machine's cursor after the
+    # PRECEDING step in the run, that step's OWN ready_at) — O1 is unaffected
+    # by O2's late readiness; only O2's own step (and only if the machine
+    # would otherwise have been free before O2 is ready) waits.
     op1 = make_op("O1", cdd=date(2026, 3, 1), qty=10)
     op2 = make_op("O2", cdd=date(2026, 3, 2), qty=5)  # same fixture/locator/batch_key -> batches with O1
     late_ready = TimePoint(DAY0, 0, 500.0)
@@ -124,7 +133,10 @@ def test_run_start_deferred_to_latest_ready_member():
     machine_free_at = {}
     pool = DevicePool(quantities={"FIX-A": 1, "LOC-1": 1})
     placed = dispatch_task_pool([op1, op2], ready_at, machine_free_at, pool, availability, today=DAY0, window_days=60, cooling_minutes=20, day_zero=DAY0)
-    check("O1 (placed first) still starts at O2's later ready time", placed[0].start == late_ready)
+    check("O1 starts immediately at day-zero, NOT deferred by O2's later readiness", placed[0].start == start_of_day(DAY0))
+    check("O1 still finishes its normal duration (FCT+LCT+LUT*10=60)", placed[0].end.minute == 60.0)
+    check("O2 (appended for free, charge=none) waits for its OWN readiness, not before", placed[1].start == late_ready)
+    check("O2 duration = LUT*5 = 10, unaffected by the wait", placed[1].end.minute - placed[1].start.minute == 10.0)
 
 
 def test_fixture_pool_conflict_defers_a_later_task_pool():
@@ -235,7 +247,7 @@ def test_light_op_never_consults_the_resolver():
 if __name__ == "__main__":
     test_two_orders_same_batch_key_combine_with_no_extra_charge()
     test_no_fixture_op_bypasses_batching_and_pool()
-    test_run_start_deferred_to_latest_ready_member()
+    test_run_start_is_per_member_not_gated_by_a_later_members_readiness()
     test_fixture_pool_conflict_defers_a_later_task_pool()
     test_consolidation_window_hard_rule_prevents_batching_beyond_window()
     test_partial_coverage_member_is_dropped_and_rescheduled_solo()

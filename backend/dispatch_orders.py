@@ -231,6 +231,7 @@ def build_order_chains(
     routing_index: RoutingIndex,
     fixture_index: FixtureIndex,
     known_devices: Optional[frozenset[str]] = None,
+    known_machines: Optional[frozenset[str]] = None,
 ) -> list[OrderChain]:
     """
     Classify and group every raw WIP row into one OrderChain per PRODUCTION_ORDER.
@@ -243,6 +244,18 @@ def build_order_chains(
     dispatch_scope.py). Default None skips this check entirely (every match
     is treated as having known devices) — existing callers that don't pass an
     inventory see unchanged behavior.
+
+    `known_machines`: the set of WORK_CENTERs that have at least one row of
+    their own in MCH_MACHINE_AVAILABILITY (any shift). When supplied, a
+    routing candidate machine missing from this set is dropped before
+    machine selection ever sees it, and if that leaves zero candidates the
+    operation is excluded (EXCLUDED_NO_AVAILABILITY_DATA) instead of being
+    scheduled against a machine the engine has no availability data for at
+    all — found via a live `/schedule/generate` crash ("date value out of
+    range": a machine with zero availability rows is permanently closed on
+    every shift, so the timeline's open-shift search runs forever and
+    eventually overflows `date` arithmetic). Default None skips this check
+    entirely, same as `known_devices` above.
     """
     chains: dict[str, tuple[list[ScheduledOperation], list[ExcludedOperation]]] = {}
 
@@ -250,9 +263,21 @@ def build_order_chains(
         schedulable_list, excluded_list = chains.setdefault(row.production_order, ([], []))
 
         routing_candidates = routing_index.candidates_for(row.size_inch, row.class_val, row.moc, row.design, row.task)
+        # Candidates actually usable for PLACEMENT — never a machine with
+        # zero availability data (see EXCLUDED_NO_AVAILABILITY_DATA). Kept
+        # distinct from `routing_candidates` (the full, unfiltered combo
+        # match) so EXCLUDED_NO_MACHINE_FOR_COMBO ("no routing row matches
+        # this combo at all") and EXCLUDED_NO_AVAILABILITY_DATA ("routing
+        # rows exist, but none of them have availability data") stay
+        # distinguishable outcomes with their own REMARK.
+        known_routing_candidates = (
+            routing_candidates if known_machines is None
+            else [c for c in routing_candidates if c[0] in known_machines]
+        )
+        has_known_machine = len(routing_candidates) == 0 or len(known_routing_candidates) > 0
         matching_timings = [
             fixture_index.lookup(row.size_inch, row.class_val, row.moc, row.design, row.task, m)
-            for m, _ in routing_candidates
+            for m, _ in known_routing_candidates
         ]
         matching_timings = [t for t in matching_timings if t is not None]
         has_fixture_match = len(matching_timings) > 0
@@ -272,6 +297,7 @@ def build_order_chains(
             class_val=row.class_val,
             has_routing_entry=routing_index.has_routing_entry(row.task),
             has_machine_for_combo=len(routing_candidates) > 0,
+            has_known_machine_for_combo=has_known_machine,
             has_fixture_locator_match=has_fixture_match,
             fixture_locator_devices_known=devices_known,
         )
@@ -304,7 +330,7 @@ def build_order_chains(
                 order_date=row.order_date,
                 order_status=row.order_status,
                 production_start_date=row.production_start_date,
-                candidates=_build_candidates(row, routing_candidates, fixture_index, outcome),
+                candidates=_build_candidates(row, known_routing_candidates, fixture_index, outcome),
                 scope_outcome=outcome,
                 remark=remark_for(outcome),
             )

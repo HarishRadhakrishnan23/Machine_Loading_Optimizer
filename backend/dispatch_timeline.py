@@ -69,6 +69,20 @@ def _next_shift(day: date, shift_index: int) -> tuple[date, int]:
     return day + timedelta(days=1), 0
 
 
+# A machine genuinely closed on every shift, forever (e.g. a routing entry
+# with zero rows of its own in MCH_MACHINE_AVAILABILITY/_BY_DATE — a real,
+# confirmed live-data gap, not hypothetical) has no open instant to find, and
+# without a bound the search below runs one day at a time without limit until
+# Python's own `date` arithmetic overflows deep inside `_next_shift`, surfacing
+# as an opaque "date value out of range" 500 with no indication which machine
+# or order caused it. Callers are expected to filter out machines with zero
+# availability data before they ever reach here (see dispatch_orders.
+# build_order_chains's `known_machines` / EXCLUDED_NO_AVAILABILITY_DATA) — this
+# is only the last-resort net for a gap that check didn't anticipate, turning
+# the crash into one clear, diagnosable error instead.
+_MAX_SHIFT_SEARCH_DAYS = 3650  # ~10 years — far beyond any real schedule horizon
+
+
 def next_open_instant(point: TimePoint, machine: str, available: AvailabilityFn) -> TimePoint:
     """
     The next instant at/after `point` where `machine`'s shift is actually open
@@ -78,12 +92,17 @@ def next_open_instant(point: TimePoint, machine: str, available: AvailabilityFn)
     duration.
     """
     day, shift_index, minute = point.day, point.shift_index, point.minute
-    while True:
+    for _ in range(_MAX_SHIFT_SEARCH_DAYS * len(SHIFT_ORDER)):
         cap = available(machine, day, SHIFT_ORDER[shift_index])
         if cap > 0 and minute < cap:
             return TimePoint(day, shift_index, minute)
         day, shift_index = _next_shift(day, shift_index)
         minute = 0.0
+    raise RuntimeError(
+        f"Machine {machine!r} has no open shift within {_MAX_SHIFT_SEARCH_DAYS} days of {point!r} — "
+        "it likely has zero rows in MCH_MACHINE_AVAILABILITY/_BY_DATE and should have been excluded "
+        "upstream (see dispatch_orders.build_order_chains's known_machines parameter)."
+    )
 
 
 def advance_clock(point: TimePoint, minutes: float, machine: str, available: AvailabilityFn) -> TimePoint:

@@ -104,9 +104,30 @@ def _simulate_run_timing(
     steps: list[ChargedStep],
     machine: str,
     run_start: TimePoint,
+    ready_at: dict[str, TimePoint],
     availability: AvailabilityFn,
-) -> tuple[list[tuple[ChargedStep, TimePoint, TimePoint]], TimePoint]:
-    """Pure timing simulation for one fixture run on `machine`, starting at `run_start`. No pool mutation."""
+) -> tuple[list[tuple[ChargedStep, TimePoint, TimePoint]], TimePoint, TimePoint]:
+    """
+    Pure timing simulation for one fixture run on `machine`, attempting to
+    start at `run_start` (the machine/pool-side earliest attempt only — never
+    a sibling step's own readiness baked in here by the caller). Each step
+    individually starts at `max(the machine's cursor after the PRECEDING step
+    in this run, that step's OWN ready_at)` — never gated by a later-ordered
+    sibling's readiness.
+
+    This is the fix for a real bug found via live-data E-6 validation: the
+    run used to compute one upfront `max()` over every member's ready_at
+    before placing anything, pinning the WHOLE run's start — and leaving the
+    machine fully idle the entire time — to whichever single member happened
+    to become ready last, even when every other member had been sitting
+    ready for days or weeks. CLAUDE.md §E.7 is explicit that timing is
+    governed by fixture/locator/machine availability, not by an artificial
+    whole-batch gate; this now actually does that per-member.
+
+    No pool mutation. Returns (per-step results, the run's actual start —
+    the FIRST step's own actual start, which may be later than `run_start`
+    if even the first-priority member wasn't ready yet — and the run's end).
+    """
     cursor = run_start
     results: list[tuple[ChargedStep, TimePoint, TimePoint]] = []
     for step in steps:
@@ -114,10 +135,12 @@ def _simulate_run_timing(
         candidate = next(c for c in op.candidates if c.machine == machine)
         times = FixtureLocatorTimes(candidate.fixture_change_time, candidate.locator_change_time, candidate.load_unload_time)
         duration = compute_batch_duration(step.charge_type, op.balance_qty, times) + op.cycle_time * op.balance_qty
-        end = advance_clock(cursor, duration, machine, availability)
-        results.append((step, cursor, end))
+        step_start = max(cursor, ready_at[step.order_id])
+        end = advance_clock(step_start, duration, machine, availability)
+        results.append((step, step_start, end))
         cursor = end
-    return results, cursor
+    run_start_actual = results[0][1] if results else run_start
+    return results, run_start_actual, cursor
 
 
 def _find_feasible_fixture_run(
@@ -126,6 +149,7 @@ def _find_feasible_fixture_run(
     machine: str,
     fixture: str,
     earliest_start: TimePoint,
+    ready_at: dict[str, TimePoint],
     availability: AvailabilityFn,
     pool: DevicePool,
     max_attempts: int = 200,
@@ -135,8 +159,13 @@ def _find_feasible_fixture_run(
     timing at a candidate start, check the fixture has capacity for that
     whole span, and if not, retry from the pool's earliest-release hint
     (never a guess — `has_capacity` is re-checked every attempt, per
-    dispatch_pool.py's own contract). Returns (per-step results, run_start
-    actually used, run_end).
+    dispatch_pool.py's own contract). `earliest_start` is only the
+    machine/pool-side earliest attempt now — each step's own readiness
+    (`ready_at`) is applied per-step inside `_simulate_run_timing`, never
+    pre-maxed across every member here (see that function's docstring for
+    why). Returns (per-step results, run_start actually used — the first
+    step's own actual start, which can differ from `earliest_start` if even
+    the first-priority member wasn't ready yet — run_end).
 
     Uses the `_multi` pool methods — FIXTURE is never a "+"-joined compound
     in practice, but it CAN be the literal "NA" (confirmed real-data
@@ -147,12 +176,12 @@ def _find_feasible_fixture_run(
     """
     candidate_start = earliest_start
     for _ in range(max_attempts):
-        results, run_end = _simulate_run_timing(op_by_id, steps, machine, candidate_start, availability)
-        if pool.has_capacity_multi(fixture, candidate_start, run_end):
-            return results, candidate_start, run_end
-        hint = pool.earliest_release_hint_multi(fixture, candidate_start)
+        results, run_start, run_end = _simulate_run_timing(op_by_id, steps, machine, candidate_start, ready_at, availability)
+        if pool.has_capacity_multi(fixture, run_start, run_end):
+            return results, run_start, run_end
+        hint = pool.earliest_release_hint_multi(fixture, run_start)
         if hint is None:
-            raise RuntimeError(f"Fixture {fixture!r} reported blocked with no release hint at {candidate_start}")
+            raise RuntimeError(f"Fixture {fixture!r} reported blocked with no release hint at {run_start}")
         candidate_start = next_open_instant(hint, machine, availability)
     raise RuntimeError(f"Could not find a feasible start for fixture {fixture!r} within {max_attempts} attempts")
 
@@ -267,13 +296,19 @@ def _place_fixture_run(
     covered_steps = _recompute_charges([s for s in run_steps if s.order_id in selection.covered_order_ids])
     dropped_steps = [s for s in run_steps if s.order_id in selection.dropped_order_ids]
 
+    # Each member's own readiness is now handled PER-STEP inside
+    # _find_feasible_fixture_run / _simulate_run_timing — never pre-maxed
+    # across every member here. Pre-maxing was a real bug (caught via live-
+    # data E-6 diagnosis of a reported idle-machine gap): it pinned the
+    # WHOLE run's start, and left the machine fully idle the entire time, to
+    # whichever single member happened to become ready last, even when every
+    # other member had been sitting ready for days or weeks. See
+    # CLAUDE.md §E.7 and _simulate_run_timing's docstring.
     earliest_start = machine_free_at.get(machine, start_of_day(day_zero))
-    for step in covered_steps:
-        earliest_start = max(earliest_start, ready_at[step.order_id])
 
     fixture = covered_steps[0].fixture
     results, run_start, run_end = _find_feasible_fixture_run(
-        op_by_id, covered_steps, machine, fixture, earliest_start, availability, pool
+        op_by_id, covered_steps, machine, fixture, earliest_start, ready_at, availability, pool
     )
 
     pool.reserve_multi(fixture, run_start, run_end)

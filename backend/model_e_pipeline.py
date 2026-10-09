@@ -65,7 +65,20 @@ def generate_schedule(config: dict, run_date: date) -> ScheduleGenerateResult:
     known_devices = frozenset(pool.quantities.keys())
     availability = build_availability(machine_master_df, machine_daily_df, holiday_df)
 
-    order_chains = build_order_chains(raw_rows, routing_index, fixture_index, known_devices)
+    # Machines with zero rows anywhere in MCH_MACHINE_AVAILABILITY /
+    # MCH_MACHINE_AVAILABILITY_BY_DATE are permanently "closed" per
+    # ResolvedAvailability's own honest default (0.0 — it can't invent an
+    # open shift the ERP never reported). A routing candidate pointing at
+    # one of those is a dead end the engine can never place — confirmed live
+    # (machine 2PBX74: a routing entry, zero availability rows, which made
+    # next_open_instant's open-shift search run forever and crash with
+    # "date value out of range"). Excluding it up front (see dispatch_scope.
+    # EXCLUDED_NO_AVAILABILITY_DATA) turns that crash into a normal REMARK.
+    known_machines = frozenset(machine_master_df["WORK_CENTER"].astype(str).str.strip()) | frozenset(
+        machine_daily_df["WORK_CENTER"].astype(str).str.strip()
+    )
+
+    order_chains = build_order_chains(raw_rows, routing_index, fixture_index, known_devices, known_machines)
 
     final_rows = run_dispatch_simulation(
         order_chains,
@@ -87,8 +100,17 @@ def generate_schedule(config: dict, run_date: date) -> ScheduleGenerateResult:
     delete_schedule_output()
     rows_written = write_schedule_output(oracle_rows)
 
-    scheduled = sum(1 for r in final_rows if r.machine is not None and r.remark is None)
-    scheduled_no_fixture = sum(1 for r in final_rows if r.machine is not None and r.remark is not None)
+    # "No-fixture caveat" is identified by fixture_id being None, not by
+    # remark being None — every SCHEDULED row carries a non-empty REMARK now
+    # (placement reasoning, see dispatch_engine._placement_remark), so a
+    # remark-is-None check would misclassify every clean scheduled row as
+    # excluded/caveat (a real bug: it made this exact stat report 0
+    # scheduled on a fully-working schedule). fixture_id is None only for
+    # the §E.11 no-fixture/locator-match fallback — a real fixture run's
+    # fixture_id is always set, even to the literal "NA" sentinel (no
+    # physical device needed, still a genuine fixture/locator match).
+    scheduled = sum(1 for r in final_rows if r.machine is not None and r.fixture_id is not None)
+    scheduled_no_fixture = sum(1 for r in final_rows if r.machine is not None and r.fixture_id is None)
     excluded = sum(1 for r in final_rows if r.machine is None)
 
     return ScheduleGenerateResult(
