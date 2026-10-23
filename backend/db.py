@@ -130,6 +130,28 @@ def read_fixture_locator_master() -> pd.DataFrame:
         return pd.read_sql("SELECT * FROM MCH_ITEMWISE_FIXTURE_LOCATOR", conn)
 
 
+def read_machine_fnl_master() -> pd.DataFrame:
+    """
+    Model F: read the unified routing + fixture/locator master from
+    MCH_MACHINE_FNL_MASTER — replaces the separate MCH_MACHINE_PRIORITY /
+    MCH_ITEMWISE_FIXTURE_LOCATOR reads (`read_routing_master` /
+    `read_fixture_locator_master`, kept above for Model E history/rollback).
+
+    Grain: one row per (SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER).
+    FIXTURE_ID/LOCATOR_ID/the three timing columns are NULL on a routing-only
+    row (no fixture/locator assigned for this combo+task+machine) — CLAUDE.md
+    §E.15.
+
+    Returns: DataFrame with columns (COMPANY, SIZE_INCH, CLASS, MOC, DESIGN,
+    COMBINATION, TASK, PRIORITY, WORK_CENTER, FIXTURE_ID, LOCATOR_ID,
+    FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME, LOAD_UNLOAD_TIME, USER_ID,
+    USER_DATE). COMBINATION is ERP display text only — never parsed for the
+    batch key (CLAUDE.md §E.15's own warning).
+    """
+    with get_connection() as conn:
+        return pd.read_sql("SELECT * FROM MCH_MACHINE_FNL_MASTER", conn)
+
+
 def read_fixture_locator_inventory() -> pd.DataFrame:
     """
     Read physical fixture/locator inventory counts from MCH_FIXTURE_LOCATOR view.

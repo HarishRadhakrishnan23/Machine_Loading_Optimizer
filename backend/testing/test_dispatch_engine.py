@@ -244,6 +244,49 @@ def test_light_op_never_consults_the_resolver():
     check("both placed without raising", len(placed) == 2)
 
 
+def test_shift_spanning_op_splits_into_quantity_slices():
+    print("\n=== Model F §E.18: a shift-spanning placement splits into quantity slices ===")
+    # 10 pieces @ 10 min/piece, no fixture/locator charge (isolates the pure
+    # per-piece slicing math) — a 55-minute shift fits exactly 5 pieces
+    # (5*10=50<=55, a 6th would need 60>55), so piece 6 pushes into the next
+    # shift. Matches the user's own example exactly: "6 of 10 done in shift
+    # 1" becomes "5 of 10" here with these round numbers, 5 in shift 2.
+    def small_shift_availability(machine, day, shift):
+        return 55.0
+
+    op = make_op("O1", cdd=date(2026, 2, 1), qty=10, fct=0.0, lct=0.0, lut=0.0, cycle_time=10.0)
+    ready_at = {"O1": start_of_day(DAY0)}
+    machine_free_at = {}
+    pool = DevicePool(quantities={"FIX-A": 1, "LOC-1": 1})
+    placed = dispatch_task_pool(
+        [op], ready_at, machine_free_at, pool, small_shift_availability,
+        today=DAY0, window_days=60, cooling_minutes=20, day_zero=DAY0,
+    )
+    check("exactly 2 slices (shift 1 + shift 2)", len(placed) == 2)
+    check("slice 1: LINE_NO=1, 5 pieces, ends in first shift", placed[0].line_no == 1 and placed[0].balance_qty == 5 and placed[0].end.shift_index == 0)
+    check("slice 2: LINE_NO=2, 5 pieces, ends in second shift", placed[1].line_no == 2 and placed[1].balance_qty == 5 and placed[1].end.shift_index == 1)
+    check("slice 2 starts exactly where slice 1 ended (no gap)", placed[1].start == placed[0].end)
+    check("both slices share the same production_order and operation_no", placed[0].production_order == placed[1].production_order == "O1" and placed[0].operation_no == placed[1].operation_no)
+
+
+def test_no_fixture_op_also_slices_across_shifts():
+    print("\n=== Model F §E.18: a plain-routing (no-fixture) op slices too ===")
+    def small_shift_availability(machine, day, shift):
+        return 55.0
+
+    op = make_op("O1", cdd=date(2026, 2, 1), qty=10, cycle_time=10.0, no_fixture=True)
+    ready_at = {"O1": start_of_day(DAY0)}
+    machine_free_at = {}
+    pool = DevicePool(quantities={"FIX-A": 1, "LOC-1": 1})
+    placed = dispatch_task_pool(
+        [op], ready_at, machine_free_at, pool, small_shift_availability,
+        today=DAY0, window_days=60, cooling_minutes=20, day_zero=DAY0,
+    )
+    check("exactly 2 slices", len(placed) == 2)
+    check("slice 1: LINE_NO=1, 5 pieces", placed[0].line_no == 1 and placed[0].balance_qty == 5)
+    check("slice 2: LINE_NO=2, 5 pieces", placed[1].line_no == 2 and placed[1].balance_qty == 5)
+
+
 if __name__ == "__main__":
     test_two_orders_same_batch_key_combine_with_no_extra_charge()
     test_no_fixture_op_bypasses_batching_and_pool()
@@ -254,4 +297,6 @@ if __name__ == "__main__":
     test_heavy_op_resolver_true_appends_safety_stock_for_free()
     test_heavy_op_resolver_false_defers_safety_stock()
     test_light_op_never_consults_the_resolver()
+    test_shift_spanning_op_splits_into_quantity_slices()
+    test_no_fixture_op_also_slices_across_shifts()
     print("\n[OK] dispatch_task_pool wires batching + machine selection + timeline + pool + window correctly.")

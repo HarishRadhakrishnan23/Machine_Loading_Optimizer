@@ -7,13 +7,13 @@ This is the ONLY place a `TimePoint` becomes a real Oracle TIMESTAMP
 convention"). Everything upstream of here works in TimePoint; everything
 downstream (db.py's INSERT) works in real dicts/columns.
 
-LINE_NO is always 1 here — CLAUDE.md §E.14: it increments only when one
-order-operation's own balance is genuinely split across more than one
-machine (a mid-batch machine breakdown forcing a handoff), which this engine
-doesn't yet implement (flagged as a rare, not-yet-built case in
-dispatch_orchestrator.py). The engine currently produces exactly one
-PlacedOperation per (PRODUCTION_ORDER, OPERATION_NO), so LINE_NO=1 is correct
-for every row this writer will ever see, not a placeholder covering a gap.
+LINE_NO is `row.line_no` — CLAUDE.md §E.18: it increments when one
+order-operation's own balance is genuinely split into more than one row, now
+routinely true for a multi-piece operation whose placement spans a shift
+boundary (a quantity slice — see dispatch_engine._slice_by_shift), not just
+the historically-rare machine-breakdown-handoff case. An operation that
+never splits still produces exactly one row with LINE_NO=1, unchanged from
+before §E.18.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def to_oracle_row(row: FinalRow, run_id: str, generated_at: datetime) -> dict:
         "RUN_ID": run_id,
         "PRODUCTION_ORDER": row.production_order,
         "OPERATION_NO": row.operation_no,
-        "LINE_NO": 1,
+        "LINE_NO": row.line_no,
         "TASK": row.task,
         "WORK_CENTER": row.machine,
         "SHIFT": row.shift,

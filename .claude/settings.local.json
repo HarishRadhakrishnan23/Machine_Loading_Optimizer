@@ -67,7 +67,18 @@
       "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_safety_stock_speculation.py)",
       "Bash(\"./venv/Scripts/python.exe\" testing/e6_validate_real_data.py)",
       "Bash(\"./venv/Scripts/python.exe\" testing/test_dispatch_writer.py)",
-      "Bash(\"./venv/Scripts/python.exe\" testing/test_model_e_data_holidays.py)"
+      "Bash(\"./venv/Scripts/python.exe\" testing/test_model_e_data_holidays.py)",
+      "Bash(../venv/Scripts/python.exe -c ' *)",
+      "Bash(\"../venv/Scripts/python.exe\" -I testing/e6_validate_real_data.py)",
+      "Bash(\"../venv/Scripts/python.exe\" testing/test_soft_consolidation.py)",
+      "Bash(\"../venv/Scripts/python.exe\" \"C:\\\\Users\\\\E1558411\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-E1558411-OneDrive---Emerson-Desktop-Machine-Loading-Project-Machine-Load-Prj\\\\f8b50e50-8672-4e13-bbaa-526155cd563f\\\\scratchpad\\\\debug_far2.py\")",
+      "Bash(../venv/Scripts/python.exe -c *)",
+      "Bash(\"../venv/Scripts/python.exe\" testing/test_dispatch_engine.py)",
+      "Bash(../venv/Scripts/python.exe testing/test_dispatch_orchestrator.py)",
+      "Bash(../venv/Scripts/python.exe testing/e6_validate_real_data.py)",
+      "Bash(sed -i 's/model_e_pipeline/model_f_pipeline/g; s/model_e_data/model_f_data/g' model_f_data.py model_f_pipeline.py)",
+      "Bash(grep -rl \"model_e_data\\\\|model_e_pipeline\" --include=*.py .)",
+      "Bash(../venv/Scripts/python.exe testing/test_model_f_data_holidays.py)"
     ]
   }
 }

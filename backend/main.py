@@ -58,7 +58,7 @@ from models import (
     ScheduleGenerateResponse,
     SimulationRequest,
 )
-from model_e_pipeline import generate_schedule as run_model_e_schedule
+from model_f_pipeline import generate_schedule as run_model_e_schedule
 from pipeline2 import simulate_elevation
 
 # ─────────────────────────────────────────────────────────────────────────────

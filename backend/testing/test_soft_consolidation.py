@@ -124,9 +124,37 @@ def test_soft_merge_rejected_when_it_would_breach_a_committed_order():
     check("LATE still meets its CDD (the speculative check protected it)", late_soft.scheduled_date <= DAY0)
 
 
+def test_admission_check_only_protects_orders_within_the_window():
+    print("\n=== Model F §E.16: a breach to a BEYOND-WINDOW order does not block the merge ===")
+    # Same shape as test_soft_merge_rejected_when_it_would_breach_a_committed_order,
+    # but the order that would get bumped ("FAR2") is itself beyond the
+    # window — CLAUDE.md §E.16's explicit scope: the admission check only
+    # guarantees zero NEW breach for orders within batch_consolidation_window_days;
+    # a beyond-window order's only protection is ordinary CDD-priority
+    # ordering, not this check. So the merge should be ACCEPTED here, unlike
+    # the in-window "LATE" case above where it's rejected.
+    near = make_op("NEAR", cdd=date(2025, 12, 31), qty=10, machines="M1", fixture="FIX-A", locator="LOC-1", cycle_time=1.0)
+    far = make_op("FAR", cdd=date(2026, 4, 1), qty=1000, machines="M1", fixture="FIX-A", locator="LOC-1")
+    far2 = make_op("FAR2", cdd=date(2026, 4, 2), qty=1, machines="M1", fixture="FIX-B", locator="LOC-2", cycle_time=1.0)
+    chains = [OrderChain(o.production_order, [o], []) for o in (near, far, far2)]
+
+    pool = DevicePool(quantities={"FIX-A": 2, "LOC-1": 2, "FIX-B": 1, "LOC-2": 1})
+    rows = run_dispatch_simulation(
+        chains, availability, pool, today=DAY0, window_days=60, cooling_minutes=20, day_zero=DAY0,
+        planned_order_start_buffer_days=1, allow_soft_consolidation_beyond_window=True, soft_consolidation_max_extra_days=90,
+    )
+    far_row = next(r for r in rows if r.production_order == "FAR")
+    check(
+        "FAR WAS merged onto NEAR's run (REMARK confirms the soft-consolidation merge)",
+        "soft-consolidated beyond window" in (far_row.remark or ""),
+    )
+    check("FAR runs on the same machine as NEAR", far_row.machine == "M1")
+
+
 if __name__ == "__main__":
     test_is_soft_eligible_pure_logic()
     test_hard_rule_unchanged_when_feature_off()
     test_soft_merge_accepted_when_safe()
     test_soft_merge_rejected_when_it_would_breach_a_committed_order()
+    test_admission_check_only_protects_orders_within_the_window()
     print("\n[OK] Soft consolidation beyond the window: hard rule stays default, opt-in merge only ever accepted when provably safe.")

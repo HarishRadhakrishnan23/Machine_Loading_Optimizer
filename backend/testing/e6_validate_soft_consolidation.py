@@ -37,7 +37,7 @@ from db import (
 from dispatch_orchestrator import run_dispatch_simulation
 from dispatch_orders import build_order_chains
 from dispatch_pool import parse_devices
-from model_e_data import (
+from model_f_data import (
     build_availability,
     build_device_pool,
     build_fixture_index,

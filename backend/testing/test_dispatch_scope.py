@@ -101,6 +101,24 @@ def test_first_matching_gate_wins_when_multiple_fail():
     check("outcome == EXCLUDED_CT_ZERO (first gate in CLAUDE.md's order)", outcome == ScopeOutcome.EXCLUDED_CT_ZERO)
 
 
+def test_no_fixture_match_on_a_fixture_required_task_is_a_hard_exclusion():
+    print("\n=== Model F §E.15: no fixture/locator match on a fixture-required TASK (e.g. VB04) ===")
+    outcome = classify_operation(replace(CLEAN, has_fixture_locator_match=False, task_requires_fixture=True))
+    check("outcome == EXCLUDED_NO_FNL_MASTER_ENTRY", outcome == ScopeOutcome.EXCLUDED_NO_FNL_MASTER_ENTRY)
+    check("is excluded (not the permissive plain-routing fallback)", is_excluded(outcome))
+    check(
+        "REMARK names the missing MCH_MACHINE_FNL_MASTER row",
+        remark_for(outcome) == "No line matching this SIZE~CLASS~MOC~DESIGN~TASK in MCH_MACHINE_FNL_MASTER",
+    )
+
+
+def test_no_fixture_match_on_a_non_required_task_still_gets_the_old_fallback():
+    print("\n=== Same no-match case, but TASK is NOT in fixture_required_tasks: unchanged §E.11 behavior ===")
+    outcome = classify_operation(replace(CLEAN, has_fixture_locator_match=False, task_requires_fixture=False))
+    check("outcome == SCHEDULED_NO_FIXTURE (default, unaffected by the new policy)", outcome == ScopeOutcome.SCHEDULED_NO_FIXTURE)
+    check("NOT excluded", not is_excluded(outcome))
+
+
 if __name__ == "__main__":
     test_clean_row_is_scheduled()
     test_ct_zero_excluded()
@@ -111,4 +129,6 @@ if __name__ == "__main__":
     test_no_machine_for_exact_combo_gets_its_own_remark()
     test_no_fixture_match_is_scheduled_with_caveat()
     test_first_matching_gate_wins_when_multiple_fail()
-    print("\n[OK] Scope filters + REMARK taxonomy behave per CLAUDE.md §E.11/§E.12.")
+    test_no_fixture_match_on_a_fixture_required_task_is_a_hard_exclusion()
+    test_no_fixture_match_on_a_non_required_task_still_gets_the_old_fallback()
+    print("\n[OK] Scope filters + REMARK taxonomy behave per CLAUDE.md §E.11/§E.12/§E.15.")

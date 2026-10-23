@@ -52,6 +52,7 @@ SafetyStockResolver = Callable[[list["ChargedStep"], dict[str, "ScheduledOperati
 from dispatch_batching import (
     BatchableOrder,
     ChargedStep,
+    ChargeType,
     FixtureLocatorTimes,
     compute_batch_duration,
     run_priority_walk,
@@ -82,6 +83,11 @@ class PlacedOperation:
     batch_key: str
     is_safety_stock: bool
     remark: Optional[str]
+    # CLAUDE.md §E.18 — increments only when this ONE (production_order,
+    # operation_no)'s own balance is genuinely split into more than one row:
+    # a shift-boundary quantity slice (§E.18) or the pre-existing rare
+    # machine-handoff case. 1 for every row that isn't split, same as today.
+    line_no: int = 1
 
 
 def compute_priority_ranks(ops: list[ScheduledOperation]) -> dict[str, int]:
@@ -99,6 +105,95 @@ def compute_priority_ranks(ops: list[ScheduledOperation]) -> dict[str, int]:
     return {op.production_order: rank for rank, op in enumerate(ordered)}
 
 
+def _slice_by_shift_raw(
+    qty: int,
+    one_time: float,
+    per_piece: float,
+    start: TimePoint,
+    machine: str,
+    availability: AvailabilityFn,
+    piece_ready_at: Optional[list[TimePoint]] = None,
+) -> tuple[list[tuple[int, TimePoint, TimePoint]], list[TimePoint]]:
+    """
+    CLAUDE.md §E.18 — splits one placement into quantity slices at SHIFT
+    boundaries: "6 of 10 pieces done by the end of shift 1, the other 4 in
+    shift 2" becomes two slices, `[(6, shift1_start, shift1_end_instant),
+    (4, shift1_end_instant, shift2_end_instant)]`, instead of one (10, start,
+    end) block. `one_time` (a fixture/locator change, or 0 for plain
+    routing) is paid once, before the first piece; only `per_piece` is
+    walked piece by piece to find where a shift boundary falls.
+
+    Pieces are grouped by the `(day, shift_index)` of their OWN completion
+    instant — a piece that finishes in the same shift as the slice's first
+    piece stays in that slice; the instant a piece's completion lands in a
+    different shift, the previous slice closes (ending exactly where the
+    next piece's clock started, i.e. no gap) and a new one opens with that
+    piece. A run that never crosses a shift boundary yields exactly one
+    slice spanning the whole quantity — byte-identical to pre-§E.18 output.
+
+    `piece_ready_at` (§E.18 Part 2 — lot-streaming consumption): piece `k`'s
+    own earliest start, from the UPSTREAM operation's own per-piece
+    completion times (this function's own `piece_completions` return value,
+    one call earlier in the chain) — never the upstream op's single overall
+    `ready_at`. `None` (the default — the first operation in a chain, or any
+    caller not yet threading this through) means every piece is gated only
+    by the machine's own cursor, identical to pre-Part-2 behavior. A piece
+    index beyond `len(piece_ready_at)` (balance_qty mismatch between this op
+    and its upstream — a real, if rare, ERP bookkeeping possibility) falls
+    back to ungated (cursor-only) rather than guessing.
+
+    Returns `(slices, piece_completions)` — `piece_completions[k]` is piece
+    `k`'s own completion TimePoint, meant to become the NEXT operation's
+    `piece_ready_at` in turn.
+    """
+    cursor = advance_clock(start, one_time, machine, availability)
+    slices: list[tuple[int, TimePoint, TimePoint]] = []
+    piece_completions: list[TimePoint] = []
+    # The FIRST slice's reported start is `start` (the row's true start,
+    # including the one-time setup charge in its span) — NOT piece 0's own
+    # (post-charge) start, which would silently drop the setup time from the
+    # row's reported duration. Only a LATER slice (opened because a shift
+    # boundary was crossed) starts exactly at its first piece's own start.
+    slice_start: TimePoint = start
+    slice_qty = 0
+    slice_shift_key: Optional[tuple] = None
+    for k in range(qty):
+        ready_k = piece_ready_at[k] if piece_ready_at is not None and k < len(piece_ready_at) else None
+        piece_start = max(cursor, ready_k) if ready_k is not None else cursor
+        piece_end = advance_clock(piece_start, per_piece, machine, availability)
+        piece_completions.append(piece_end)
+        key = (piece_end.day, piece_end.shift_index)
+        if slice_shift_key is None:
+            slice_shift_key = key
+        elif key != slice_shift_key:
+            slices.append((slice_qty, slice_start, cursor))
+            slice_start = piece_start
+            slice_qty = 0
+            slice_shift_key = key
+        slice_qty += 1
+        cursor = piece_end
+    slices.append((slice_qty, slice_start, cursor))
+    return slices, piece_completions
+
+
+def _slice_by_shift(
+    op: ScheduledOperation,
+    charge_type: ChargeType,
+    candidate,
+    start: TimePoint,
+    machine: str,
+    availability: AvailabilityFn,
+    piece_ready_at: Optional[list[TimePoint]] = None,
+) -> tuple[list[tuple[int, TimePoint, TimePoint]], list[TimePoint]]:
+    """Fixture-run case of `_slice_by_shift_raw`: the one-time charge comes
+    from `charge_type` (§E.3's fixture/locator change economics), per-piece
+    time is `LOAD_UNLOAD_TIME + CYCLE_TIME`."""
+    times = FixtureLocatorTimes(candidate.fixture_change_time, candidate.locator_change_time, candidate.load_unload_time)
+    one_time = compute_batch_duration(charge_type, 0, times)
+    per_piece = candidate.load_unload_time + op.cycle_time
+    return _slice_by_shift_raw(op.balance_qty, one_time, per_piece, start, machine, availability, piece_ready_at)
+
+
 def _simulate_run_timing(
     op_by_id: dict[str, ScheduledOperation],
     steps: list[ChargedStep],
@@ -106,41 +201,102 @@ def _simulate_run_timing(
     run_start: TimePoint,
     ready_at: dict[str, TimePoint],
     availability: AvailabilityFn,
-) -> tuple[list[tuple[ChargedStep, TimePoint, TimePoint]], TimePoint, TimePoint]:
+    piece_ready_at: Optional[dict[str, list[TimePoint]]] = None,
+) -> tuple[list[tuple[ChargedStep, int, TimePoint, TimePoint]], TimePoint, TimePoint, dict[str, list[TimePoint]]]:
     """
     Pure timing simulation for one fixture run on `machine`, attempting to
     start at `run_start` (the machine/pool-side earliest attempt only — never
-    a sibling step's own readiness baked in here by the caller). Each step
-    individually starts at `max(the machine's cursor after the PRECEDING step
-    in this run, that step's OWN ready_at)` — never gated by a later-ordered
-    sibling's readiness.
+    a sibling step's own readiness baked in here by the caller).
 
-    This is the fix for a real bug found via live-data E-6 validation: the
-    run used to compute one upfront `max()` over every member's ready_at
+    `steps` is the FORMATION order (§E.4's priority walk) — who's in the run
+    and what each one's charge_type assumes about the member immediately
+    before it. EXECUTION order can differ from it: at each point, if the
+    next-in-formation-order step isn't ready yet and placing it would leave
+    the machine idle, this looks ahead for any OTHER not-yet-placed member
+    that IS ready now and runs it instead — the original member keeps its
+    place in line and resumes it the moment it's actually ready, so this
+    never lets a later-priority member permanently cut ahead of an earlier
+    one, only temporarily fill a gap the earlier one isn't ready to use yet.
+    `charge_type` is recomputed live from the ACTUAL execution sequence
+    (first step placed is always "fixture_change"; each one after compares
+    its locator to whatever the PREVIOUS ACTUALLY-PLACED step's locator was,
+    same logic `_recompute_charges` already uses for a reordered/filtered
+    sequence) — never trusted from `steps`' original formation-order value,
+    since reordering can change who's actually mounted immediately before
+    whom.
+
+    This is also the fix for a real bug found via live-data E-6 validation:
+    a run used to compute one upfront `max()` over every member's ready_at
     before placing anything, pinning the WHOLE run's start — and leaving the
     machine fully idle the entire time — to whichever single member happened
-    to become ready last, even when every other member had been sitting
-    ready for days or weeks. CLAUDE.md §E.7 is explicit that timing is
-    governed by fixture/locator/machine availability, not by an artificial
-    whole-batch gate; this now actually does that per-member.
+    to become ready last. That fix (per-step ready_at, no longer a run-wide
+    max) stopped an EARLY member from being held hostage by a LATE one, but
+    left the mirror case unfixed: a late-to-ready member partway through a
+    long formation-order sequence still blocked every member sequenced AFTER
+    it, even ones that had been ready for days — confirmed on live data
+    (2PMH19's AT18/200-450 run: a 13-day gap where several already-ready
+    members sat behind one that wasn't ready yet). The lookahead above is
+    what actually closes that gap, while CLAUDE.md §E.7's "no artificial
+    gate, only real availability governs timing" still holds.
+
+    `piece_ready_at` (§E.18 Part 2 — lot-streaming consumption): order_id ->
+    that order's UPSTREAM operation's own per-piece completion times, gating
+    each of THIS step's pieces individually instead of only its overall
+    start — see `_slice_by_shift_raw`'s own docstring. `None`/missing entry
+    means every piece is gated only by the machine's cursor, identical to
+    pre-Part-2 behavior.
 
     No pool mutation. Returns (per-step results, the run's actual start —
     the FIRST step's own actual start, which may be later than `run_start`
-    if even the first-priority member wasn't ready yet — and the run's end).
+    if even the first-ready member wasn't ready yet — the run's end, and a
+    `{order_id: [piece_completion, ...]}` map — one entry per step actually
+    placed here — for the caller to hand to THIS order's next operation in
+    turn, once this result is accepted; never mutated into `piece_ready_at`
+    directly here, since a rejected pool-capacity retry (see
+    `_find_feasible_fixture_run`) must not leave stale data behind).
     """
+    def _effective_ready(order_id: str) -> TimePoint:
+        # §E.18 Part 2: if this order's upstream op already reported its own
+        # per-piece completions, the TRUE earliest this order can start here
+        # is its upstream's FIRST piece completing — not the upstream's full
+        # `ready_at` (its LAST piece) — so lot-streaming actually changes
+        # when a step both becomes eligible for the run and where its own
+        # piece loop starts. Falls back to the scalar `ready_at` whenever
+        # there's no per-piece data (first op in a chain, or piece_ready_at
+        # not tracked at all) — identical to pre-Part-2 behavior.
+        pieces = piece_ready_at.get(order_id) if piece_ready_at else None
+        return pieces[0] if pieces else ready_at[order_id]
+
+    remaining = list(steps)
     cursor = run_start
-    results: list[tuple[ChargedStep, TimePoint, TimePoint]] = []
-    for step in steps:
+    results: list[tuple[ChargedStep, int, TimePoint, TimePoint]] = []
+    piece_completions_by_order: dict[str, list[TimePoint]] = {}
+    current_locator: Optional[str] = None
+    while remaining:
+        ready_idx = next((i for i, s in enumerate(remaining) if _effective_ready(s.order_id) <= cursor), None)
+        # Nothing ready yet at `cursor` — the machine must wait regardless,
+        # so wait for whichever member gets there soonest (minimizes the
+        # unavoidable idle time) rather than always the formation-order head.
+        idx = ready_idx if ready_idx is not None else min(range(len(remaining)), key=lambda i: _effective_ready(remaining[i].order_id))
+        step = remaining.pop(idx)
         op = op_by_id[step.order_id]
         candidate = next(c for c in op.candidates if c.machine == machine)
-        times = FixtureLocatorTimes(candidate.fixture_change_time, candidate.locator_change_time, candidate.load_unload_time)
-        duration = compute_batch_duration(step.charge_type, op.balance_qty, times) + op.cycle_time * op.balance_qty
-        step_start = max(cursor, ready_at[step.order_id])
-        end = advance_clock(step_start, duration, machine, availability)
-        results.append((step, step_start, end))
-        cursor = end
-    run_start_actual = results[0][1] if results else run_start
-    return results, run_start_actual, cursor
+        charge_type: ChargeType = "fixture_change" if current_locator is None else ("none" if step.locator == current_locator else "locator_change")
+        step_start = max(cursor, _effective_ready(step.order_id))
+        charged_step = step if charge_type == step.charge_type else ChargedStep(step.order_id, step.fixture, step.locator, charge_type, step.run_index)
+        upstream_pieces = piece_ready_at.get(step.order_id) if piece_ready_at else None
+        # §E.18: one step can yield several (sub_qty, start, end) slices when
+        # its placement spans a shift boundary — each becomes its own output
+        # row (LINE_NO) downstream. A step that stays within one shift still
+        # yields exactly one slice covering its whole balance_qty.
+        slices, piece_completions = _slice_by_shift(op, charge_type, candidate, step_start, machine, availability, upstream_pieces)
+        for sub_qty, slice_start, slice_end in slices:
+            results.append((charged_step, sub_qty, slice_start, slice_end))
+        piece_completions_by_order[step.order_id] = piece_completions
+        current_locator = step.locator
+        cursor = results[-1][3]
+    run_start_actual = results[0][2] if results else run_start
+    return results, run_start_actual, cursor, piece_completions_by_order
 
 
 def _find_feasible_fixture_run(
@@ -153,7 +309,8 @@ def _find_feasible_fixture_run(
     availability: AvailabilityFn,
     pool: DevicePool,
     max_attempts: int = 200,
-) -> tuple[list[tuple[ChargedStep, TimePoint, TimePoint]], TimePoint, TimePoint]:
+    piece_ready_at: Optional[dict[str, list[TimePoint]]] = None,
+) -> tuple[list[tuple[ChargedStep, int, TimePoint, TimePoint]], TimePoint, TimePoint, dict[str, list[TimePoint]]]:
     """
     CLAUDE.md §E.9 — the fixture concurrency retry loop: simulate the run's
     timing at a candidate start, check the fixture has capacity for that
@@ -161,11 +318,13 @@ def _find_feasible_fixture_run(
     (never a guess — `has_capacity` is re-checked every attempt, per
     dispatch_pool.py's own contract). `earliest_start` is only the
     machine/pool-side earliest attempt now — each step's own readiness
-    (`ready_at`) is applied per-step inside `_simulate_run_timing`, never
-    pre-maxed across every member here (see that function's docstring for
-    why). Returns (per-step results, run_start actually used — the first
-    step's own actual start, which can differ from `earliest_start` if even
-    the first-priority member wasn't ready yet — run_end).
+    (`ready_at`, and per-piece `piece_ready_at` — §E.18 Part 2) is applied
+    per-step/per-piece inside `_simulate_run_timing`, never pre-maxed across
+    every member here (see that function's docstring for why). Returns
+    (per-step results, run_start actually used — the first step's own actual
+    start, which can differ from `earliest_start` if even the first-priority
+    member wasn't ready yet — run_end, and the accepted attempt's
+    `piece_completions_by_order` — a rejected retry's never leaks through).
 
     Uses the `_multi` pool methods — FIXTURE is never a "+"-joined compound
     in practice, but it CAN be the literal "NA" (confirmed real-data
@@ -176,9 +335,11 @@ def _find_feasible_fixture_run(
     """
     candidate_start = earliest_start
     for _ in range(max_attempts):
-        results, run_start, run_end = _simulate_run_timing(op_by_id, steps, machine, candidate_start, ready_at, availability)
+        results, run_start, run_end, piece_completions_by_order = _simulate_run_timing(
+            op_by_id, steps, machine, candidate_start, ready_at, availability, piece_ready_at
+        )
         if pool.has_capacity_multi(fixture, run_start, run_end):
-            return results, run_start, run_end
+            return results, run_start, run_end, piece_completions_by_order
         hint = pool.earliest_release_hint_multi(fixture, run_start)
         if hint is None:
             raise RuntimeError(f"Fixture {fixture!r} reported blocked with no release hint at {run_start}")
@@ -251,6 +412,7 @@ def _place_fixture_run(
     cooling_minutes: float,
     heavy_operations: frozenset[str] = frozenset(),
     resolve_safety_stock: Optional[SafetyStockResolver] = None,
+    piece_ready_at: Optional[dict[str, list[TimePoint]]] = None,
 ) -> list[PlacedOperation]:
     """
     Places one fixture run (possibly after machine selection drops some
@@ -266,6 +428,13 @@ def _place_fixture_run(
     round-based engine, "it pays its own changeover instead of riding the
     committed portion's mount for free," which is the same real-world
     consequence without needing a genuinely open-ended requeue mechanism.
+
+    `piece_ready_at` (§E.18 Part 2): order_id -> that order's UPSTREAM
+    operation's own per-piece completion times, read here (passed down into
+    the timing simulation) AND written here — once a result is accepted,
+    this run's OWN per-piece completions become the entry for whoever places
+    THIS order's next operation. Mutated in place; `None` (the default)
+    means the caller isn't tracking it, same as before §E.18 Part 2 existed.
     """
     deferred_steps: list[ChargedStep] = []
     if resolve_safety_stock is not None and run_steps:
@@ -290,7 +459,7 @@ def _place_fixture_run(
     for member in members:
         for machine in member.candidates:
             machine_free_at.setdefault(machine, start_of_day(day_zero))
-    selection = select_machine(members, machine_free_at)
+    selection = select_machine(members, machine_free_at, ready_at)
     machine = selection.machine
 
     covered_steps = _recompute_charges([s for s in run_steps if s.order_id in selection.covered_order_ids])
@@ -307,13 +476,17 @@ def _place_fixture_run(
     earliest_start = machine_free_at.get(machine, start_of_day(day_zero))
 
     fixture = covered_steps[0].fixture
-    results, run_start, run_end = _find_feasible_fixture_run(
-        op_by_id, covered_steps, machine, fixture, earliest_start, ready_at, availability, pool
+    results, run_start, run_end, piece_completions_by_order = _find_feasible_fixture_run(
+        op_by_id, covered_steps, machine, fixture, earliest_start, ready_at, availability, pool,
+        piece_ready_at=piece_ready_at,
     )
+    if piece_ready_at is not None:
+        piece_ready_at.update(piece_completions_by_order)
 
     pool.reserve_multi(fixture, run_start, run_end)
     placed: list[PlacedOperation] = []
-    for step, start, end in results:
+    line_no_by_order: dict[str, int] = {}
+    for step, sub_qty, start, end in results:
         # per-slice, no retry — see module docstring. reserve_multi (not
         # reserve) because a LOCATOR value can be a "+"-joined compound of
         # two physical devices that must be held together (confirmed real
@@ -321,6 +494,11 @@ def _place_fixture_run(
         # using the plain single-device reserve() above.
         pool.reserve_multi(step.locator, start, end)
         op = op_by_id[step.order_id]
+        # §E.18: a step sliced into N shift-bound pieces produces N rows for
+        # the SAME (production_order, operation_no) — LINE_NO distinguishes
+        # them, 1 for a step that never splits (the normal case, unchanged
+        # from pre-§E.18 output).
+        line_no_by_order[step.order_id] = line_no_by_order.get(step.order_id, 0) + 1
         placed.append(
             PlacedOperation(
                 production_order=op.production_order,
@@ -331,10 +509,11 @@ def _place_fixture_run(
                 locator_id=step.locator,
                 start=start,
                 end=end,
-                balance_qty=op.balance_qty,
+                balance_qty=sub_qty,
                 batch_key=op.batch_key,
                 is_safety_stock=op.is_safety_stock,
                 remark=_placement_remark(step, op, machine),
+                line_no=line_no_by_order[step.order_id],
             )
         )
         ready_at[step.order_id] = end
@@ -348,7 +527,7 @@ def _place_fixture_run(
         solo = ChargedStep(step.order_id, step.fixture, step.locator, "fixture_change", run_index=-1)
         for p in _place_fixture_run(
             [solo], op_by_id, ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes,
-            heavy_operations, resolve_safety_stock,
+            heavy_operations, resolve_safety_stock, piece_ready_at,
         ):
             tag = "; no common machine covered the whole run" if p.production_order == step.order_id else ""
             placed.append(p if not tag else _retagged(p, tag))
@@ -360,7 +539,7 @@ def _place_fixture_run(
         solo = ChargedStep(step.order_id, step.fixture, step.locator, "fixture_change", run_index=-1)
         for p in _place_fixture_run(
             [solo], op_by_id, ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes,
-            heavy_operations, resolve_safety_stock,
+            heavy_operations, resolve_safety_stock, piece_ready_at,
         ):
             tag = "; safety stock deferred from mixed heavy-op run (would have delayed a committed order)" if p.production_order == step.order_id else ""
             placed.append(p if not tag else _retagged(p, tag))
@@ -382,17 +561,34 @@ def _place_no_fixture_op(
     availability: AvailabilityFn,
     day_zero: date,
     cooling_minutes: float,
-) -> PlacedOperation:
-    """CLAUDE.md §E.11 fallback — plain routing, no fixture/locator, no pool involvement."""
+    piece_ready_at: Optional[dict[str, list[TimePoint]]] = None,
+) -> list[PlacedOperation]:
+    """CLAUDE.md §E.11 fallback — plain routing, no fixture/locator, no pool
+    involvement. Returns a list (§E.18): a plain-routing op's `CYCLE_TIME * qty`
+    can still span a shift boundary, so it slices exactly like a fixture run
+    does, just with no one-time change cost (`one_time=0`, per-piece=`CYCLE_TIME`
+    alone — no LOAD_UNLOAD_TIME, which only applies to fixture/locator runs).
+    `piece_ready_at` (§E.18 Part 2): read for this op's own per-piece gating,
+    then overwritten with THIS op's own per-piece completions for whoever
+    places this order's next operation."""
     candidates = {c.machine: c.machine_priority for c in op.candidates}
     for machine in candidates:
         machine_free_at.setdefault(machine, start_of_day(day_zero))  # see _place_fixture_run's comment
-    selection = select_machine([RunMember(op.production_order, candidates)], machine_free_at)
+    selection = select_machine([RunMember(op.production_order, candidates)], machine_free_at, ready_at)
     machine = selection.machine
 
-    start = max(machine_free_at.get(machine, start_of_day(day_zero)), ready_at[op.production_order])
-    duration = op.cycle_time * op.balance_qty
-    end = advance_clock(start, duration, machine, availability)
+    upstream_pieces = piece_ready_at.get(op.production_order) if piece_ready_at else None
+    # §E.18 Part 2: floor on the upstream's FIRST piece completing, not its
+    # full `ready_at` (last piece) — the per-piece loop below (fed
+    # `upstream_pieces`) re-applies the real per-piece gate for pieces 2..N;
+    # without this, `cursor` would already sit at the upstream's full
+    # completion before the loop even starts, silently defeating Part 2.
+    effective_ready = upstream_pieces[0] if upstream_pieces else ready_at[op.production_order]
+    start = max(machine_free_at.get(machine, start_of_day(day_zero)), effective_ready)
+    slices, piece_completions = _slice_by_shift_raw(op.balance_qty, 0.0, op.cycle_time, start, machine, availability, upstream_pieces)
+    if piece_ready_at is not None:
+        piece_ready_at[op.production_order] = piece_completions
+    end = slices[-1][2]
     machine_free_at[machine] = advance_clock(end, cooling_minutes, machine, availability)
     ready_at[op.production_order] = end  # this order's NEXT schedulable op must not start before this one ends
 
@@ -405,20 +601,24 @@ def _place_no_fixture_op(
         note += f"; {len(candidates)} capable machines, earliest-free chosen"
     remark = (op.remark + note) if op.remark else note.lstrip(" -")
 
-    return PlacedOperation(
-        production_order=op.production_order,
-        operation_no=op.operation_no,
-        task=op.task,
-        machine=machine,
-        fixture_id=None,
-        locator_id=None,
-        start=start,
-        end=end,
-        balance_qty=op.balance_qty,
-        batch_key=op.batch_key,
-        is_safety_stock=op.is_safety_stock,
-        remark=remark,
-    )
+    return [
+        PlacedOperation(
+            production_order=op.production_order,
+            operation_no=op.operation_no,
+            task=op.task,
+            machine=machine,
+            fixture_id=None,
+            locator_id=None,
+            start=slice_start,
+            end=slice_end,
+            balance_qty=sub_qty,
+            batch_key=op.batch_key,
+            is_safety_stock=op.is_safety_stock,
+            remark=remark,
+            line_no=line_no,
+        )
+        for line_no, (sub_qty, slice_start, slice_end) in enumerate(slices, start=1)
+    ]
 
 
 @dataclass(frozen=True)
@@ -577,6 +777,7 @@ def dispatch_task_pool(
     day_zero: date,
     heavy_operations: frozenset[str] = frozenset(),
     resolve_safety_stock: Optional[SafetyStockResolver] = None,
+    piece_ready_at: Optional[dict[str, list[TimePoint]]] = None,
 ) -> list[PlacedOperation]:
     """
     Place every operation in `ops` (all sharing one TASK, all already past
@@ -584,7 +785,8 @@ def dispatch_task_pool(
 
     Mutates `ready_at` (each placed order's entry becomes that operation's
     END — the readiness instant its NEXT schedulable operation should use),
-    `machine_free_at`, and `pool` in place; returns the placed rows.
+    `machine_free_at`, `pool`, and `piece_ready_at` (§E.18 Part 2 — see
+    `_place_fixture_run`) in place; returns the placed rows.
 
     `heavy_operations`/`resolve_safety_stock`: CLAUDE.md §E.10 — see
     `_place_fixture_run`. Omitting `resolve_safety_stock` (the default)
@@ -601,9 +803,9 @@ def dispatch_task_pool(
         placed.extend(
             _place_fixture_run(
                 run_steps, plan.op_by_id, ready_at, machine_free_at, pool, availability, day_zero, cooling_minutes,
-                heavy_operations, resolve_safety_stock,
+                heavy_operations, resolve_safety_stock, piece_ready_at,
             )
         )
     for op in plan.no_fixture_ops:
-        placed.append(_place_no_fixture_op(op, ready_at, machine_free_at, availability, day_zero, cooling_minutes))
+        placed.extend(_place_no_fixture_op(op, ready_at, machine_free_at, availability, day_zero, cooling_minutes, piece_ready_at))
     return placed

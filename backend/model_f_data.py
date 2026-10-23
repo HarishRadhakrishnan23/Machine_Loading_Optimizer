@@ -1,5 +1,5 @@
 """
-model_e_data.py — Engine 1 Model E: adapts live Oracle DataFrames (from
+model_f_data.py — Engine 1 Model E: adapts live Oracle DataFrames (from
 db.py's 6 read-only ERP views) into the dispatch engine's plain input types
 (dispatch_orders.RawWipRow/RoutingIndex/FixtureIndex, a DevicePool, and an
 AvailabilityFn). This is the ONLY module that touches pandas/Oracle on the
@@ -96,6 +96,51 @@ def build_fixture_index(fixture_df: pd.DataFrame) -> FixtureIndex:
         by_combo_machine[key] = FixtureTiming(
             fixture=_s(row["FIXTURE"]),
             locator=_s(row["LOCATOR"]),
+            fixture_change_time=0.0 if pd.isna(row["FIXTURE_CHANGE_TIME"]) else float(row["FIXTURE_CHANGE_TIME"]),
+            locator_change_time=0.0 if pd.isna(row["LOCATOR_CHANGE_TIME"]) else float(row["LOCATOR_CHANGE_TIME"]),
+            load_unload_time=0.0 if pd.isna(row["LOAD_UNLOAD_TIME"]) else float(row["LOAD_UNLOAD_TIME"]),
+        )
+    return FixtureIndex(by_combo_machine=by_combo_machine)
+
+
+def build_routing_index_from_fnl(fnl_df: pd.DataFrame) -> RoutingIndex:
+    """
+    Model F: build the routing half of the old two-table split from the
+    unified MCH_MACHINE_FNL_MASTER instead of MCH_MACHINE_PRIORITY. Every row
+    is a valid routing candidate regardless of whether it has fixture/locator
+    data (that's `build_fixture_index_from_fnl`'s concern) — a routing-only
+    row (FIXTURE_ID NULL) still means "this machine can run this combo+task,"
+    which is exactly what RoutingIndex represents.
+    """
+    by_combo: dict[tuple[str, str, str, str, str], list[tuple[str, int]]] = {}
+    tasks: set[str] = set()
+    for _, row in fnl_df.iterrows():
+        task = _s(row["TASK"])
+        tasks.add(task)
+        key = (_s(row["SIZE_INCH"]), _s(row["CLASS"]), _s(row["MOC"]), _s(row["DESIGN"]), task)
+        by_combo.setdefault(key, []).append((_s(row["WORK_CENTER"]), int(row["PRIORITY"])))
+    return RoutingIndex(by_combo=by_combo, tasks_with_any_routing=frozenset(tasks))
+
+
+def build_fixture_index_from_fnl(fnl_df: pd.DataFrame) -> FixtureIndex:
+    """
+    Model F: build the fixture/locator half from MCH_MACHINE_FNL_MASTER —
+    only rows with a non-null FIXTURE_ID count as a real fixture/locator
+    match (a routing-only row, FIXTURE_ID NULL, is deliberately skipped here;
+    dispatch_scope decides what a missing match means per §E.15's
+    `fixture_required_tasks` policy, not this layer).
+    """
+    by_combo_machine: dict[tuple[str, str, str, str, str, str], FixtureTiming] = {}
+    for _, row in fnl_df.iterrows():
+        if pd.isna(row["FIXTURE_ID"]):
+            continue
+        key = (
+            _s(row["SIZE_INCH"]), _s(row["CLASS"]), _s(row["MOC"]), _s(row["DESIGN"]),
+            _s(row["TASK"]), _s(row["WORK_CENTER"]),
+        )
+        by_combo_machine[key] = FixtureTiming(
+            fixture=_s(row["FIXTURE_ID"]),
+            locator=_s(row["LOCATOR_ID"]),
             fixture_change_time=0.0 if pd.isna(row["FIXTURE_CHANGE_TIME"]) else float(row["FIXTURE_CHANGE_TIME"]),
             locator_change_time=0.0 if pd.isna(row["LOCATOR_CHANGE_TIME"]) else float(row["LOCATOR_CHANGE_TIME"]),
             load_unload_time=0.0 if pd.isna(row["LOAD_UNLOAD_TIME"]) else float(row["LOAD_UNLOAD_TIME"]),

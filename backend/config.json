@@ -2,6 +2,7 @@
   "batch_consolidation_window_days": 60,
   "cooling_minutes": 20,
   "heavy_operations": ["VB03", "VB04", "VB05", "VB06"],
+  "fixture_required_tasks": ["VB02", "VB03", "VB04", "VB05", "VB06", "VB07"],
   "protect_committed_over_safety": true,
   "planned_order_start_buffer_days": 1,
   "risk_safe_threshold_days": 5,

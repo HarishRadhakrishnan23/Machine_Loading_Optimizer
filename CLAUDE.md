@@ -31,12 +31,13 @@ The system has two ML engines:
 
 ## Model history (trace — do not re-implement these, context only)
 
-The project went through four scheduling-engine designs before arriving at **Model E**, the current and final design:
+The project went through five scheduling-engine designs before arriving at **Model F**, the current and final design:
 
 - **Model B** (retired, never shipped): CP-SAT, one machine locked per whole operation (`assign[t,m]`) plus a hard contiguity constraint forcing every slot between start and end to be occupied. A single closed slot anywhere in that span made the model INFEASIBLE even at ~5% utilisation. Deleted for this reason.
 - **Model C** (shipped, Phases 0–4 complete — see `PHASE2_SUMMARY.md`–`PHASE4_SUMMARY.md`): CP-SAT allocating integer piece-quantities into discrete `(machine, date, shift)` capacity buckets on a global slot index, with `SETUP_TIME`-based setup economics and a guaranteed greedy fallback. This is what is actually running in the codebase today (`engine1_scheduler.py`), pending the Model E rebuild described in this document.
 - **Model D** (target spec, superseded before full implementation — only schema/audit groundwork landed): introduced the core idea Model E keeps — a continuous-time dispatch simulator with no machine-minute cap, driven by a finite plant-wide fixture/locator pool (`MCH_ITEMWISE_FIXTURE_LOCATOR`, `MCH_FIXTURE_LOCATOR`) instead of `SETUP_TIME`. Its batch/fixture key was `SIZE~CLASS~DESIGN` (MOC excluded). Superseded by Model E before its dispatch simulator, batching, or pool-constraint phases were built.
-- **Model E** (current, final): keeps Model D's continuous-time/fixture-pool architecture, but **includes MOC in the batch/fixture key everywhere** (`SIZE~CLASS~MOC~DESIGN`), replaces Model D's abstract "fixture runs, locator-ordered" batching with an explicit, fully-specified priority-walk batching algorithm, adds a `REMARK` column so every WIP row is auditable (scheduled or not), surfaces each order's overall completion date/shift directly on every one of its rows, and fully retires CP-SAT — the dispatch simulator is the only engine, not an optional post-optimizer.
+- **Model E** (shipped, superseded by Model F): keeps Model D's continuous-time/fixture-pool architecture, but **includes MOC in the batch/fixture key everywhere** (`SIZE~CLASS~MOC~DESIGN`), replaces Model D's abstract "fixture runs, locator-ordered" batching with an explicit, fully-specified priority-walk batching algorithm, adds a `REMARK` column so every WIP row is auditable (scheduled or not), surfaces each order's overall completion date/shift directly on every one of its rows, and fully retires CP-SAT. Live-data validation (E-6) surfaced two real limits in this design, both of which Model F exists to fix: (1) a fixture run's start time was pinned to whichever single member became ready *last*, leaving the machine idle the whole time even when every other member had been ready for days (fixed mid-Model-E as a point patch, but the underlying cause — placement driven by depth-ordered "rounds" rather than true event time — remained); (2) `MCH_MACHINE_PRIORITY` and `MCH_ITEMWISE_FIXTURE_LOCATOR` are two separately-maintained tables keyed on the same combo+task+machine grain, and were found to disagree on which machine is valid for 258 real combos — a structural hazard a single merged source removes entirely.
+- **Model F** (current, final): same continuous-time/fixture-pool/REMARK/CDD-priority foundation as Model E — §E.1-§E.4, §E.7-§E.9, §E.11-§E.14 below are **unchanged** and keep their original `§E.n` numbering for stability (cross-referenced throughout this document). What Model F actually changes: a single unified machine+fixture+locator source of truth (`MCH_MACHINE_FNL_MASTER`, §E.15) replacing the two-table join; a hard-exclusion policy for fixture-required tasks with no master-table row (§E.15); one universal "does this disturb a near-term order's CDD" admission check replacing the two narrower mechanisms Model E had (§E.16); within-run reordering for readiness, not a plant-wide event-driven redesign (§E.17 — see its own note on why the originally-planned full event-driven loop was built, measured, and reverted); partial-quantity (lot-streaming) handoff between operations instead of whole-batch-only handoff (§E.18); and a fully named determinism contract (§E.19) covering every tie-break rule the engine relies on. Machine selection (§E.5) is also revised under Model F — see that section.
 
 ---
 
@@ -162,7 +163,7 @@ A `TimePoint`'s `minute` offset is assumed to map linearly onto real clock time 
 
 ---
 
-## Configuration — backend/config.json (Model E shape)
+## Configuration — backend/config.json (Model F shape)
 
 Runtime parameters editable via UI, stored as JSON at `backend/config.json`, never in Oracle.
 
@@ -171,34 +172,38 @@ Runtime parameters editable via UI, stored as JSON at `backend/config.json`, nev
   "batch_consolidation_window_days": 60,
   "cooling_minutes": 20,
   "heavy_operations": ["VB03", "VB04", "VB05", "VB06"],
+  "fixture_required_tasks": ["VB02", "VB03", "VB04", "VB05", "VB06", "VB07"],
   "protect_committed_over_safety": true,
   "planned_order_start_buffer_days": 1,
   "risk_safe_threshold_days": 5,
   "dev_max_orders": 0,
-  "allow_soft_consolidation_beyond_window": false,
-  "soft_consolidation_max_extra_days": 90
+  "admission_check_max_horizon_days": 365
 }
 ```
 
-- `batch_consolidation_window_days` (Model E §6): an order is eligible to be pulled into a fixture-run consolidation only if its CDD is within this many days of **today** (run date). Default 60 (~2 months). **Hard rule, no override** — see §6.
-- `cooling_minutes` (Model E §7): fixed machine dead-time after every batch, before that machine's next batch. Default 20.
-- `heavy_operations` (Model E §10): TASK codes where mixed committed/safety-stock batches get the committed-first policy.
-- `protect_committed_over_safety`: must always be `true` — no committed order may ever slip past its CDD to accommodate safety stock, or to accommodate the §6 consolidation override.
-- `planned_order_start_buffer_days` (Model E §1/§8): days added to a Planned order's `PRODUCTION_START_DATE_AND_TIME` to get its earliest-start date. Default 1.
+- `batch_consolidation_window_days` (§E.6): an order is eligible to be pulled into a fixture-run consolidation by ordinary (non-admission-check) means only if its CDD is within this many days of **today** (run date). Default 60 (~2 months). Also the boundary §E.16's universal admission check protects — any order with CDD inside this window is in the protected "must not newly breach" set. **Hard rule, no override for in-window orders.**
+- `cooling_minutes` (§E.7): fixed machine dead-time after every batch, before that machine's next batch. Default 20.
+- `heavy_operations` (§E.10): TASK codes where mixed committed/safety-stock batches get the committed-first policy.
+- `fixture_required_tasks` (§E.15, new under Model F): TASK codes for which a `MCH_MACHINE_FNL_MASTER` row is mandatory — a missing row for one of these is a hard exclusion (`EXCLUDED_NO_FNL_MASTER_ENTRY`), not the permissive plain-routing fallback every other task still gets. Default `["VB02","VB03","VB04","VB05","VB06","VB07"]`.
+- `protect_committed_over_safety`: must always be `true` — no order within `batch_consolidation_window_days` may ever slip past its CDD to accommodate safety stock or a §E.16-admitted beyond-window candidate. Does not formally bound slip for committed orders beyond the window — see §E.16's explicit scope note.
+- `planned_order_start_buffer_days` (§E.1/§E.8): days added to a Planned order's `PRODUCTION_START_DATE_AND_TIME` to get its earliest-start date. Default 1.
 - `risk_safe_threshold_days`: Engine 2 SAFE/AT_RISK/BREACH threshold (unchanged from prior models).
 - `dev_max_orders`: dev knob, limit scheduling to top-N most urgent orders for fast iteration. 0 = full dataset (production).
-- `allow_soft_consolidation_beyond_window` (Model E §6 soft-launch extension): `false` by default — zero behavior change. Set `true` to let a committed order just past the hard window ride an existing in-window run's mount for free, speculatively checked first. See §6.
-- `soft_consolidation_max_extra_days`: bounds how far past the hard window a candidate may still be considered when the extension above is on. Default 90.
+- `admission_check_max_horizon_days` (§E.16, new under Model F): a sane upper bound on how far beyond `batch_consolidation_window_days` a candidate's own CDD may be and still be offered to the admission check at all — purely a compute-scope guard (keeps the candidate search space bounded), never a slip allowance; the admission check itself always requires zero new breach regardless of where in this range the candidate's CDD falls. Default 365 (effectively "consider any committed order, however far out"); lower it if admission-check volume needs trimming.
 
-**Retired with Model C/CP-SAT (no longer meaningful under a deterministic dispatch simulator):** `batch_bonus_months`, `batch_bonus_value`, `downstream_queue_bonus_value`, `ageing_normalization_days`, `machine_priority_epsilon`, `engine2_time_limit_seconds`, `scheduling_horizon_safety_factor`, `scheduling_horizon_buffer_days`, `solver_workers`, `solver_time_limit_seconds`, `setup_penalty_weight` — these existed to shape a CP-SAT objective function or size a CP-SAT horizon; Model E has neither. `backend/config.json` and `models.py::Config` still need to be migrated to this shape (tracked as implementation work, not yet done).
+**Retired under Model F, replaced by §E.16's single mechanism:** `allow_soft_consolidation_beyond_window`, `soft_consolidation_max_extra_days` (Model E's soft-launch extension — see Model history).
+
+**Retired with Model C/CP-SAT (no longer meaningful under a deterministic dispatch simulator):** `batch_bonus_months`, `batch_bonus_value`, `downstream_queue_bonus_value`, `ageing_normalization_days`, `machine_priority_epsilon`, `engine2_time_limit_seconds`, `scheduling_horizon_safety_factor`, `scheduling_horizon_buffer_days`, `solver_workers`, `solver_time_limit_seconds`, `setup_penalty_weight` — these existed to shape a CP-SAT objective function or size a CP-SAT horizon; Model F has neither.
 
 FastAPI exposes `GET /config` and `PUT /config` to read and update this file (endpoints unchanged; the `Config` schema they serve needs the migration above).
 
 ---
 
-## Engine 1 — Model E (current, final design)
+## Engine 1 — Model F (current, final design)
 
 Engine 1 is a **deterministic, continuous-time discrete-event dispatch simulator** — not a CP-SAT capacity model, and not an interval/slot solver of any kind. CP-SAT is fully retired; there is no fallback to it and no post-optimization pass. Same inputs always produce the same schedule (essential for a $50M line's auditability).
+
+Section numbers below are inherited from Model E and kept stable (`§E.n`, not renumbered to `§F.n`) because they're cross-referenced throughout this document. §E.1-§E.4, §E.7-§E.9 and §E.11-§E.14 are Model E's original text, unchanged under Model F. §E.5 is revised below. §E.15-§E.19 are new, Model-F-only sections.
 
 ### E.1 — Order types (ORDER_STATUS)
 
@@ -212,7 +217,7 @@ Engine 1 is a **deterministic, continuous-time discrete-event dispatch simulator
 
 ### E.3 — Fixture & Locator model (replaces SETUP_TIME)
 
-Every `SIZE_INCH~CLASS~MOC~DESIGN` has one FIXTURE and one LOCATOR per operation (from `MCH_ITEMWISE_FIXTURE_LOCATOR`), constant across machines. `SETUP_TIME` (MCH_MACHINE_PRIORITY) is ignored entirely.
+Every `SIZE_INCH~CLASS~MOC~DESIGN` has one FIXTURE and one LOCATOR per operation, constant across machines (sourced from `MCH_MACHINE_FNL_MASTER` under Model F — see §E.15 — `MCH_ITEMWISE_FIXTURE_LOCATOR` under Model E). `SETUP_TIME` is ignored entirely either way.
 
 - When the **FIXTURE** on a machine changes: charge `FIXTURE_CHANGE_TIME + LOCATOR_CHANGE_TIME` once, before the first piece.
 - When only the **LOCATOR** changes (fixture unchanged): charge `LOCATOR_CHANGE_TIME` once, before the first piece.
@@ -243,9 +248,11 @@ This is worked in full, line-by-line, in the two examples preserved in `Chat Rep
 
 **Routing-divergence split** (inherited from Model D): a batch normally stays intact across operations (same SCMD ⇒ same fixture/locator downstream), but when members' routing diverges at a later operation (e.g. one has an extra rework op), the batch splits only at the operation where routing diverges and rejoins where it reconverges.
 
-### E.5 — Machine selection
+### E.5 — Machine selection (Model F: priority-first, not earliest-free-first)
 
-For a formed fixture run: intersect the capable machines (per `MCH_MACHINE_PRIORITY`, evaluated for every member) across all members of the run. Pick the machine **free earliest**; break ties by lowest `MACHINE_PRIORITY`. Priority is soft — never wait on a preferred machine while another capable machine is idle and could take the work. If no single machine is capable of every member, keep the run intact on one common machine and drop the incapable member(s) — they schedule in their own run.
+For a formed fixture run: intersect the capable machines (per `MCH_MACHINE_FNL_MASTER`, §E.15, evaluated for every member) across all members of the run. **Model F reverses Model E's rule here.** Model E picked whichever capable machine was free earliest, using `PRIORITY` only as a tiebreak for exact simultaneous free times. Model F instead walks capable machines in ascending `PRIORITY` order (1 = most preferred) and takes the **first one that is currently available** (`machine_free_at` at or before the run's ready time) — a lower-priority-number machine always wins over a higher-priority-number one as long as it's actually free, even if the higher-priority machine became idle earlier. If no candidate is currently available, the run waits for the earliest one to free up (plain availability, no priority comparison possible when nothing is free yet); the moment one or more become free, the same priority-first scan runs again among whoever is free at that instant. This is also §E.19's Rule 2 (machine selection) in the determinism contract — see there for the exact decision procedure.
+
+If no single machine is capable of every member, keep the run intact on one common machine and drop the incapable member(s) — they schedule in their own run (unchanged from Model E).
 
 ### E.6 — Consolidation window (60 days) — HARD RULE, no override
 
@@ -255,7 +262,7 @@ An order is eligible to be pulled into a fixture-run consolidation (§4 step 2) 
 
 **This is a hard cutoff, not a soft preference — there is no escape hatch.** An order beyond the window is simply never eligible for consolidation, regardless of machine idleness, downstream impact, or anything else. (An earlier draft of this rule had a "delays no committed order" override; that override was deliberately removed — §6 is now evaluated purely on the window number, nothing else.) `batch_consolidation_window_days` remains a plain config value — changing it (e.g. 60 → 90) takes effect immediately with no code change, since the cutoff is read from config on every call, never hardcoded.
 
-**Soft-launch extension (opt-in, off by default): `allow_soft_consolidation_beyond_window` / `soft_consolidation_max_extra_days`.** §E.6 above stays a true hard rule with zero exception for the default/production config. This is a SEPARATE, bounded layer on top, for the specific case of raising machine utilization by letting an idle fixture mount be reused: a committed order (never safety stock — that has its own §E.10 mechanism) whose CDD falls past the hard window but still within `soft_consolidation_max_extra_days` beyond it may be offered as a candidate to ride an existing in-window run's already-mounted fixture/locator for free — but **only** after the exact same full speculative check §E.10 uses (fork state, run two continuations — "include" vs. "exclude" — in parallel OS processes, accept "include" only if it introduces no committed-order breach anywhere beyond what "exclude" already has). Rejected candidates fall back to today's exact hard-rule behavior (their own solo fixture run, no different from the feature being off). See `dispatch_consolidation_window.is_soft_eligible`, `dispatch_engine._compute_soft_candidates`, `dispatch_orchestrator._decide_soft_merge`/`_evaluate_two_options` (the shared fork/continue/compare core now used by both this and §E.10), and `backend/testing/test_soft_consolidation.py`. Live-data E-6 validation (`backend/testing/e6_validate_soft_consolidation.py`) confirmed: all existing invariants hold with the feature on, zero committed orders newly breach CDD, and the extra speculative forks cost real but bounded runtime (~+25% on the live backlog tested, a handful of candidate merges found and correctly evaluated — most rejected on this particular backlog, since its fixture pool is already tightly booked; a real finding about the backlog, not a defect in the check).
+**Model E soft-launch extension, superseded by Model F's §E.16 universal admission check.** Model E had an opt-in `allow_soft_consolidation_beyond_window`/`soft_consolidation_max_extra_days` layer (a beyond-window committed order riding an in-window run for free, via a dedicated fork/compare mechanism, `dispatch_orchestrator._decide_soft_merge`) that existed alongside §E.10's separate, differently-scoped safety-stock mechanism. Model F deletes both as distinct mechanisms and replaces them with **one** general admission check — see §E.16 — used for every beyond-window or safety-stock candidate, everywhere, not just these two narrow historical cases. §E.6's hard window rule itself (an order's own CDD must be within the window to anchor or be batched by ordinary means) is unchanged; §E.16 is what now governs the exception path.
 
 ### E.7 — Continuous timeline, no capacity cap
 
@@ -284,17 +291,17 @@ See §1. Earliest-start = `PRODUCTION_START_DATE_AND_TIME + planned_order_start_
 
 Split a fixture+locator sub-batch into its **committed** (CDD not null) and **safety-stock** (CDD null) pieces.
 
-- **Heavy operations:** schedule the committed pieces first. Append the safety-stock pieces immediately after (free — same fixture/locator already mounted) **only if** doing so delays no committed order, anywhere, past its CDD. If it would, release the fixture/locator and send the safety-stock pieces to the **back of the global priority queue** — picked up later whenever their fixture/locator naturally comes free again.
+- **Heavy operations:** schedule the committed pieces first. Append the safety-stock pieces immediately after (free — same fixture/locator already mounted) **only if** doing so passes §E.16's universal admission check. If it would disturb a near-term order, release the fixture/locator and send the safety-stock pieces to the **back of the global priority queue** — picked up later whenever their fixture/locator naturally comes free again.
 - **Light operations** (everything not in `heavy_operations`): committed and safety-stock pieces batch together normally, no special ordering — the marginal cost of including safety-stock is only `LOAD_UNLOAD_TIME × qty`.
-- **`protect_committed_over_safety = true` is absolute** — no committed order is ever delayed to build safety stock, under any circumstance.
+- **`protect_committed_over_safety = true` is absolute for orders inside the window** — no order within `batch_consolidation_window_days` is ever delayed to build safety stock, under any circumstance. (§E.16 defines exactly which orders this protection covers under Model F.)
 
-**Implementation requirement — full speculative check, not a proxy.** "Delays no committed order, anywhere" must be answered by actually forking the simulation state and running two independent continuations of the rest of the schedule — **append** and **defer** — then comparing whether the append branch causes any committed order to breach its own CDD. A local proxy (checking only orders sharing the same machine/fixture/locator) was explicitly rejected in favor of this full check, given the project's zero-tolerance for a wrongly-approved committed delay.
+**Model E's bespoke fork/compare implementation for this decision is superseded by §E.16** — it's the same mechanism now, generalized and shared with every other beyond-window/safety-stock admission decision, not a separate one maintained here. See §E.16 for the actual check, and §E.16's own section for the parallelism requirement (separate OS processes, never threads, same reasoning as Model E had here).
 
-Because both continuations are pure CPU-bound Python (no I/O), running them one after another would double the cost of every single heavy-op decision across a run with many such decisions. **This must be parallelized across separate OS processes, not threads** — CPython's GIL means threads buy no real speedup on CPU-bound work. On Windows (this project's dev machine and production target), `multiprocessing`'s spawn start method pickles every branch's target function and arguments to hand to a worker process, so each branch's continuation must be a plain module-level function operating on plain, picklable state (a forked `machine_free_at` dict, a forked `DevicePool` via `DevicePool.clone()`, the remaining order queue) — never a closure or bound method capturing outer state. See `backend/dispatch_parallel.py` (the branch-evaluation harness) and `DevicePool.clone()` in `backend/dispatch_pool.py` (the forkable pool state) — both already built; the orchestrator still needs to supply the actual "run the rest of the schedule from this forked state" continuation.
+### E.11 — Fixture/locator lookup: optional, not gating (Model E) / conditional under Model F, see §E.15
 
-### E.11 — Fixture/locator lookup: optional, not gating
+Model E: if `(SIZE_INCH, CLASS, MOC, DESIGN, TASK)` has **no** row in `MCH_ITEMWISE_FIXTURE_LOCATOR` for any candidate machine, the operation is **still scheduled** — via plain routing + `Σ CYCLE_TIME` only (no fixture/locator effect, no fixture-run membership, no pool involvement). `FIXTURE_ID`/`LOCATOR_ID` are left NULL on its output row, and `REMARK` records `"No fixture/locator match - scheduled via plain routing"`.
 
-If `(SIZE_INCH, CLASS, MOC, DESIGN, TASK)` has **no** row in `MCH_ITEMWISE_FIXTURE_LOCATOR` for any candidate machine, the operation is **still scheduled** — via plain routing + `Σ CYCLE_TIME` only (no fixture/locator effect, no fixture-run membership, no pool involvement). `FIXTURE_ID`/`LOCATOR_ID` are left NULL on its output row, and `REMARK` records `"No fixture/locator match — scheduled via plain routing"`.
+**Model F changes this for a specific task list** — §E.15 makes the no-match case a hard exclusion (not a permissive fallback) for `fixture_required_tasks`. This section's plain-routing fallback still applies unchanged for every other task.
 
 ### E.12 — Scheduling scope & the REMARK column
 
@@ -327,6 +334,61 @@ See DDL in **Write tables** below, and `backend/testing/model_e_schedule_output_
 - `ORDER_COMPLETION_DATE`/`ORDER_COMPLETION_SHIFT`: taken from the order's own last-operation row (highest `OPERATION_NO` among its scheduled rows) and **stamped identically across every row of that `PRODUCTION_ORDER`**, so any row for that order shows its eventual completion without a join.
 - `REMARK`: see §12.
 - **No historical retention** — each `/schedule/generate` run deletes all rows and writes fresh (unchanged from prior models).
+
+### E.15 — Unified machine/fixture/locator master (`MCH_MACHINE_FNL_MASTER`)
+
+Model F replaces the two separately-maintained `MCH_MACHINE_PRIORITY` (routing) and `MCH_ITEMWISE_FIXTURE_LOCATOR` (fixture/locator timing) views with **one** table: `MCH_MACHINE_FNL_MASTER`, grain `(SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER)` — one row per machine capable of one combo+task, carrying both its routing `PRIORITY` and its fixture/locator identity + timing on the same row. This is a correctness fix, not just a convenience merge: under the two-table design, routing and fixture data could (and did — 258 confirmed live combos) disagree on which machine is valid for a combo+task, because nothing enforced the two tables staying in sync. One row per machine makes that disagreement structurally impossible.
+
+Columns: `COMPANY, SIZE_INCH, CLASS, MOC, DESIGN, COMBINATION, TASK, PRIORITY, WORK_CENTER, FIXTURE_ID, LOCATOR_ID, FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME, LOAD_UNLOAD_TIME`. `FIXTURE_ID`/`LOCATOR_ID`/the three timing columns are nullable — a row with them NULL is a routing-only entry (no fixture/locator needed or matched for this combo+task+machine). **`COMBINATION` is ERP-sourced display text, never parsed for the batch key** — same rule as `ITEM_CATEGORY` always had; the key is always built from the four typed columns directly.
+
+Some operations need no physical fixture/locator but still have a real, machine-specific setup time to account for (e.g. a PTA-welding or serration setting change) — these get a **dummy device row** in `MCH_FIXTURE_LOCATOR`'s inventory (`QUANTITY = 999`, effectively unlimited, e.g. `FD_WELD`/`LD_WELD`/`FD_SERRATION`/`LD_SERRATION`/`LD_DS900`) purely so the existing pool/timing machinery can carry their change-time data without ever actually constraining concurrency. These are real, intentional entries — never treat a 999-quantity device as a data error.
+
+**Fixture-required task policy (hard exclusion, new under Model F):** `fixture_required_tasks` (config, default `["VB02","VB03","VB04","VB05","VB06","VB07"]`) names the TASK codes for which a fixture/locator assignment is mandatory — every live combo for these tasks is expected to have a `MCH_MACHINE_FNL_MASTER` row (even if it's a dummy-device row per above). If a schedulable operation's TASK is in this set and **no row exists** in `MCH_MACHINE_FNL_MASTER` for `(SIZE_INCH, CLASS, MOC, DESIGN, TASK)` on *any* candidate machine, the operation is **excluded** (`EXCLUDED_NO_FNL_MASTER_ENTRY`, REMARK: `"No line matching this SIZE~CLASS~MOC~DESIGN~TASK in MCH_MACHINE_FNL_MASTER"`) rather than falling back to plain routing — a missing row for one of these tasks means the master table itself is incomplete, which is a data problem to surface and fix, not a case to silently route around. For every task **not** in `fixture_required_tasks`, a missing row keeps Model E's original §E.11 behavior: scheduled via plain routing, REMARK is a caveat not an exclusion.
+
+### E.16 — Universal admission check (replaces Model E's two separate mechanisms)
+
+One function answers one question, used everywhere a beyond-window or safety-stock candidate wants to join a cluster or append to a machine's queue: **"does admitting this candidate push any order whose CDD falls within `batch_consolidation_window_days` (the near-term, protected set) past its own CDD, anywhere in the rest of the schedule?"** Admit iff the answer is no. This replaces both of Model E's narrower, separately-implemented mechanisms (§E.10's heavy-op safety-stock resolver, and the retired soft-consolidation-beyond-window extension) with one general-purpose check used at both decision points below:
+
+1. **Cluster admission** — a beyond-window committed order or a safety-stock order wants to join an in-window fixture run (§E.4's cluster) instead of starting its own solo run.
+2. **Machine-queue admission** — a cluster (or a partial-quantity slice, §E.18) wants to append to a specific machine's already-live queue rather than open a new one elsewhere.
+
+**Explicit scope limit, by design, not oversight:** this check protects orders within the 60-day window only. It does **not** guarantee zero impact on a committed order whose own CDD is beyond the window — that order's only protection is the normal CDD-priority ordering (§E.2: it's still served ahead of safety stock and ahead of anyone further out), not an explicit no-breach gate. This is a deliberate trade-off: it allows meaningfully larger, more efficient clusters and higher aggregate throughput, at the cost of not formally bounding how far a distant committed order could theoretically slip. `protect_committed_over_safety = true` remains absolute **for the ≤60-day set**; it was never extended to cover every committed order regardless of distance.
+
+**Mechanism — identical to Model E's fork/compare, now used generally:** fork simulation state (`machine_free_at` dict, `DevicePool.clone()`, the remaining order queue), run two continuations — "admit" vs. "don't admit" — to completion, compare which near-term (≤60-day) committed orders breach in each, admit iff admitting introduces no breach beyond what not-admitting already has. No slip tolerance, no partial credit — strict.
+
+**Parallelism:** both continuations are pure CPU-bound Python; this runs across separate OS processes, never threads (CPython's GIL gives threads no real speedup here — same reasoning as Model E's §E.10). `dispatch_parallel.evaluate_branches_in_parallel` opens a fresh `ProcessPoolExecutor` per call today (not yet a persistent pool reused across every admission check within one run) — a real, known cost worth revisiting if admission-check volume on a larger live backlog makes per-call pool startup material; not yet measured as a bottleneck on the backlogs validated so far, so not prioritized ahead of correctness work. Workers only compute answers faster in parallel; results are applied back by the (unchanged, Model-E-style) depth-round loop (§E.17) in fixed order, so parallelism changes nothing about *what* gets decided.
+
+### E.17 — Within-run reordering for readiness (not a plant-wide event-driven redesign)
+
+**A full event-driven rewrite was built, measured on live data, and deliberately reverted — this section documents what actually shipped instead, and why.** The original theory: Model E's orchestrator processed every order's 1st schedulable operation (across the whole plant) before processing *any* order's 2nd — a "depth round" structure — and this artificially delayed machines whose own ready work sat at a later depth. A full priority-queue-of-pools redesign was implemented to fix this (forking the queue state through the admission check, etc.). On live data it produced **identical results** to the simpler depth-round loop, and closer analysis showed why: any two pools genuinely competing for the same machine reduce to the identical greedy choice under both designs (a depth-0 pool always gets first crack — that's precedence, not an artifact), and pools that don't share a machine never affected each other's computed timestamps in either design, since each machine's timeline is independent. The "depth rounds cause artificial idle time" premise didn't hold once the *real* bug (below) was found and fixed. The event-driven code was removed rather than carried as unproven complexity; Model F's orchestrator is Model E's original depth-round flat-list loop, unchanged.
+
+**The real bug, and its fix:** a fixture run's members are placed in a fixed priority order (§E.4's formation order). The original Model E bug pinned the WHOLE run's start to whichever single member became ready *last* (fixed mid-Model-E as a point patch). The *remaining* bug, found via live-data re-investigation of machine `2PMH19` (idle 2026-10-23 → 2026-11-05, 13 days, on a single already-running fixture run): a late-ready member **partway through** the formation-order sequence still blocked every member sequenced *after* it, even ones that had been ready for days, because placement walked the sequence strictly in formation order with no lookahead.
+
+**Fix:** `dispatch_engine._simulate_run_timing` now looks ahead within the SAME run: if the next-in-formation-order member isn't ready yet and the machine would otherwise idle, it runs whichever OTHER not-yet-placed member in the same run IS ready now, instead — the skipped member keeps its place and resumes it the instant it's actually ready, so a later-priority member can temporarily fill a gap but never permanently cut the line. `charge_type` (`fixture_change`/`locator_change`/`none`) is recomputed live from the ACTUAL execution order (same logic `_recompute_charges` already used for dropped/deferred members), never trusted from the original formation-order value, since reordering changes who's actually mounted immediately before whom. Confirmed on live data: this specific 13-day gap closed, live CDD attainment improved (72.8% → 73.4%), and all regression tests pass with zero change elsewhere.
+
+**What's genuinely NOT fixed, and isn't a bug:** a machine can still sit idle when it simply has no OTHER ready, capable work queued — e.g. its next-priority combo's preferred machine is absorbing all current demand for that fixture (§E.9's same-SCMD-one-machine preference), so the backup machine goes unused even while idle. That's a `MCH_MACHINE_FNL_MASTER.PRIORITY` / business-rule outcome, not an engine defect — see live investigation findings on `2PMT16` (confirmed: `3PMC22` is `PRIORITY=1` and continuously busy on the same fixture; `2PMT16` is `PRIORITY=2` and never needed as an overflow target). Addressing it is a planner decision (re-rank `PRIORITY` for specific combos to share load), not a code change.
+
+### E.18 — Partial-quantity (lot-streaming) handoff between operations — ✅ DONE (Part 1 + Part 2)
+
+Model E treated one order's one operation as a single atomic block: the *entire* balance quantity had to finish before that order's next operation could start. Model F allows **partial quantities to flow downstream as they complete**, instead of waiting for the whole batch. Shipped in two parts, both complete and live-validated:
+
+- **Part 1 — shift-boundary quantity slicing.** If a run produces some pieces before others (e.g. 6 of 10 finish in shift 1, the remaining 4 in shift 2), that placement itself splits into multiple `MCH_SCHEDULE_OUTPUT` rows — one per quantity-slice, each its own `LINE_NO`, timestamps and (normally) machine — matching real per-piece completion timing instead of reporting one row that silently spans the gap. Implemented as `_slice_by_shift_raw`/`_slice_by_shift` in `dispatch_engine.py`, wired through `_place_fixture_run` and `_place_no_fixture_op`.
+- **Part 2 — downstream consumption of partial completions.** The completed sub-quantity becomes ready for the NEXT operation the instant it finishes — it does not wait for the rest of the batch. **Never interrupt a machine that's currently running.** If a compatible queue for the next operation is already in progress on some capable machine, the completed sub-quantity appends to the *tail* of that queue. If no such queue exists yet, a new run starts with the available sub-quantity, on whichever machine §E.5's priority-first selection picks; the remaining sub-quantity (finishing later) joins that same run's queue when it's ready, exactly like any other queue append. Implemented via a `piece_ready_at: dict[str, list[TimePoint]]` map threaded through the existing call graph (`dispatch_engine.py`, `dispatch_orchestrator.py`) — per order, the most-recently-placed operation's own per-piece completion times, read by the next operation's placement to gate each of its own pieces individually instead of only its overall start. Unconditional, no config flag — degrades to pre-Part-2 single-instant `ready_at` behavior for any op whose upstream never spans a shift boundary (the common case).
+  - **Real bug found and fixed during implementation:** the first cut of Part 2 computed a step's/op's overall `start` as `max(machine_free_at, ready_at[order])` — the upstream's scalar, LAST-piece completion — *before* handing control to the per-piece loop. Since that floor already sat at or past every individual piece's own ready time, the loop's `max(cursor, piece_ready_at[k])` comparisons never changed anything, silently defeating early consumption end-to-end. Fixed by flooring on the upstream's *first* piece completion (`piece_ready_at[order][0]`) instead, in both `_place_no_fixture_op` and `_simulate_run_timing` (the latter via a shared `_effective_ready()` helper also used for the within-run readiness scan, §E.17). Caught by a dedicated unit test (`test_lot_streaming_next_op_starts_on_early_pieces_not_whole_batch`, `test_dispatch_orchestrator.py`) before it ever reached live validation.
+- **Schema consequence:** `MCH_SCHEDULE_OUTPUT`'s `LINE_NO` (already defined for "this operation's balance was split") becomes the *normal* case for most multi-piece orders under Model F, not the rare machine-breakdown-handoff case it was under Model E. One `(PRODUCTION_ORDER, OPERATION_NO)` can now legitimately produce several rows, one per quantity-slice, each with its own `LINE_NO`, timestamps, and machine. Every downstream reader of this table (Gantt, exports, planners) must expect this as routine, not exceptional — **this is also why `GanttChart.jsx` migration (E-5/step 3 below) must explicitly handle multiple `LINE_NO` rows per operation, not just the continuous-timestamp rendering it already needed.**
+- **Validation consequence:** `e6_validate_real_data.py`'s precedence check had to be loosened to match — a downstream op legitimately starting before its upstream op's overall `end` is now expected (that's the whole point), so the check now only flags a downstream op starting before its upstream op even *begins* (true time-travel, still a real bug if it ever happens). On live data (5403 WIP rows, 640 orders, run date 2026-10-01): 5785 output rows (382 from §E.18 slicing), all invariants pass (PK uniqueness, REMARK coverage, pool concurrency, precedence), and CDD attainment improved from 73.5% (pre-Part-2) to **75.9%** — a real, measurable gain from letting downstream ops start on partial completions instead of stalling on whole-batch waits.
+
+### E.19 — Determinism contract
+
+Same inputs must always produce the same schedule (§E.13). Every decision point has exactly one named, fixed rule — no "whichever finishes first" or "whichever looks better" branching anywhere:
+
+1. **Round/placement ordering** (§E.17): Model E's original flat list, strictly `(depth, task)` — every order's 1st schedulable operation across the whole plant, then every 2nd, and so on; within one depth, tasks in alphabetical order. (The plant-wide event-driven alternative described in an earlier draft of this section was built, measured, and reverted — see §E.17's own note.)
+2. **Within-run execution order** (§E.17): once a fixture run's formation order is fixed (§E.4), a not-yet-ready member is skipped in favor of any other not-yet-placed member that's ready now, falling back to the formation-order head the instant it becomes ready; if nothing in the run is ready yet, wait for whichever member becomes ready soonest. Ties always resolve to the formation-order position (stable scan, first match wins).
+3. **Machine selection** (§E.5): among capable candidates, walk ascending `PRIORITY` (from `MCH_MACHINE_FNL_MASTER`) and take the first one currently available (`machine_free_at` ≤ this decision's ready time). None available → wait for the earliest one to free up, then re-apply the same priority-first scan among whoever is free at that new instant.
+4. **Candidate selection** (what a freed machine's cluster/order pick is, among several ready options): lowest CDD first (safety stock/CDD = NULL last); tie → older `order_date` first; still tied → `batch_key` string, alphabetically (last-resort fallback, shouldn't normally trigger).
+5. **Admission** (§E.16): beyond-window/safety-stock candidates only — accept iff the fork/compare check shows zero new CDD breach for any order within the 60-day window. In-window committed orders use §E.6's plain window-eligibility rule, no fork check at all.
+6. **Cluster formation** (§E.4, unchanged): FIXTURE + TASK rigid, LOCATOR varying, in the (a)/(b)/(c) preference order §E.4 already specifies.
+7. **Parallelism** (§E.16): separate OS processes compute admission-check answers faster; it never changes which answer is reached or the order decisions are committed in — that's governed entirely by rules 1-6 above, single-threaded.
 
 ---
 
@@ -578,12 +640,23 @@ tov-mlo/
 │   ├── models.py                 ← Pydantic schemas. Config migrated to the Model E shape;
 │   │                                ScheduleGenerateResponse added for /schedule/generate's new response.
 │   ├── config.json               ← Model E shape (see Configuration section) — migrated
-│   ├── testing/
+│   ├── testing/                   ← cleaned up (F-6): every Model B/C/D-era one-off diagnostic and
+│   │   │                             throwaway test script has been deleted now that Model F is the
+│   │   │                             only live engine. What's left is all current:
 │   │   ├── model_e_schedule_output_schema.sql   ← Model E DDL (applied)
-│   │   ├── test_dispatch_*.py                   ← unit tests for every dispatch_* module above
-│   │   └── e6_validate_real_data.py             ← E-6 audit script: runs the full pipeline against live
-│   │                                                Oracle WIP data and checks precedence/pool/REMARK/row-count
-│   │                                                invariants (read-only, never writes)
+│   │   ├── test_dispatch_*.py / test_shift_clock.py / test_model_e_data_holidays.py /
+│   │   │   test_soft_consolidation.py           ← the 17-file regression suite, one per dispatch_* module
+│   │   ├── e6_validate_real_data.py             ← E-6 audit script: runs the full pipeline against live
+│   │   │                                            Oracle WIP data and checks precedence/pool/REMARK/row-count
+│   │   │                                            invariants (read-only, never writes)
+│   │   ├── e6_validate_soft_consolidation.py    ← same style of live audit, scoped to the soft-consolidation-
+│   │   │                                            beyond-window feature specifically
+│   │   ├── benchmark_soft_window.py             ← live read-only sizing diagnostic for that same feature
+│   │   ├── test_connection.py / test_api_startup.py ← basic Oracle connectivity / FastAPI startup checks
+│   │   └── test_engine2_e2e.py                  ← still Model C-era (Engine 2 hasn't been migrated yet —
+│   │                                                see "What's left" below) but kept because it's live,
+│   │                                                not deprecated — it's the only regression coverage
+│   │                                                Engine 2 currently has
 │   └── requirements.txt
 └── frontend/
     ├── package.json
@@ -613,7 +686,27 @@ tov-mlo/
 | E-4 — REMARK & completion surfacing | §12 REMARK taxonomy, ORDER_COMPLETION_DATE/SHIFT population | ✅ Done (`dispatch_scope.py`, `dispatch_orchestrator.py`), verified against live data — every WIP row produces exactly one output row |
 | E-5 — API/UI migration | `models.py`, `main.py` response shapes, `GanttChart.jsx` continuous-time rendering, config.json migration | ⏳ Partial — backend done (`config.json`/`models.Config` migrated, `/schedule/generate`+`/schedule/current`+`/data/refresh` call the Model E pipeline, verified live). **Not done:** `/orders/wip` and `/priority/simulate` (Engine 2) still call Model C-era code; `GanttChart.jsx` and the rest of the frontend still expect the old offset-based shape |
 | E-6 — Validation | Full-run audit: precedence intact, pool never exceeded, per-order CDD attainment, replicate the two worked batching examples exactly | ✅ Done against live Oracle WIP data (5005 rows) — see `backend/testing/e6_validate_real_data.py`. Found and fixed 3 real bugs along the way: a `select_machine` int/TimePoint default-type crash, missing compound-device (`"+"`-joined LOCATOR) and `"NA"`-sentinel handling in the fixture/locator pool (both confirmed real ERP conventions), and a precedence bug where `_place_no_fixture_op` never advanced `ready_at`. All invariants pass; CDD attainment on the current live backlog is 28.5% — a real finding about the backlog, not an engine defect |
+| F-1 — Unified FNL master (§E.15) | `MCH_MACHINE_FNL_MASTER` replaces the two-table routing+fixture join; `fixture_required_tasks` hard-exclusion policy | ✅ Done — `model_e_data.py` loaders, `dispatch_scope.py` exclusion outcome, unit-tested (`test_dispatch_scope.py`) and live-validated |
+| F-2 — Priority-first machine selection (§E.5) | Reverses Model E's earliest-free-first rule: ascending `PRIORITY`, first currently-available candidate wins | ✅ Done — `dispatch_machine_selection.py`, unit-tested, live-validated |
+| F-3 — Universal admission check (§E.16) | One fork/compare mechanism replacing Model E's two separate beyond-window/safety-stock resolvers | ✅ Done — `dispatch_orchestrator.py` (`_decide_admission`, `_make_committed_safe_resolver`), `dispatch_parallel.py` (separate-process fork/compare), unit-tested (`test_soft_consolidation.py`, `test_dispatch_safety_stock_speculation.py`) and live-validated |
+| F-4 — Within-run reordering for readiness (§E.17) | Fixes a fixture run's late-ready member from blocking every later-sequenced member, without a full event-driven plant-wide redesign | ✅ Done — a full event-driven rewrite was built, measured on live data, found to produce identical results to the simpler depth-round loop, and deliberately reverted (see §E.17's own note for why); the real, kept fix is the lookahead in `dispatch_engine._simulate_run_timing`. Closed a confirmed 13-day idle gap on live data (machine `2PMH19`); live CDD attainment improved 72.8% → 73.4% |
+| F-5 — Partial-quantity lot-streaming (§E.18) | Part 1: shift-boundary quantity slicing into multiple `LINE_NO` rows. Part 2: downstream ops consume upstream per-piece completions early instead of waiting for the whole batch | ✅ Done, both parts — see §E.18 above for the full writeup, including the real `_effective_ready()` bug found and fixed during Part 2. Live CDD attainment improved 73.5% → 75.9% |
+| F-6 — Engine 1 codebase cleanup | Remove one-off Model B/C/D-era diagnostic and throwaway test scripts left over from superseded designs, now that Model F is the only live engine | ✅ Done — 22 files deleted (`deep_diagnostic.py`, `diagnose_duplication.py`, `regenerate_schedule.py`, and 19 `testing/` scripts: Model B's `_smoke_test_engine1.py`, Model C's `clean_and_test.py`/`diagnose_candidate_divergence.py`/`diagnose_vb05_routing.py`/`test_batch_fix.py`/`test_engine1_e2e.py`/`test_phase1_phase2.py`/`test_phase3_batch_continuity.py`/`verify_fix.py`, Model D's `phase_d1_fixture_locator_validation.py`/`phase_d1_vocabulary_audit.py`, and ad-hoc scratch scripts `check_overscheduled.py`/`diagnostic.py`/`diagnostic2.py`/`check_db.py`/`check_db_state.py`/`validate_excel_export.py`/`validate_excel_export2.py`/`validate_schedule.py`). Confirmed none were imported by any live code path before deletion; the full 17-file dispatch regression suite still passes. **Deliberately NOT deleted:** `preprocess.py`, `engine1_scheduler.py`, `pipeline.py`, `batch_grouping.py` — still load-bearing for Engine 2 (`engine2_recommender.py`/`pipeline2.py`) and two un-migrated `main.py` endpoints (`/orders/wip`, `/machines/capacity`); removing them now would break the running app, not clean it up. They become deletable once step 2 (Engine 2 migration) and the rest of E-5 land |
+| **Engine 1 (Model F): feature-complete.** | Every dispatch-simulator behavior in CLAUDE.md's Model F spec (§E.1–§E.19) is implemented, unit-tested, and live-validated. | ✅ |
 | 5 — Deploy | NSSM Windows services (Uvicorn + Express), end-to-end integration test | ❌ Not started |
+
+---
+
+## What's left (next chat — do not start these here)
+
+Engine 1 (the Model F dispatch simulator) is feature-complete and live-validated end to end. What remains is everything CLAUDE.md's E-5 row and Phase 5 already flagged as outstanding, now enumerated as a concrete punch list:
+
+1. ~~Investigate remaining machine idle gaps~~ — done this session: root-caused to `MCH_MACHINE_FNL_MASTER.PRIORITY` ranking (a business-rule/data outcome, not an engine defect — planner to re-rank priorities for specific combos if load-sharing is desired).
+2. **Engine 2 migration** — `/orders/wip` and `/priority/simulate` (`engine2_recommender.py`/`pipeline2.py`) still call Model C-era code (`preprocess.py`/`engine1_scheduler.py`/`pipeline.py`), not the Model F pipeline. CLAUDE.md's Engine 2 section says this should happen; it hasn't yet.
+3. **Frontend migration** — `GanttChart.jsx` needs continuous-`START_TIMESTAMP`/`END_TIMESTAMP` rendering AND must handle multiple `LINE_NO` rows per operation (a direct, routine consequence of §E.18 — not optional once this ships to planners). Rest of the frontend still expects the old offset-based shape.
+4. **Admission-check parallelism** — `dispatch_parallel.evaluate_branches_in_parallel` opens a fresh `ProcessPoolExecutor` per call, not a persistent pool reused across one run's admission checks. A known, flagged cost — worth fixing only if a larger live backlog makes per-call pool startup measurably slow (not yet observed as a bottleneck on backlogs validated so far).
+5. **Deploy (Phase 5)** — NSSM Windows services (Uvicorn + Express), end-to-end integration test. Not started at all.
+6. Once steps 2–5 land, the Engine 1 Model C fallback code (`preprocess.py`, `engine1_scheduler.py`, `pipeline.py`, `batch_grouping.py`'s Model C path) becomes genuinely dead and can be deleted in a follow-up cleanup pass (F-6's deferred half).
 
 ---
 

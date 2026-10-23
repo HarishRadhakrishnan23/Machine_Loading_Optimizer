@@ -75,7 +75,7 @@ class Config(BaseModel):
 # Engine 1 (Model E) — /schedule/generate response
 # ─────────────────────────────────────────────────────────────────────────────
 class ScheduleGenerateResponse(BaseModel):
-    """What POST /schedule/generate returns — model_e_pipeline.ScheduleGenerateResult,
+    """What POST /schedule/generate returns — model_f_pipeline.ScheduleGenerateResult,
     serialized. Replaces the old CP-SAT-era SchedulerResult (status/objective_value
     don't apply to a deterministic dispatch simulator — see CLAUDE.md §E.13)."""
 

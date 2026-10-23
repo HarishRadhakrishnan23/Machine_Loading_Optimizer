@@ -1,0 +1,57 @@
+Definitely I have change in tie break rules but before that I want to make a data level change. I need your help in completing it first., 
+I am merging the MCH_MACHINE_PRIORITY table data and MCH_ITEMWISE_FIXTURE_LOCATOR data in new table called "MCH_MACHINE_FnL_MASTER" these fields :
+
+1. Company
+2. Size	Class
+3. MOC
+4. Design
+5. Combination
+6. Task	Priority
+7. Work_Center
+8. Fixture_ID
+9. Locator_ID
+10. Fixture_Change_Time
+11. Locator_Change_Time
+12. Loading_Unloading_Time
+
+This the Description of MCH_MACHINE_PRIORITY:
+Name             Null?    Type          
+---------------- -------- ------------- 
+COMPANY                   NUMBER        
+SIZE_INCH        NOT NULL NUMBER        
+CLASS            NOT NULL VARCHAR2(10)  
+MOC              NOT NULL VARCHAR2(25)  
+DESIGN           NOT NULL VARCHAR2(25)  
+ITEM_CATEGORY             VARCHAR2(103) 
+TASK             NOT NULL VARCHAR2(8)   
+MACHINE_PRIORITY NOT NULL NUMBER        
+WORK_CENTER      NOT NULL VARCHAR2(6)   
+
+This is the Description of MCH_ITEMWISE_FIXTURE_LOCATOR:
+Name                Null?    Type         
+------------------- -------- ------------ 
+SIZE_INCH           NOT NULL NUMBER       
+CLASS               NOT NULL VARCHAR2(10) 
+MOC                 NOT NULL VARCHAR2(25) 
+DESIGN              NOT NULL VARCHAR2(25) 
+TASK                NOT NULL VARCHAR2(8)  
+WORK_CENTER         NOT NULL VARCHAR2(6)  
+FIXTURE                      VARCHAR2(20) 
+LOCATOR                      VARCHAR2(40) 
+FIXTURE_CHANGE_TIME          NUMBER       
+LOCATOR_CHANGE_TIME          NUMBER       
+LOAD_UNLOAD_TIME             NUMBER       
+USER_ID                      VARCHAR2(20) 
+USER_DATE                    DATE         
+
+and in MCH_ITEMWISE_FIXTURE_LOCATOR., I have these indexes.,
+LNAI	MCH_ITEMWISE_FIXTURE_LOCATORPK	LNAI	MCH_ITEMWISE_FIXTURE_LOCATOR	SIZE_INCH	1	ASC
+LNAI	MCH_ITEMWISE_FIXTURE_LOCATORPK	LNAI	MCH_ITEMWISE_FIXTURE_LOCATOR	DESIGN	2	ASC
+LNAI	MCH_ITEMWISE_FIXTURE_LOCATORPK	LNAI	MCH_ITEMWISE_FIXTURE_LOCATOR	MOC	3	ASC
+LNAI	MCH_ITEMWISE_FIXTURE_LOCATORPK	LNAI	MCH_ITEMWISE_FIXTURE_LOCATOR	CLASS	4	ASC
+LNAI	MCH_ITEMWISE_FIXTURE_LOCATORPK	LNAI	MCH_ITEMWISE_FIXTURE_LOCATOR	TASK	5	ASC
+LNAI	MCH_ITEMWISE_FIXTURE_LOCATORPK	LNAI	MCH_ITEMWISE_FIXTURE_LOCATOR	WORK_CENTER	6	ASC., 
+
+I want you to give me a proper create table query to merge those two tables and also create proper indexes for it.
+And after that I will manually create the table and add the query. Post which I want your help in checking if every machine, fixture and locators mentioned at MCH_MACHINE_FnL_MASTER and MCH_MACHINE_AVAILABILITY is there in MCH_FIXTURE_LOCATOR are there in its respective inventory. 
+ 

@@ -232,9 +232,17 @@ def build_order_chains(
     fixture_index: FixtureIndex,
     known_devices: Optional[frozenset[str]] = None,
     known_machines: Optional[frozenset[str]] = None,
+    fixture_required_tasks: frozenset[str] = frozenset(),
 ) -> list[OrderChain]:
     """
     Classify and group every raw WIP row into one OrderChain per PRODUCTION_ORDER.
+
+    `fixture_required_tasks` (Model F, CLAUDE.md §E.15): TASK codes for which
+    a fixture/locator match is mandatory, not optional — a combo with no
+    match for any candidate machine is EXCLUDED_NO_FNL_MASTER_ENTRY (a data
+    gap to fix) rather than SCHEDULED_NO_FIXTURE's permissive plain-routing
+    fallback. Default empty — every task keeps the original §E.11 fallback,
+    unchanged behavior for existing callers.
 
     `known_devices`: the set of DEVICE_NAMEs actually present in
     MCH_FIXTURE_LOCATOR's physical inventory. When supplied, a fixture/locator
@@ -300,6 +308,7 @@ def build_order_chains(
             has_known_machine_for_combo=has_known_machine,
             has_fixture_locator_match=has_fixture_match,
             fixture_locator_devices_known=devices_known,
+            task_requires_fixture=row.task in fixture_required_tasks,
         )
         outcome = classify_operation(inputs)
 

@@ -68,6 +68,18 @@ data (or crashing obscurely), this is treated exactly like the unknown-
 fixture-device case above: the operation is excluded, REMARK names the gap,
 and the ERP owner has an actionable row to go fix — see
 `dispatch_orders.build_order_chains`'s `known_machines` parameter.
+
+A fourth such addition, Model F (§E.15): EXCLUDED_NO_FNL_MASTER_ENTRY.
+`fixture_required_tasks` (config) names TASK codes where a fixture/locator
+assignment is mandatory (VB02-VB07 by default — every live combo for these
+is expected to have a `MCH_MACHINE_FNL_MASTER` row, even a dummy-device one
+for tasks needing only a machine-setting change, not a physical device). For
+these tasks, a combo with no matching row on any candidate machine is a hard
+exclusion, not §E.11/SCHEDULED_NO_FIXTURE's permissive plain-routing
+fallback — a missing row for one of these tasks means the master table
+itself is incomplete, which is a data problem to surface, not route around.
+Every task NOT in `fixture_required_tasks` keeps the original SCHEDULED_NO_FIXTURE
+fallback unchanged.
 """
 
 from __future__ import annotations
@@ -89,6 +101,7 @@ class ScopeOutcome(str, Enum):
     EXCLUDED_NO_MACHINE_FOR_COMBO = "excluded_no_machine_for_combo"  # see module docstring
     EXCLUDED_NO_AVAILABILITY_DATA = "excluded_no_availability_data"  # see module docstring
     EXCLUDED_UNKNOWN_FIXTURE_DEVICE = "excluded_unknown_fixture_device"  # see module docstring
+    EXCLUDED_NO_FNL_MASTER_ENTRY = "excluded_no_fnl_master_entry"  # see module docstring — Model F §E.15
     SCHEDULED_NO_FIXTURE = "scheduled_no_fixture"
     SCHEDULED = "scheduled"
 
@@ -115,6 +128,9 @@ REMARKS: dict[ScopeOutcome, Optional[str]] = {
     ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE: (
         "Fixture/locator device not in inventory - cannot schedule"
     ),
+    ScopeOutcome.EXCLUDED_NO_FNL_MASTER_ENTRY: (
+        "No line matching this SIZE~CLASS~MOC~DESIGN~TASK in MCH_MACHINE_FNL_MASTER"
+    ),
     ScopeOutcome.SCHEDULED_NO_FIXTURE: "No fixture/locator match - scheduled via plain routing",
     ScopeOutcome.SCHEDULED: None,
 }
@@ -129,6 +145,7 @@ _EXCLUDED_OUTCOMES = frozenset(
         ScopeOutcome.EXCLUDED_NO_MACHINE_FOR_COMBO,
         ScopeOutcome.EXCLUDED_NO_AVAILABILITY_DATA,
         ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE,
+        ScopeOutcome.EXCLUDED_NO_FNL_MASTER_ENTRY,
     }
 )
 
@@ -157,8 +174,9 @@ class ScopeCheckInputs:
     has_routing_entry: bool  # this order's TASK appears anywhere in MCH_MACHINE_PRIORITY
     has_machine_for_combo: bool  # >=1 MCH_MACHINE_PRIORITY row matches this exact SIZE~CLASS~MOC~DESIGN + TASK
     has_known_machine_for_combo: bool = True  # >=1 of those candidate machines has its own row in MCH_MACHINE_AVAILABILITY — see EXCLUDED_NO_AVAILABILITY_DATA
-    has_fixture_locator_match: bool = False  # (SIZE,CLASS,MOC,DESIGN,TASK) present in MCH_ITEMWISE_FIXTURE_LOCATOR for >=1 candidate machine
+    has_fixture_locator_match: bool = False  # (SIZE,CLASS,MOC,DESIGN,TASK) present in MCH_MACHINE_FNL_MASTER (FIXTURE_ID not null) for >=1 candidate machine
     fixture_locator_devices_known: bool = True  # only consulted when has_fixture_locator_match is True — see EXCLUDED_UNKNOWN_FIXTURE_DEVICE
+    task_requires_fixture: bool = False  # this TASK is in config's `fixture_required_tasks` — see EXCLUDED_NO_FNL_MASTER_ENTRY, Model F §E.15
 
 
 def classify_operation(inputs: ScopeCheckInputs) -> ScopeOutcome:
@@ -186,6 +204,8 @@ def classify_operation(inputs: ScopeCheckInputs) -> ScopeOutcome:
     if not inputs.has_known_machine_for_combo:
         return ScopeOutcome.EXCLUDED_NO_AVAILABILITY_DATA
     if not inputs.has_fixture_locator_match:
+        if inputs.task_requires_fixture:
+            return ScopeOutcome.EXCLUDED_NO_FNL_MASTER_ENTRY
         return ScopeOutcome.SCHEDULED_NO_FIXTURE
     if not inputs.fixture_locator_devices_known:
         return ScopeOutcome.EXCLUDED_UNKNOWN_FIXTURE_DEVICE

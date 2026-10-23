@@ -33,7 +33,7 @@ from dispatch_engine import plan_task_pool
 from dispatch_orchestrator import _build_work_items, _continuation_verdict, _initial_ready_at, _place_work_item
 from dispatch_orders import build_order_chains
 from dispatch_parallel import Branch, evaluate_branches_in_parallel
-from model_e_data import (
+from model_f_data import (
     build_availability,
     build_device_pool,
     build_fixture_index,

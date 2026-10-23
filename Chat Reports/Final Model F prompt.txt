@@ -1,0 +1,28 @@
+1. Rule 1 — which machine gets serviced next (event ordering):
+Process machine-free events in strict chronological order: (day, shift, minute), earliest first. If two or more machines become free at the exact same instant, break the tie by machine name, alphabetically.
+
+My point: NO., this is wrong., I want the machines (Work_centers) to be alloted based on the priority given in MCH_MACHINE_FNL_MASTER., lower the priority number., higher the preference, but that machine availability should also be taken into consideration., if it is not available we can assign that task to other priority machines capable of doing it.
+
+2. Rule 2 — candidate selection (what a freed machine takes next):
+Among ready, capable candidates:
+
+Lowest CDD first (safety stock / CDD=NULL last)
+Tie → older order_date first
+Still tied → batch_key alphabetical (last-resort fallback)
+
+My point: Okay with Rule 2., you can proceed with this.
+
+3. Rule 3 — admission into a cluster / onto a machine queue (beyond-window or safety-stock candidates only): accept iff the fork-and-compare check shows zero new CDD breach for any order within the 60-day window. In-window committed orders use the existing simple window-eligibility rule, no fork check.
+
+My point: okay proceed., (Remember Orders within the 60 days - Window are of our priority).
+
+4. Rule 4 — cluster formation key: FIXTURE + TASK rigid, LOCATOR varying — preference order unchanged from today’s (a)/(b)/(c) in run_priority_walk: same fixture+locator+batch_key → free; same fixture+locator any batch_key → free; same fixture, different locator → locator_change, highest-priority candidate first.
+
+My point: okay proceed., (by this way we can create a batch_key (or a batch) with maximum eligible orders in it.
+
+5. Rule 5 — parallelism: admission checks run on a persistent worker-process pool (not threads — GIL), created once per run. Workers only compute answers faster; the single-threaded event queue (Rule 1) still applies and commits decisions in fixed order — parallelism never changes what gets decided, only how fast.
+
+My point: okay., Proceed.
+
+
+This is the full determinism contract: every decision point has exactly one named rule, no “whichever finishes first” or “whichever looks better” branching anywhere.

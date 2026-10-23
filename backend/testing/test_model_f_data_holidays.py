@@ -1,9 +1,9 @@
 """
-test_model_e_data_holidays.py — the confirmed company holiday calendar
+test_model_f_data_holidays.py — the confirmed company holiday calendar
 (L750.TCCCP019) forces every shift of every machine closed on that date,
 taking precedence over both the machine_daily override and the baseline.
 
-Run: backend/venv/Scripts/python.exe backend/testing/test_model_e_data_holidays.py
+Run: backend/venv/Scripts/python.exe backend/testing/test_model_f_data_holidays.py
 """
 
 import sys
@@ -14,7 +14,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from model_e_data import build_availability
+from model_f_data import build_availability
 
 HOLIDAY = date(2026, 10, 2)  # Gandhi Jayanti — a real entry in live L750.TCCCP019
 NORMAL_DAY = date(2026, 10, 1)

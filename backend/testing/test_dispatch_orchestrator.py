@@ -150,6 +150,44 @@ def test_two_orders_same_depth_and_task_batch_together():
     check("O2 batched in right after O1 with no gap (charge=none)", o2_row.start == o1_row.end)
 
 
+def test_lot_streaming_next_op_starts_on_early_pieces_not_whole_batch():
+    print("\n=== Model F §E.18 Part 2: next op consumes upstream pieces as they complete, not the whole batch ===")
+    # op10: 3 pieces @ 10 min/piece on M1. op20: SAME order, 3 pieces @ 1
+    # min/piece on a DIFFERENT machine (M2) — fast enough that M2 is always
+    # waiting on op10's NEXT piece. A generous shift (1000 min) keeps this
+    # scenario free of shift-boundary slicing entirely, so the only thing
+    # under test is whether op20 gates on each of op10's per-piece
+    # completions (Part 2) or on op10's single whole-batch completion
+    # (pre-Part-2 behavior) — not shift-rollover arithmetic.
+    def roomy_shift_availability(machine, day, shift):
+        return 1000.0
+
+    op1 = no_fixture_op("O1", 10, "T1", cdd=date(2026, 2, 1), qty=3, machine="M1", cycle_time=10.0)
+    op2 = no_fixture_op("O1", 20, "T2", cdd=date(2026, 2, 1), qty=3, machine="M2", cycle_time=1.0)
+    chain = OrderChain("O1", [op1, op2], [])
+    pool = DevicePool(quantities={})
+    rows = run_dispatch_simulation(
+        [chain], roomy_shift_availability, pool, today=DAY0, window_days=60, cooling_minutes=20,
+        day_zero=DAY0, planned_order_start_buffer_days=1,
+    )
+    op10_rows = [r for r in rows if r.operation_no == 10]
+    op20_rows = [r for r in rows if r.operation_no == 20]
+
+    check("op10 (upstream) is a single row (no shift-boundary slicing in this scenario)", len(op10_rows) == 1)
+    check("op10 ends at minute 30 (3 pieces x 10 min)", op10_rows[0].end.shift_index == 0 and op10_rows[0].end.minute == 30.0)
+
+    check("op20 (downstream) is also a single row here", len(op20_rows) == 1)
+    check(
+        "op20 starts at minute 10 — the instant op10's FIRST piece completes, not op10's full 30-minute batch",
+        op20_rows[0].start.shift_index == 0 and op20_rows[0].start.minute == 10.0,
+    )
+    check(
+        "op20 finishes at minute 31 (gated by op10's 3rd-piece completions at 10/20/30, +1 min each) "
+        "— earlier than the pre-Part-2 whole-batch-wait result of minute 33 (wait for 30, then run all 3)",
+        op20_rows[0].end.shift_index == 0 and op20_rows[0].end.minute == 31.0,
+    )
+
+
 if __name__ == "__main__":
     test_single_op_order_gets_completion_stamped()
     test_multi_op_order_respects_precedence()
@@ -157,5 +195,6 @@ if __name__ == "__main__":
     test_order_with_zero_schedulable_ops_has_no_completion()
     test_planned_order_first_op_never_starts_before_earliest_start()
     test_no_fixture_op_updates_ready_at_for_the_next_op()
+    test_lot_streaming_next_op_starts_on_early_pieces_not_whole_batch()
     test_two_orders_same_depth_and_task_batch_together()
     print("\n[OK] The outer dispatch loop assembles complete, precedence-correct schedules.")
