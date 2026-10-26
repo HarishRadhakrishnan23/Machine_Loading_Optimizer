@@ -78,7 +78,10 @@
       "Bash(../venv/Scripts/python.exe testing/e6_validate_real_data.py)",
       "Bash(sed -i 's/model_e_pipeline/model_f_pipeline/g; s/model_e_data/model_f_data/g' model_f_data.py model_f_pipeline.py)",
       "Bash(grep -rl \"model_e_data\\\\|model_e_pipeline\" --include=*.py .)",
-      "Bash(../venv/Scripts/python.exe testing/test_model_f_data_holidays.py)"
+      "Bash(../venv/Scripts/python.exe testing/test_model_f_data_holidays.py)",
+      "Bash(../venv/Scripts/python.exe testing/report_priority_load_imbalance.py)",
+      "Bash(../venv/Scripts/python.exe testing/report_priority_change_impact.py)",
+      "Bash(../venv/Scripts/python.exe testing/report_rebalancing_recommendations.py)"
     ]
   }
 }
