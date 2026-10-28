@@ -196,12 +196,15 @@ def get_current_schedule():
         with get_connection() as conn:
             df = pd.read_sql(
                 """
-                SELECT RUN_ID, PRODUCTION_ORDER, OPERATION_NO, LINE_NO, TASK, WORK_CENTER,
-                       SHIFT, SCHEDULED_DATE, BALANCE_QTY, BATCH_KEY, IS_SAFETY_STOCK,
-                       FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK,
-                       ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT, GENERATED_AT
-                FROM MCH_SCHEDULE_OUTPUT
-                ORDER BY PRODUCTION_ORDER, OPERATION_NO, LINE_NO
+                SELECT o.RUN_ID, o.PRODUCTION_ORDER, o.OPERATION_NO, o.LINE_NO, o.TASK, o.WORK_CENTER,
+                       o.SHIFT, o.SCHEDULED_DATE, o.BALANCE_QTY, o.BATCH_KEY, o.IS_SAFETY_STOCK,
+                       o.FIXTURE_ID, o.LOCATOR_ID, o.START_TIMESTAMP, o.END_TIMESTAMP, o.REMARK,
+                       o.ORDER_COMPLETION_DATE, o.ORDER_COMPLETION_SHIFT, o.GENERATED_AT,
+                       w.CDD
+                FROM MCH_SCHEDULE_OUTPUT o
+                LEFT JOIN (SELECT PRODUCTION_ORDER, MAX(CDD) AS CDD FROM MCH_WIP GROUP BY PRODUCTION_ORDER) w
+                       ON w.PRODUCTION_ORDER = o.PRODUCTION_ORDER
+                ORDER BY o.PRODUCTION_ORDER, o.OPERATION_NO, o.LINE_NO
                 """,
                 conn,
             )
@@ -233,6 +236,7 @@ def get_current_schedule():
                 "start_timestamp": _ts(row["START_TIMESTAMP"]),
                 "end_timestamp": _ts(row["END_TIMESTAMP"]),
                 "remark": row["REMARK"] if pd.notna(row["REMARK"]) else None,
+                "cdd": _d(row["CDD"]),  # from MCH_WIP (read-only); None for safety stock
                 "order_completion_date": _d(row["ORDER_COMPLETION_DATE"]),
                 "order_completion_shift": row["ORDER_COMPLETION_SHIFT"] if pd.notna(row["ORDER_COMPLETION_SHIFT"]) else None,
                 "generated_at": _ts(row["GENERATED_AT"]),

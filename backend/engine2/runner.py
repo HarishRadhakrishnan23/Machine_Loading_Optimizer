@@ -17,21 +17,25 @@ from engine2.snapshot import Snapshot
 from model_f_data import build_fixture_index_from_fnl, build_routing_index_from_fnl
 
 
-def simulate(snap: Snapshot, raw_rows: list[RawWipRow] | None = None, fnl_df=None) -> list[FinalRow]:
-    """Run Engine 1's dispatch simulation on `raw_rows`/`fnl_df` (default: the snapshot's own)."""
+def build_chains(snap: Snapshot, raw_rows: list[RawWipRow] | None = None, fnl_df=None) -> list:
+    """Classified, precedence-bridged OrderChains for `raw_rows`/`fnl_df` (default: the snapshot's own)."""
     raw_rows = snap.raw_rows if raw_rows is None else raw_rows
     fnl_df = snap.fnl_df if fnl_df is None else fnl_df
-    config = snap.config
-
-    routing_index = build_routing_index_from_fnl(fnl_df)
-    fixture_index = build_fixture_index_from_fnl(fnl_df)
-    pool = snap.pool.clone()  # the simulator reserves into the pool — never touch the snapshot's own
-    known_devices = frozenset(pool.quantities.keys())
-
-    chains = build_order_chains(
-        raw_rows, routing_index, fixture_index, known_devices, snap.known_machines,
-        frozenset(config["fixture_required_tasks"]),
+    return build_order_chains(
+        raw_rows,
+        build_routing_index_from_fnl(fnl_df),
+        build_fixture_index_from_fnl(fnl_df),
+        frozenset(snap.pool.quantities.keys()),
+        snap.known_machines,
+        frozenset(snap.config["fixture_required_tasks"]),
     )
+
+
+def simulate(snap: Snapshot, raw_rows: list[RawWipRow] | None = None, fnl_df=None) -> list[FinalRow]:
+    """Run Engine 1's dispatch simulation on `raw_rows`/`fnl_df` (default: the snapshot's own)."""
+    config = snap.config
+    pool = snap.pool.clone()  # the simulator reserves into the pool — never touch the snapshot's own
+    chains = build_chains(snap, raw_rows, fnl_df)
     return run_dispatch_simulation(
         chains,
         snap.availability,

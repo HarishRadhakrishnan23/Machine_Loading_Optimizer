@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from engine2 import metrics
+from engine2.plan import build_plan, replay
 from engine2.runner import simulate
 from engine2.scenarios import ElevateOrders, MachinePriority, ScenarioError
 from engine2.snapshot import Snapshot, load_snapshot
@@ -27,6 +28,7 @@ STALE_AFTER = timedelta(minutes=30)
 _snapshot: Optional[Snapshot] = None
 _snapshot_lock = threading.Lock()
 _baseline_lock = threading.Lock()
+_plan_lock = threading.Lock()
 _results: "OrderedDict[str, dict]" = OrderedDict()
 _results_lock = threading.Lock()
 
@@ -51,6 +53,22 @@ def ensure_baseline(snap: Snapshot) -> list:
             snap.baseline_rows = simulate(snap)
             snap.baseline_note = _baseline_vs_saved_note(snap)
         return snap.baseline_rows
+
+
+def ensure_plan(snap: Snapshot):
+    """Phase 2: the formed runs + an unedited replay of them, computed once per snapshot. The replay is
+    parity-gated to equal the simulator, so when no baseline exists yet it is reused as the baseline
+    instead of simulating twice."""
+    with _plan_lock:
+        if snap.plan is None:
+            plan = build_plan(snap)
+            snap.plan_replay = replay(snap, plan)
+            snap.plan = plan
+    with _baseline_lock:
+        if snap.baseline_rows is None:
+            snap.baseline_rows = snap.plan_replay.rows
+            snap.baseline_note = _baseline_vs_saved_note(snap)
+    return snap.plan, snap.plan_replay
 
 
 def _baseline_vs_saved_note(snap: Snapshot) -> Optional[str]:
@@ -89,10 +107,15 @@ def _baseline_vs_saved_note(snap: Snapshot) -> Optional[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 def run_scenario(scenario, refresh: bool = False) -> dict:
     snap = get_snapshot(refresh=refresh)
-    baseline = ensure_baseline(snap)
-
-    raw_rows, fnl_df = scenario.apply(snap)
-    scenario_rows = simulate(snap, raw_rows, fnl_df)
+    extras: dict = {}
+    if scenario.kind == "runs":  # Phase 2: edits to the formed runs (engine2/run_edits.py)
+        plan, plan_replay = ensure_plan(snap)
+        baseline = ensure_baseline(snap)
+        scenario_rows, extras = scenario.run(snap, plan, plan_replay)
+    else:
+        baseline = ensure_baseline(snap)
+        raw_rows, fnl_df = scenario.apply(snap)
+        scenario_rows = simulate(snap, raw_rows, fnl_df)
 
     result = metrics.compare(
         baseline,
@@ -110,7 +133,8 @@ def run_scenario(scenario, refresh: bool = False) -> dict:
             "snapshot_loaded_at": snap.loaded_at.isoformat(timespec="seconds"),
             "run_date": snap.run_date.isoformat(),
             "elevated_orders": sorted(scenario.elevated_orders()),
-            "notes": [snap.baseline_note] if snap.baseline_note else [],
+            "notes": ([snap.baseline_note] if snap.baseline_note else []) + extras.get("notes", []),
+            "runs_changed": extras.get("runs_changed", []),
         }
     )
     with _results_lock:
@@ -147,6 +171,52 @@ def list_orders() -> list[dict]:
             "completion": r.order_completion_date.isoformat() if r.order_completion_date else None,
         }
     return sorted(seen.values(), key=lambda o: (o["cdd"] is None, o["cdd"] or "", o["order"]))
+
+
+def list_runs() -> list[dict]:
+    """The baseline's formed fixture runs (Phase 2), for the Runs page: id, task, orders, machine(s),
+    time span, and which machines could take the run (with how many of its orders each can take)."""
+    from shift_clock import timepoint_to_datetime
+
+    snap = get_snapshot()
+    plan, rep = ensure_plan(snap)
+    out = []
+    for i in sorted(rep.placed_by_item):
+        item, placements = plan.work_items[i], rep.placed_by_item[i]
+        if item.run_steps is not None:
+            members = [st.order_id for st in item.run_steps]
+            caps = [{c.machine for c in item.op_by_id[o].candidates} for o in members]
+            fixture = item.run_steps[0].fixture
+        else:
+            members = [item.no_fixture_op.production_order]
+            caps = [{c.machine for c in item.no_fixture_op.candidates}]
+            fixture = None
+        coverage: dict[str, int] = {}
+        for c in caps:
+            for m in c:
+                coverage[m] = coverage.get(m, 0) + 1
+        orders = list(dict.fromkeys(p.production_order for p in placements))
+        starts = [timepoint_to_datetime(p.start) for p in placements]
+        ends = [timepoint_to_datetime(p.end) for p in placements]
+        out.append(
+            {
+                "run": i,
+                "depth": item.depth,
+                "task": item.task,
+                "fixture": fixture,
+                "orders": orders,
+                "n_orders": len(orders),
+                "pieces": sum(p.balance_qty for p in placements),
+                "machines": sorted({p.machine for p in placements}),
+                "start": min(starts).isoformat(timespec="minutes"),
+                "end": max(ends).isoformat(timespec="minutes"),
+                "capable": sorted(
+                    ({"machine": m, "covers": n, "of": len(members)} for m, n in coverage.items()),
+                    key=lambda c: (-c["covers"], c["machine"]),
+                ),
+            }
+        )
+    return out
 
 
 def status() -> dict:

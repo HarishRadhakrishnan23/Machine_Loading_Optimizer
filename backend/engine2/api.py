@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from engine2 import service
+from engine2.run_edits import MoveRun, PlaceBefore, RunEdits
 from engine2.scenarios import AddedMachine, ElevateOrders, MachinePriority, ScenarioError
 
 router = APIRouter(prefix="/whatif", tags=["Engine 2 (what-if)"])
@@ -25,8 +26,16 @@ class AddedMachineIn(BaseModel):
     load_unload_time: Optional[float] = Field(default=None, ge=0)
 
 
+class RunEditIn(BaseModel):
+    type: Literal["move", "before"]
+    run: int
+    machine: Optional[str] = None  # type == "move"
+    before: Optional[int] = None  # type == "before"
+    pin: bool = True  # type == "before": keep both runs on their current machines
+
+
 class RunRequest(BaseModel):
-    kind: Literal["elevate", "machine_priority"]
+    kind: Literal["elevate", "machine_priority", "runs"]
     refresh: bool = False  # reload the input snapshot from Oracle first
 
     # kind == "elevate": the planner's orders, highest priority first
@@ -40,6 +49,9 @@ class RunRequest(BaseModel):
     task: str = ""
     ordering: list[str] = Field(default_factory=list)
     added: list[AddedMachineIn] = Field(default_factory=list)
+
+    # kind == "runs": edits to the formed fixture runs, applied in order
+    edits: list[RunEditIn] = Field(default_factory=list)
 
     model_config = {"populate_by_name": True}
 
@@ -71,12 +83,33 @@ def list_orders():
         raise HTTPException(status_code=500, detail=f"Failed to list orders: {e}")
 
 
+@router.get("/runs")
+def list_runs():
+    """The baseline's formed fixture runs (Phase 2), for the move/reorder page."""
+    try:
+        return {"runs": service.list_runs()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list runs: {e}")
+
+
 @router.post("/run")
 def run(req: RunRequest):
     """Run one scenario against the baseline and return the diff. Nothing is written."""
     try:
         if req.kind == "elevate":
             scenario = ElevateOrders(orders=tuple(req.orders))
+        elif req.kind == "runs":
+            parsed = []
+            for e in req.edits:
+                if e.type == "move":
+                    if not e.machine:
+                        raise ScenarioError("A move needs a machine.")
+                    parsed.append(MoveRun(e.run, e.machine))
+                else:
+                    if e.before is None:
+                        raise ScenarioError("A reorder needs the run to place it before.")
+                    parsed.append(PlaceBefore(e.run, e.before, e.pin))
+            scenario = RunEdits(tuple(parsed))
         else:
             scenario = MachinePriority(
                 size_inch=req.size_inch, class_val=req.class_val, moc=req.moc, design=req.design, task=req.task,

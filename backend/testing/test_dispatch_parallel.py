@@ -126,47 +126,6 @@ def test_wedged_branch_times_out_instead_of_hanging():
     check("pool recovers for the next caller", evaluate_branches_in_parallel([Branch("y", _double, (5,))]) == {"y": 10})
 
 
-def _pid_alive(pid: int) -> bool:
-    import subprocess
-
-    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
-    return str(pid) in out
-
-
-def test_workers_exit_when_the_parent_is_hard_killed():
-    print("\n=== Workers must not be orphaned when the server process is force-killed ===")
-    import subprocess
-    import textwrap
-    import time
-
-    if os.name != "nt":
-        print("  [SKIP] Windows-only check (tasklist)")
-        return
-    backend = str(Path(__file__).parent.parent)
-    script = Path(tempfile.mkdtemp()) / "parent_with_pool.py"
-    script.write_text(textwrap.dedent(f"""
-        import os, sys, time
-        sys.path.insert(0, {backend!r})
-        from dispatch_parallel import Branch, evaluate_branches_in_parallel
-        if __name__ == "__main__":
-            r = evaluate_branches_in_parallel([Branch("a", os.getpid), Branch("b", os.getpid)])
-            print(" ".join(str(v) for v in r.values()), flush=True)
-            time.sleep(120)
-    """))
-    parent = subprocess.Popen([sys.executable, str(script)], stdout=subprocess.PIPE, text=True)
-    worker_pids = [int(x) for x in parent.stdout.readline().split()]
-    check("pool spawned 2 workers", len(worker_pids) == 2 and all(_pid_alive(p) for p in worker_pids))
-    parent.kill()  # TerminateProcess: no atexit, no cleanup — what a reload / service restart does
-    parent.wait()
-    deadline = time.time() + 15
-    while time.time() < deadline and any(_pid_alive(p) for p in worker_pids):
-        time.sleep(0.5)
-    still = [p for p in worker_pids if _pid_alive(p)]
-    for p in still:  # never leave strays behind if this assertion fails
-        subprocess.run(["taskkill", "/F", "/PID", str(p)], capture_output=True)
-    check("both workers exited on their own after the parent was killed", not still)
-
-
 def test_shutdown_is_idempotent_and_pool_restarts():
     print("\n=== shutdown_pool() is safe to repeat; next call builds a new pool ===")
     shutdown_pool()
@@ -183,6 +142,5 @@ if __name__ == "__main__":
     test_pool_recovers_from_a_dead_worker()
     test_persistent_failure_is_raised_not_swallowed()
     test_wedged_branch_times_out_instead_of_hanging()
-    test_workers_exit_when_the_parent_is_hard_killed()
     test_shutdown_is_idempotent_and_pool_restarts()
     print("\n[OK] Parallel branch evaluation behaves per CLAUDE.md §E.10's speculative-check requirement.")

@@ -33,7 +33,29 @@ def main() -> int:
     run_date = date.today()
     mfp.generate_schedule(load_config_dict(), run_date)  # Engine 1's real code path
     engine1 = captured["rows"]
-    engine2 = simulate(load_snapshot(run_date))
+    snap = load_snapshot(run_date)
+    engine2 = simulate(snap)
+
+    # Phase 2 gate: an UNEDITED replay of the formed runs (Engine 2's own copy of the outer loop,
+    # engine2/plan.py) must equal the simulator row for row — incl. admission merges and deferrals.
+    from engine2.plan import build_plan, replay
+
+    plan = build_plan(snap)
+    replayed = replay(snap, plan)
+    replay_ok = replayed.rows == engine2
+
+    # Phase 2 invariant: pinning runs to the machines they already have must not change the schedule
+    # (compares placements; REMARK wording legitimately differs when pinning leaves one candidate).
+    from engine2.run_edits import PlaceBefore, apply_edits
+
+    ids = sorted(replayed.placed_by_item)
+    pinned = replay(snap, plan, apply_edits(plan, replayed, (PlaceBefore(ids[0], ids[1], pin=True),)).work_items)
+    place = lambda rows: [(r.production_order, r.operation_no, r.line_no, r.machine, r.start, r.end, r.balance_qty) for r in rows]
+    pin_ok = place(pinned.rows) == place(replayed.rows)
+    print(f"Phase 2 invariant: pinned no-op reorder leaves every placement unchanged: {pin_ok}")
+    replay_ok = replay_ok and pin_ok
+    print(f"Phase 2 replay: {len(plan.work_items)} runs/ops, {len(replayed.rows)} rows, "
+          f"identical to the simulator: {replay_ok}")
 
     k1 = {
         (r["PRODUCTION_ORDER"], r["OPERATION_NO"], r["LINE_NO"]): (
@@ -48,7 +70,7 @@ def main() -> int:
     differing = [k for k in k1 if k in k2 and k1[k] != k2[k]]
     c1 = {o: (d.date() if hasattr(d, "date") else d) for o, d in
           ((r["PRODUCTION_ORDER"], r["ORDER_COMPLETION_DATE"]) for r in engine1) if d is not None}
-    ok = set(k1) == set(k2) and not differing and c1 == metrics.completion_by_order(engine2)
+    ok = set(k1) == set(k2) and not differing and c1 == metrics.completion_by_order(engine2) and replay_ok
     print(f"Engine 1 rows: {len(engine1)}  Engine 2 rows: {len(engine2)}  differing rows: {len(differing)}")
     print("PARITY:", "EXACT" if ok else "DIFFERS — Engine 2's runner has drifted from model_f_pipeline")
     return 0 if ok else 1

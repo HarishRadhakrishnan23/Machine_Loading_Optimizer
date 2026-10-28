@@ -42,6 +42,9 @@ class Snapshot:
     # Filled lazily by service.ensure_baseline
     baseline_rows: Optional[list] = None
     baseline_note: Optional[str] = None
+    # Phase 2: the formed runs and the unedited replay of them (filled lazily by service.ensure_plan)
+    plan: Optional[object] = None
+    plan_replay: Optional[object] = None
 
 
 def load_config_dict() -> dict:
