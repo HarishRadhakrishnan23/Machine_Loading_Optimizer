@@ -8,15 +8,25 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 
+// Row-level real start/end (§E.14). `scheduled_date`/`shift` are derived from
+// END_TIMESTAMP, so they are shown as the row's end, never as its start.
+function fmtTs(v) {
+  if (!v) return '—'
+  const d = new Date(v)
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`
+}
+
 const COLUMNS = [
   { accessorKey: 'production_order', header: 'Order' },
   { accessorKey: 'operation_no', header: 'Op' },
+  { accessorKey: 'line_no', header: 'Line', cell: (i) => i.getValue() ?? 1 },
   { accessorKey: 'task', header: 'Task' },
   { accessorKey: 'machine_name', header: 'Machine', cell: (i) => i.getValue() ?? '—' },
-  { accessorKey: 'scheduled_date', header: 'Start Date', cell: (i) => i.getValue() ?? '—' },
-  { accessorKey: 'shift', header: 'Start Shift', cell: (i) => i.getValue() ?? '—' },
-  { accessorKey: 'order_completion_date', header: 'End Date', cell: (i) => i.getValue() ?? '—' },
-  { accessorKey: 'order_completion_shift', header: 'End Shift', cell: (i) => i.getValue() ?? '—' },
+  { accessorKey: 'start_timestamp', header: 'Start', cell: (i) => fmtTs(i.getValue()) },
+  { accessorKey: 'end_timestamp', header: 'End', cell: (i) => fmtTs(i.getValue()) },
+  { accessorKey: 'shift', header: 'End Shift', cell: (i) => i.getValue() ?? '—' },
+  { accessorKey: 'order_completion_date', header: 'Order Done', cell: (i) => i.getValue() ?? '—' },
+  { accessorKey: 'order_completion_shift', header: 'Order Done Shift', cell: (i) => i.getValue() ?? '—' },
   { accessorKey: 'balance_qty', header: 'Qty' },
   { accessorKey: 'batch_key', header: 'Batch Key', cell: (i) => <span className="font-mono text-xs">{i.getValue()}</span> },
   {

@@ -50,6 +50,8 @@ from models import (
     ArchivedRunSummary,
     CompletedMaterialsResponse,
     Config,
+    FnlAddMachineRequest,
+    FnlPriorityUpdateRequest,
     FreezeScheduleResponse,
     RiskReport,
     RunCompareOrder,
@@ -58,6 +60,8 @@ from models import (
     ScheduleGenerateResponse,
     SimulationRequest,
 )
+import fnl_master_admin
+from engine2.api import router as engine2_router
 from model_f_pipeline import generate_schedule as run_model_e_schedule
 from pipeline2 import simulate_elevation
 
@@ -78,6 +82,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Engine 2 (independent what-if engine) — its only touch point in this file
+app.include_router(engine2_router)
 
 # Config file path
 CONFIG_FILE = Path(__file__).parent / "config.json"
@@ -194,8 +201,7 @@ def get_current_schedule():
                        FIXTURE_ID, LOCATOR_ID, START_TIMESTAMP, END_TIMESTAMP, REMARK,
                        ORDER_COMPLETION_DATE, ORDER_COMPLETION_SHIFT, GENERATED_AT
                 FROM MCH_SCHEDULE_OUTPUT
-                ORDER BY GENERATED_AT DESC, PRODUCTION_ORDER, OPERATION_NO
-                FETCH FIRST 5000 ROWS ONLY
+                ORDER BY PRODUCTION_ORDER, OPERATION_NO, LINE_NO
                 """,
                 conn,
             )
@@ -741,6 +747,59 @@ def refresh_all_data():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Refresh failed: {e}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Priority Shuffler — the one sanctioned write path into MCH_MACHINE_FNL_MASTER
+# (PRIORITY re-rank + add-machine only; see fnl_master_admin.py / CLAUDE.md).
+# Changes apply to the NEXT /schedule/generate, not to the schedule on screen.
+# ─────────────────────────────────────────────────────────────────────────────
+@app.get("/fnl/master", tags=["Priority Shuffler"])
+def get_fnl_master():
+    """Every MCH_MACHINE_FNL_MASTER row (key + priority + fixture/locator/timings) plus the machines that may be added."""
+    try:
+        return {"rows": fnl_master_admin.read_master_for_ui(), "machines": fnl_master_admin.known_machines()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read MCH_MACHINE_FNL_MASTER: {e}")
+
+
+@app.put("/fnl/priorities", tags=["Priority Shuffler"])
+def put_fnl_priorities(req: FnlPriorityUpdateRequest):
+    """Re-rank PRIORITY for one combo+task. Atomic and audited."""
+    try:
+        return fnl_master_admin.update_priorities(
+            req.size_inch, req.class_val, req.moc, req.design, req.task,
+            [i.model_dump() for i in req.items], req.changed_by,
+        )
+    except fnl_master_admin.FnlAdminError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Priority update failed: {e}")
+
+
+@app.post("/fnl/machine", tags=["Priority Shuffler"])
+def post_fnl_machine(req: FnlAddMachineRequest):
+    """Add a capable machine to an existing combo+task at a chosen priority. Atomic and audited."""
+    try:
+        return fnl_master_admin.add_machine(
+            req.size_inch, req.class_val, req.moc, req.design, req.task,
+            req.work_center, req.priority,
+            req.fixture_change_time, req.locator_change_time, req.load_unload_time, req.changed_by,
+        )
+    except fnl_master_admin.FnlAdminError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Add machine failed: {e}")
+
+
+@app.get("/fnl/audit", tags=["Priority Shuffler"])
+def get_fnl_audit(limit: int = Query(200, ge=1, le=2000)):
+    try:
+        return {"entries": fnl_master_admin.read_audit(limit)}
+    except fnl_master_admin.FnlAdminError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read audit log: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

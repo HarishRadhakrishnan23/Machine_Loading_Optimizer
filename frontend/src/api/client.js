@@ -105,3 +105,20 @@ export const getMachinesDaily = (startDate, endDate) => {
 }
 export const refreshData = () => request('/data/refresh', { method: 'POST' })
 export const getHealth = () => request('/health')
+
+// ── Priority Shuffler (MCH_MACHINE_FNL_MASTER — PRIORITY re-rank + add machine only) ──
+export const getFnlMaster = () => request('/fnl/master')
+export const putFnlPriorities = (payload) =>
+  request('/fnl/priorities', { method: 'PUT', body: JSON.stringify(payload) })
+export const addFnlMachine = (payload) =>
+  request('/fnl/machine', { method: 'POST', body: JSON.stringify(payload) })
+export const getFnlAudit = (limit = 200) => request(`/fnl/audit?limit=${limit}`)
+
+// ── Engine 2: what-if (independent engine, read-only except the explicit save) ──
+export const getWhatIfStatus = () => request('/whatif/status')
+export const refreshWhatIf = () => request('/whatif/refresh', { method: 'POST' })
+export const getWhatIfOrders = () => request('/whatif/orders')
+/** payload: {kind:'elevate', orders:[…]} | {kind:'machine_priority', size_inch, class, moc, design, task, ordering:[…], added:[…]} */
+export const runWhatIf = (payload) => request('/whatif/run', { method: 'POST', body: JSON.stringify(payload) })
+export const getWhatIfResult = (id) => request(`/whatif/result/${id}`)
+export const saveWhatIfResult = (id) => request(`/whatif/result/${id}/save`, { method: 'POST' })

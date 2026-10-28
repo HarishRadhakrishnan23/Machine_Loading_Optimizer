@@ -18,7 +18,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,11 +51,23 @@ class RiskFlag(str, Enum):
 # (CLAUDE.md "Configuration — backend/config.json (Model E shape)")
 # ─────────────────────────────────────────────────────────────────────────────
 class Config(BaseModel):
-    """Runtime parameters. Loaded from backend/config.json, never from Oracle."""
+    """Runtime parameters. Loaded from backend/config.json, never from Oracle.
+
+    `extra="allow"`: a key present in config.json but not declared below is KEPT
+    (round-trips through GET/PUT /config) instead of being silently dropped —
+    pydantic's default ignores unknown keys, which once made `PUT /config`
+    erase `fixture_required_tasks` from the file and turned the §E.15 policy
+    off on the API path.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     batch_consolidation_window_days: int = 60  # §E.6 — hard rule, no override
     cooling_minutes: int = 20  # §E.7
     heavy_operations: list[str] = ["VB03", "VB04", "VB05", "VB06"]  # §E.10
+    # §E.15: TASK codes whose FNL-master row is mandatory — a missing row is a
+    # hard exclusion (EXCLUDED_NO_FNL_MASTER_ENTRY), not a plain-routing fallback.
+    fixture_required_tasks: list[str] = ["VB02", "VB03", "VB04", "VB05", "VB06", "VB07"]
     protect_committed_over_safety: bool = True  # must always be True
     planned_order_start_buffer_days: int = 1  # §E.1/§E.8
     risk_safe_threshold_days: int = 5  # Engine 2 SAFE/AT_RISK/BREACH threshold
@@ -381,3 +393,40 @@ class RiskReport(BaseModel):
     safe_count: int = 0
     at_risk_count: int = 0
     breach_count: int = 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Priority Shuffler — MCH_MACHINE_FNL_MASTER edits (fnl_master_admin.py)
+# ─────────────────────────────────────────────────────────────────────────────
+class FnlComboKey(BaseModel):
+    """One SIZE~CLASS~MOC~DESIGN + TASK combo. MOC/DESIGN may legitimately be blank."""
+
+    size_inch: str
+    class_val: str = Field(alias="class")
+    moc: str = ""
+    design: str = ""
+    task: str
+
+    model_config = {"populate_by_name": True}
+
+
+class FnlPriorityItem(BaseModel):
+    work_center: str
+    priority: int = Field(ge=1, description="New priority (1 = most preferred)")
+    expected_priority: Optional[int] = Field(
+        default=None, description="Priority the page loaded with - rejects the edit if Oracle changed since"
+    )
+
+
+class FnlPriorityUpdateRequest(FnlComboKey):
+    items: list[FnlPriorityItem] = Field(min_length=1, description="EVERY machine of the combo, once each")
+    changed_by: Optional[str] = None
+
+
+class FnlAddMachineRequest(FnlComboKey):
+    work_center: str
+    priority: int = Field(ge=1)
+    fixture_change_time: Optional[float] = Field(default=None, ge=0)
+    locator_change_time: Optional[float] = Field(default=None, ge=0)
+    load_unload_time: Optional[float] = Field(default=None, ge=0)
+    changed_by: Optional[str] = None

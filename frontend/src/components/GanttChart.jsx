@@ -28,9 +28,9 @@ const ROW_HEIGHT = 34
 export default function GanttChart({ assignments }) {
   const [hovered, setHovered] = useState(null)
 
-  const { machines, bars, rangeStart, totalHours, dayMarkers } = useMemo(() => {
+  const { machines, barsByMachine, totalHours, dayMarkers } = useMemo(() => {
     const timed = assignments.filter((a) => a.start_timestamp && a.end_timestamp && a.machine_name)
-    if (timed.length === 0) return { machines: [], bars: [], rangeStart: null, totalHours: 0, dayMarkers: [] }
+    if (timed.length === 0) return { machines: [], barsByMachine: {}, totalHours: 0, dayMarkers: [] }
 
     const machineSet = new Set(timed.map((a) => a.machine_name))
     const starts = timed.map((a) => new Date(a.start_timestamp).getTime())
@@ -39,15 +39,33 @@ export default function GanttChart({ assignments }) {
     const rangeEndMs = Math.max(...ends)
     const totalHrs = (rangeEndMs - rangeStartMs) / 3_600_000
 
+    // §E.18: one (order, operation) can legitimately have several LINE_NO
+    // rows (quantity slices). Count them so each bar can say "slice n/m" and
+    // the tooltip can show the operation's full quantity.
+    const sliceInfo = new Map()
+    for (const a of assignments) {
+      const k = `${a.production_order}|${a.operation_no}`
+      const info = sliceInfo.get(k) || { count: 0, qty: 0 }
+      info.count += 1
+      info.qty += a.balance_qty || 0
+      sliceInfo.set(k, info)
+    }
+
     const bars = timed.map((a) => {
       const s = new Date(a.start_timestamp).getTime()
       const e = new Date(a.end_timestamp).getTime()
+      const info = sliceInfo.get(`${a.production_order}|${a.operation_no}`)
       return {
         ...a,
+        sliceCount: info.count,
+        opTotalQty: info.qty,
         leftHours: (s - rangeStartMs) / 3_600_000,
         widthHours: Math.max(0.15, (e - s) / 3_600_000),
       }
     })
+
+    const barsByMachine = {}
+    for (const b of bars) (barsByMachine[b.machine_name] ||= []).push(b)
 
     // Day gridlines across the visible range.
     const dayMarkers = []
@@ -61,7 +79,7 @@ export default function GanttChart({ assignments }) {
       cursor.setDate(cursor.getDate() + 1)
     }
 
-    return { machines: Array.from(machineSet).sort(), bars, rangeStart: rangeStartMs, totalHours: totalHrs, dayMarkers }
+    return { machines: Array.from(machineSet).sort(), barsByMachine, rangeStart: rangeStartMs, totalHours: totalHrs, dayMarkers }
   }, [assignments])
 
   if (machines.length === 0) {
@@ -104,10 +122,9 @@ export default function GanttChart({ assignments }) {
                     style={{ left: d.leftHours * PX_PER_HOUR }}
                   />
                 ))}
-                {bars
-                  .filter((b) => b.machine_name === m)
+                {(barsByMachine[m] || [])
                   .map((b, i) => {
-                    const cellKey = `${m}-${i}`
+                    const cellKey = `${m}-${b.production_order}-${b.operation_no}-${b.line_no}`
                     // A missing fixture_id just means this operation had no
                     // fixture/locator match and was scheduled via plain
                     // routing (§E.11) — a normal outcome, not a problem, so
@@ -127,19 +144,25 @@ export default function GanttChart({ assignments }) {
                           width: Math.max(4, b.widthHours * PX_PER_HOUR),
                           height: ROW_HEIGHT - 12,
                           backgroundColor: color,
+                          // Quantity slices of one operation (§E.18) get a thin
+                          // outline so adjacent slices read as separate rows.
+                          outline: b.sliceCount > 1 ? '1px solid rgba(0,0,0,0.45)' : undefined,
+                          outlineOffset: -1,
                           opacity: hovered && hovered !== cellKey ? 0.35 : 0.92,
                         }}
                         onMouseEnter={() => setHovered(cellKey)}
                         onMouseLeave={() => setHovered(null)}
                         title={
-                          `${b.production_order} · Op ${b.operation_no} (${b.task || '—'})\n` +
-                          `${b.balance_qty} pcs${b.is_safety_stock ? ' · safety stock' : ''}\n` +
+                          `${b.production_order} · Op ${b.operation_no} (${b.task || '—'})` +
+                          (b.sliceCount > 1 ? ` · slice ${b.line_no}/${b.sliceCount}` : '') + '\n' +
+                          `${b.balance_qty} pcs${b.sliceCount > 1 ? ` of ${b.opTotalQty}` : ''}${b.is_safety_stock ? ' · safety stock' : ''}\n` +
                           `${new Date(b.start_timestamp).toLocaleString()} → ${new Date(b.end_timestamp).toLocaleString()}` +
                           (b.remark ? `\n${b.remark}` : '')
                         }
                       >
                         <span className="truncate px-1.5 text-ink-950 drop-shadow-sm">
                           {b.task || b.production_order.slice(-6)}
+                          {b.sliceCount > 1 ? ` ·${b.line_no}/${b.sliceCount}` : ''}
                         </span>
                       </div>
                     )

@@ -54,6 +54,9 @@ export default function MachineUtilisation() {
       const existing = ordersByMachine[a.machine_name].get(a.production_order)
       if (!existing || a.operation_no > existing.operation_no) {
         ordersByMachine[a.machine_name].set(a.production_order, { operation_no: a.operation_no, qty: a.balance_qty || 0 })
+      } else if (a.operation_no === existing.operation_no) {
+        // Another LINE_NO slice of the same operation on this machine (§E.18).
+        existing.qty += a.balance_qty || 0
       }
       if (a.task) {
         loadByTask[a.task] = (loadByTask[a.task] || 0) + minutes

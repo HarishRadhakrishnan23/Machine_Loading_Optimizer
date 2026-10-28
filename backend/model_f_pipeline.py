@@ -76,7 +76,9 @@ def generate_schedule(config: dict, run_date: date) -> ScheduleGenerateResult:
         machine_daily_df["WORK_CENTER"].astype(str).str.strip()
     )
 
-    fixture_required_tasks = frozenset(config.get("fixture_required_tasks", []))
+    # Strict on purpose (no `.get(..., [])`): a missing key used to silently turn
+    # the §E.15 hard-exclusion policy off. models.Config always supplies it.
+    fixture_required_tasks = frozenset(config["fixture_required_tasks"])
 
     order_chains = build_order_chains(
         raw_rows, routing_index, fixture_index, known_devices, known_machines, fixture_required_tasks

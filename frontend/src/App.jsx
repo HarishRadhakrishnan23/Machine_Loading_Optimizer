@@ -9,22 +9,22 @@ import HoneycombBackground from './components/HoneycombBackground'
 import Overview from './views/Overview'
 import ScheduleView from './views/ScheduleView'
 import MachineUtilisation from './views/MachineUtilisation'
+import PriorityShuffler from './views/PriorityShuffler'
 import CompletedMaterials from './views/CompletedMaterials'
 import RunComparison from './views/RunComparison'
 import DownloadArchive from './views/DownloadArchive'
-import OrderBoard from './views/OrderBoard'
-import ImpactAnalyser from './views/ImpactAnalyser'
+import WhatIf from './views/WhatIf'
 import MachineAvailability from './views/MachineAvailability'
 
 const TABS = [
   { key: 'overview', label: 'Overview', icon: '◈' },
   { key: 'pending', label: 'Pending Load Queue', icon: '☰' },
   { key: 'utilisation', label: 'Machine Utilisation', icon: '▦' },
+  { key: 'shuffler', label: 'Priority Shuffler', icon: '⇅' },
   { key: 'completed', label: 'Planned Completion', icon: '✓' },
   { key: 'compare', label: 'Run Comparison', icon: '⇄' },
   { key: 'download', label: 'Download Archive', icon: '⇩' },
-  { key: 'orders', label: 'Order Board', icon: '▤', group: 'What-If (Engine 2)' },
-  { key: 'impact', label: 'Impact Analyser', icon: '△', group: 'What-If (Engine 2)' },
+  { key: 'whatif', label: 'What-If', icon: '△', group: 'Engine 2' },
   { key: 'machines', label: 'Machines & Settings', icon: '⚙' },
 ]
 
@@ -88,6 +88,9 @@ export default function App() {
               <div className={active === 'utilisation' ? '' : 'hidden'}>
                 <MachineUtilisation />
               </div>
+              <div className={active === 'shuffler' ? '' : 'hidden'}>
+                <PriorityShuffler />
+              </div>
               <div className={active === 'completed' ? '' : 'hidden'}>
                 <CompletedMaterials />
               </div>
@@ -97,11 +100,8 @@ export default function App() {
               <div className={active === 'download' ? '' : 'hidden'}>
                 <DownloadArchive />
               </div>
-              <div className={active === 'orders' ? '' : 'hidden'}>
-                <OrderBoard onNavigateToImpact={() => setActive('impact')} />
-              </div>
-              <div className={active === 'impact' ? '' : 'hidden'}>
-                <ImpactAnalyser />
+              <div className={active === 'whatif' ? '' : 'hidden'}>
+                <WhatIf active={active === 'whatif'} />
               </div>
               <div className={active === 'machines' ? '' : 'hidden'}>
                 <MachineAvailability />
