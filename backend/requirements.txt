@@ -1,11 +1,9 @@
 # TOV Machine Loading Optimizer — backend dependencies
 # All packages are free / open-source (Apache-2.0, BSD, or MIT).
 
-# --- Engine 1 & 2: constraint solver ---
-ortools>=9.10,<10.0          # Google OR-Tools (CP-SAT). Apache-2.0.
-
 # --- Data pipeline ---
-pandas>=2.2,<3.0             # preprocess.py: table joins, balance_qty, capacity resolve
+# (No constraint solver: Engine 1 is a deterministic dispatch simulator; CP-SAT / ortools was removed in Phase 3.)
+pandas>=2.2,<3.0             # model_f_data.py / db.py: table joins, balance_qty, availability resolve
 numpy>=1.26                  # pandas transitive; pinned for reproducibility
 
 # --- Oracle connectivity (THIN MODE — no Instant Client required) ---

@@ -18,6 +18,7 @@ function fmtTs(v) {
 
 const COLUMNS = [
   { accessorKey: 'production_order', header: 'Order' },
+  { accessorKey: 'cdd', header: 'CDD', cell: (i) => i.getValue() ?? '—' },
   { accessorKey: 'operation_no', header: 'Op' },
   { accessorKey: 'line_no', header: 'Line', cell: (i) => i.getValue() ?? 1 },
   { accessorKey: 'task', header: 'Task' },
@@ -76,7 +77,7 @@ export default function ScheduleTable({ rows }) {
         </span>
       </div>
 
-      <div className="overflow-x-auto thin-scroll border border-ink-600 rounded-xl">
+      <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-[68vh]">
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr>

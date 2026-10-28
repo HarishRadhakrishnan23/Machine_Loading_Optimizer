@@ -181,7 +181,7 @@ export default function MachineUtilisation() {
             {/* Machine Detail — full-width, below the two top charts */}
             <div className="card p-4">
               <h3 className="section-title mb-0">Machine Detail</h3>
-              <div className="overflow-x-auto thin-scroll max-h-72">
+              <div className="table-scroll thin-scroll max-h-72">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="text-text-muted font-mono uppercase text-left">
@@ -230,7 +230,7 @@ export default function MachineUtilisation() {
 
               <div className="card p-4 md:col-span-3">
                 <h3 className="section-title mb-0">Operation Detail</h3>
-                <div className="overflow-x-auto thin-scroll max-h-72">
+                <div className="table-scroll thin-scroll max-h-72">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-text-muted font-mono uppercase text-left">

@@ -3,8 +3,7 @@ model_f_pipeline.py — Engine 1 Model E: the single entry point tying
 together data load (model_f_data.py) -> classification (dispatch_orders.py)
 -> simulation (dispatch_orchestrator.py) -> write (dispatch_writer.py +
 db.py). This is what `main.py`'s `POST /schedule/generate` calls — CP-SAT
-(engine1_scheduler.py / preprocess.py / pipeline.py) is no longer invoked by
-the live API; those modules remain only as Model C's historical record.
+(the Model C solver and its preprocessing) was removed in Phase 3; this is the only Engine 1 entry point.
 """
 
 from __future__ import annotations

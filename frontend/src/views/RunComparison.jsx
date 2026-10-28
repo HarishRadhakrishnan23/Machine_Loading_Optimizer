@@ -101,7 +101,7 @@ export default function RunComparison() {
             {result.added.length > 0 && (
               <div className="card p-4">
                 <h3 className="section-title mb-0">Added Orders — new in Run B</h3>
-                <div className="overflow-x-auto thin-scroll max-h-72">
+                <div className="table-scroll thin-scroll max-h-72">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-text-muted font-mono uppercase text-left">
@@ -125,7 +125,7 @@ export default function RunComparison() {
             {result.removed.length > 0 && (
               <div className="card p-4">
                 <h3 className="section-title mb-0">Completed Orders — only in Run A</h3>
-                <div className="overflow-x-auto thin-scroll max-h-72">
+                <div className="table-scroll thin-scroll max-h-72">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-text-muted font-mono uppercase text-left">
@@ -149,7 +149,7 @@ export default function RunComparison() {
             {result.changed.length > 0 && (
               <div className="card p-4">
                 <h3 className="section-title mb-0">Changed Completion Dates</h3>
-                <div className="overflow-x-auto thin-scroll max-h-72">
+                <div className="table-scroll thin-scroll max-h-72">
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-text-muted font-mono uppercase text-left">

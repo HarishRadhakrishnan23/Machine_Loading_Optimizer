@@ -38,8 +38,7 @@ from db import (
     read_wip_orders,
     read_machine_master,
     read_machine_daily,
-    read_routing_master,
-    read_fixture_locator_master,
+    read_machine_fnl_master,
     read_fixture_locator_inventory,
     read_holiday_calendar,
 )
@@ -53,17 +52,14 @@ from models import (
     FnlAddMachineRequest,
     FnlPriorityUpdateRequest,
     FreezeScheduleResponse,
-    RiskReport,
     RunCompareOrder,
     RunCompareOrderDiff,
     RunCompareResponse,
     ScheduleGenerateResponse,
-    SimulationRequest,
 )
 import fnl_master_admin
 from engine2.api import router as engine2_router
 from model_f_pipeline import generate_schedule as run_model_e_schedule
-from pipeline2 import simulate_elevation
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FastAPI Setup
@@ -123,20 +119,7 @@ def health():
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/config", tags=["Config"], response_model=Config)
 def get_config():
-    """
-    Read current runtime configuration.
-
-    Returns:
-      - batch_bonus_months: window for upcoming-order bonus (days)
-      - batch_bonus_value: urgency bonus value
-      - downstream_queue_bonus_value: bonus when other order queued downstream
-      - ageing_normalization_days: time window for ageing score normalization
-      - machine_priority_epsilon: machine preference penalty weight
-      - risk_safe_threshold_days: slack buffer for risk classification
-      - engine2_time_limit_seconds: max time for priority elevation simulation
-      - scheduling_horizon_safety_factor: horizon sizing multiplier
-      - scheduling_horizon_buffer_days: additional days to add to horizon
-    """
+    """Read current runtime configuration (backend/config.json — see CLAUDE.md "Configuration")."""
     return load_config()
 
 
@@ -523,131 +506,42 @@ def freeze_schedule():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Engine 2: Priority Simulation
-# ─────────────────────────────────────────────────────────────────────────────
-@app.post("/priority/simulate", tags=["Engine 2"], response_model=RiskReport)
-def simulate_priority(request: SimulationRequest, run_date: Optional[date] = Query(None)):
-    """
-    Simulate elevating one or more orders and measure impact on others.
-
-    Request body:
-      - orders: list of PRODUCTION_ORDER IDs to elevate
-      - time_limit_seconds: override config.engine2_time_limit_seconds (optional)
-
-    Returns:
-      - sim_id: unique simulation identifier
-      - elevated_orders: the orders that were elevated
-      - impacts: list of SimResultRow (per other order: slip_days, risk_flag)
-      - top_impacted: top 5 most-affected orders
-      - safe_count, at_risk_count, breach_count: risk counts
-
-    Writes:
-      - MCH_SIM_RESULTS table with impact analysis
-    """
-    if run_date is None:
-        run_date = date.today()
-
-    if not request.orders:
-        raise HTTPException(status_code=400, detail="orders list cannot be empty")
-
-    config = load_config()
-    if request.time_limit_seconds is not None:
-        config.engine2_time_limit_seconds = request.time_limit_seconds
-
-    try:
-        result = simulate_elevation(request.orders, config, run_date)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Simulation failed: {e}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data Access: WIP Orders
-# ─────────────────────────────────────────────────────────────────────────────
-@app.get("/orders/wip", tags=["Data"])
-def get_wip_orders():
-    """
-    List active WIP orders (CT > 0, routable, non-QA, balance_qty > 0).
-
-    Returns:
-      - List of orders with production order, item, CDD, quantity, operations
-      - Counts by order and status
-    """
-    try:
-        from preprocess import filter_wip_orders
-
-        wip_df = read_wip_orders()
-        routing_df = read_routing_master()
-        filtered = filter_wip_orders(wip_df, routing_df)
-
-        if filtered.empty:
-            return {"orders": [], "count": 0}
-
-        # Group by production order.
-        # NOTE: balance_qty is per-OPERATION (CLAUDE.md: "Balance Qty of Op_n is the
-        # max input available for Op_n+1") — operations of the same order are pipeline
-        # stages, not independent quantities. balance_qty_total (summed across an
-        # order's pending ops) is therefore only comparable to quantity_ordered × the
-        # number of pending ops, never to quantity_ordered alone — otherwise a 2-op
-        # order can show e.g. "20 / 10 pcs" (200%). Expose that matching denominator
-        # explicitly so the UI never has to guess it.
-        orders_list = []
-        for order_id, group in filtered.groupby("PRODUCTION_ORDER"):
-            quantity_ordered = int(group.iloc[0]["QUANTITY_ORDERED"])
-            operations = len(group)
-            orders_list.append({
-                "production_order": order_id,
-                "item": group.iloc[0]["ITEM"],
-                "cdd": str(group.iloc[0]["CDD"]) if group.iloc[0]["CDD"] else None,
-                "quantity_ordered": quantity_ordered,
-                "quantity_ordered_total": quantity_ordered * operations,
-                "balance_qty_total": int(group["balance_qty"].sum()),
-                "operations": operations,
-            })
-
-        return {"orders": orders_list, "count": len(orders_list)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read WIP: {e}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Data Access: Machine Capacity
 # ─────────────────────────────────────────────────────────────────────────────
 @app.get("/machines/capacity", tags=["Data"])
 def get_machines_capacity(days: Optional[int] = Query(7)):
     """
-    Read resolved capacity (MCH_MACHINE_AVAILABILITY merged with daily overrides).
+    Resolved machine availability for the next N days — the SAME availability the scheduler uses
+    (model_f_data.ResolvedAvailability): holiday calendar first (closes every machine/shift),
+    then the MCH_MACHINE_AVAILABILITY_BY_DATE override, then the MCH_MACHINE_AVAILABILITY baseline.
 
     Query parameters:
       - days: how many days ahead to return (default: 7)
 
     Returns:
       - List of capacity slots: (machine, shift, date, available_mins, is_open)
-      - Merged from baseline + MCH_MACHINE_AVAILABILITY_BY_DATE
     """
     if days < 1 or days > 90:
         raise HTTPException(status_code=400, detail="days must be 1-90")
 
     try:
         from datetime import timedelta
-        from preprocess import resolve_capacity
+        from model_f_data import build_availability
 
         today = date.today()
-        machine_master_df = read_machine_master()
-        machine_daily_df = read_machine_daily()
+        availability = build_availability(read_machine_master(), read_machine_daily(), read_holiday_calendar())
 
         slots_list = []
         for i in range(days):
             target_date = today + timedelta(days=i)
-            resolved = resolve_capacity(machine_master_df, machine_daily_df, target_date)
-
-            for _, row in resolved.iterrows():
+            for machine, shift in availability.baseline:
+                mins = float(availability(machine, target_date, shift))
                 slots_list.append({
-                    "machine": row["WORK_CENTER"],
-                    "shift": row["SHIFT"],
+                    "machine": machine,
+                    "shift": shift,
                     "date": str(target_date),
-                    "available_mins": float(row["AVAILABLE_MINS"]),
-                    "is_open": row["AVAILABLE_MINS"] > 0,
+                    "available_mins": mins,
+                    "is_open": mins > 0,
                 })
 
         return {"capacity_slots": slots_list, "count": len(slots_list)}
@@ -715,15 +609,14 @@ def get_machines_daily(start_date: Optional[date] = Query(None), end_date: Optio
 @app.post("/data/refresh", tags=["Admin"])
 def refresh_all_data():
     """
-    Re-fetch all 7 read-only sources from Oracle (cache-busting).
+    Re-fetch every read-only source the scheduler uses from Oracle (cache-busting) and report row counts.
 
     Reads:
       - MCH_WIP
       - MCH_MACHINE_AVAILABILITY
       - MCH_MACHINE_AVAILABILITY_BY_DATE
-      - MCH_MACHINE_PRIORITY
-      - MCH_ITEMWISE_FIXTURE_LOCATOR
-      - MCH_FIXTURE_LOCATOR
+      - MCH_MACHINE_FNL_MASTER (unified routing + fixture/locator master, CLAUDE.md §E.15)
+      - MCH_FIXTURE_LOCATOR (physical inventory)
       - L750.TCCCP019 (holiday calendar)
 
     Returns:
@@ -734,8 +627,7 @@ def refresh_all_data():
         wip = read_wip_orders()
         machines = read_machine_master()
         daily = read_machine_daily()
-        routing = read_routing_master()
-        fixture_master = read_fixture_locator_master()
+        fnl_master = read_machine_fnl_master()
         fixture_inventory = read_fixture_locator_inventory()
         holidays = read_holiday_calendar()
 
@@ -743,8 +635,7 @@ def refresh_all_data():
             "wip_orders": len(wip),
             "machine_master": len(machines),
             "machine_daily": len(daily),
-            "routing_master": len(routing),
-            "fixture_locator_master": len(fixture_master),
+            "machine_fnl_master": len(fnl_master),
             "fixture_locator_inventory": len(fixture_inventory),
             "holiday_calendar": len(holidays),
             "refreshed_at": datetime.now().isoformat(),

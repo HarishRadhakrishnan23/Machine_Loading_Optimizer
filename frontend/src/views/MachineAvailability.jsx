@@ -197,7 +197,7 @@ function CapacityPanel() {
         {machines.length === 0 ? (
           <EmptyPanel title="No machine capacity data" hint="Check that MCH_MACHINE_AVAILABILITY has rows." />
         ) : (
-          <div className="overflow-x-auto thin-scroll">
+          <div className="table-scroll thin-scroll max-h-[68vh]">
             <table className="border-collapse text-xs w-full">
               <thead>
                 <tr>

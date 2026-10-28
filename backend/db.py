@@ -101,41 +101,12 @@ def read_machine_daily(target_date: Optional[date] = None) -> pd.DataFrame:
             return pd.read_sql("SELECT * FROM MCH_MACHINE_AVAILABILITY_BY_DATE", conn)
 
 
-def read_routing_master() -> pd.DataFrame:
-    """
-    Read capability matrix from MCH_MACHINE_PRIORITY view.
-    Returns: DataFrame with columns (COMPANY, SIZE_INCH, CLASS, MOC, DESIGN, ITEM_CATEGORY,
-    TASK, MACHINE_PRIORITY, WORK_CENTER, SETUP_TIME).
-
-    Model D note: SETUP_TIME is IGNORED by Model D (replaced by FIXTURE_CHANGE_TIME /
-    LOCATOR_CHANGE_TIME from MCH_ITEMWISE_FIXTURE_LOCATOR). Only used for machine
-    capability/priority lookup.
-    """
-    with get_connection() as conn:
-        return pd.read_sql("SELECT * FROM MCH_MACHINE_PRIORITY", conn)
-
-
-def read_fixture_locator_master() -> pd.DataFrame:
-    """
-    Read itemwise fixture/locator master from MCH_ITEMWISE_FIXTURE_LOCATOR view.
-    Keyed by (SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER) — Model E's batch/
-    fixture key (CLAUDE.md "Batch / fixture key — used everywhere, all tables").
-
-    Returns: DataFrame with columns (SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER,
-    FIXTURE, LOCATOR, FIXTURE_CHANGE_TIME, LOCATOR_CHANGE_TIME, LOAD_UNLOAD_TIME,
-    USER_ID, USER_DATE). Model E §3: change-times apply once (to the batch's first
-    piece); LOAD_UNLOAD_TIME is per piece.
-    """
-    with get_connection() as conn:
-        return pd.read_sql("SELECT * FROM MCH_ITEMWISE_FIXTURE_LOCATOR", conn)
-
-
 def read_machine_fnl_master() -> pd.DataFrame:
     """
     Model F: read the unified routing + fixture/locator master from
-    MCH_MACHINE_FNL_MASTER — replaces the separate MCH_MACHINE_PRIORITY /
-    MCH_ITEMWISE_FIXTURE_LOCATOR reads (`read_routing_master` /
-    `read_fixture_locator_master`, kept above for Model E history/rollback).
+    MCH_MACHINE_FNL_MASTER — the single source for routing (PRIORITY) and fixture/locator
+    identity + timings (it replaced the retired MCH_MACHINE_PRIORITY /
+    MCH_ITEMWISE_FIXTURE_LOCATOR views, whose readers were removed in Phase 3).
 
     Grain: one row per (SIZE_INCH, CLASS, MOC, DESIGN, TASK, WORK_CENTER).
     FIXTURE_ID/LOCATOR_ID/the three timing columns are NULL on a routing-only
@@ -434,25 +405,3 @@ def read_live_schedule_completions() -> pd.DataFrame:
             """,
             conn,
         )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Convenience read-all function (data refresh)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def refresh_all_views() -> dict[str, pd.DataFrame]:
-    """
-    Fetch all 6 ERP views at once (convenience for POST /data/refresh endpoint).
-
-    Returns: dict with keys ('wip_orders', 'machine_master', 'machine_daily',
-             'routing_master', 'fixture_locator_master', 'fixture_locator_inventory'),
-             each mapping to a DataFrame.
-    """
-    return {
-        "wip_orders": read_wip_orders(),
-        "machine_master": read_machine_master(),
-        "machine_daily": read_machine_daily(),
-        "routing_master": read_routing_master(),
-        "fixture_locator_master": read_fixture_locator_master(),
-        "fixture_locator_inventory": read_fixture_locator_inventory(),
-    }

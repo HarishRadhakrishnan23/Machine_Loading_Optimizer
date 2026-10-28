@@ -90,7 +90,7 @@ export default function GanttChart({ assignments }) {
 
   return (
     <div className="relative">
-      <div className="overflow-x-auto thin-scroll border border-ink-600 rounded-xl bg-ink-900">
+      <div className="table-scroll thin-scroll border border-ink-600 rounded-xl bg-ink-900 max-h-[68vh]">
         <div style={{ width: trackWidth + 140 }}>
           {/* Day header */}
           <div className="flex sticky top-0 z-10 bg-ink-900 border-b border-ink-600">

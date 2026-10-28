@@ -306,7 +306,7 @@ export default function PriorityShuffler() {
                     </div>
                   </div>
 
-                  <div className="overflow-x-auto thin-scroll border border-ink-600 rounded-xl">
+                  <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-[68vh]">
                     <table className="w-full text-xs border-collapse">
                       <thead>
                         <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide">
@@ -427,7 +427,7 @@ export default function PriorityShuffler() {
               {auditError && <p className="text-xs text-status-risk">{auditError}</p>}
               {audit && audit.length === 0 && <p className="text-xs text-text-faint">No changes recorded yet.</p>}
               {audit && audit.length > 0 && (
-                <div className="overflow-x-auto thin-scroll border border-ink-600 rounded-xl max-h-80 overflow-y-auto">
+                <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-80">
                   <table className="w-full text-xs border-collapse">
                     <thead>
                       <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide sticky top-0">

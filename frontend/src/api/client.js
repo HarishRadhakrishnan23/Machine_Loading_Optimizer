@@ -86,15 +86,7 @@ export const compareRuns = (runA, runB) =>
 export const compareRunToCurrent = (runA) =>
   request(`/schedule/compare/runs/to-current?run_a=${encodeURIComponent(runA)}`)
 
-// ── Engine 2: Priority Simulation ───────────────────────────────────────
-export const simulatePriority = (orders, timeLimitSeconds) =>
-  request('/priority/simulate', {
-    method: 'POST',
-    body: JSON.stringify({ orders, time_limit_seconds: timeLimitSeconds ?? null }),
-  })
-
 // ── Data access ──────────────────────────────────────────────────────────
-export const getWipOrders = () => request('/orders/wip')
 export const getMachinesCapacity = (days = 7) => request(`/machines/capacity?days=${days}`)
 export const getMachinesDaily = (startDate, endDate) => {
   const params = new URLSearchParams()
@@ -122,3 +114,6 @@ export const getWhatIfOrders = () => request('/whatif/orders')
 export const runWhatIf = (payload) => request('/whatif/run', { method: 'POST', body: JSON.stringify(payload) })
 export const getWhatIfResult = (id) => request(`/whatif/result/${id}`)
 export const saveWhatIfResult = (id) => request(`/whatif/result/${id}/save`, { method: 'POST' })
+
+/** Phase 2: the baseline's formed fixture runs (id, task, orders, machines, span, capable machines). */
+export const getWhatIfRuns = () => request('/whatif/runs')

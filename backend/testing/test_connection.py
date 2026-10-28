@@ -17,12 +17,12 @@ import sys
 from pathlib import Path
 
 # Add backend to path so db.py can be imported
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import oracledb
 from db import (
     ORACLE_USER, ORACLE_DSN, get_connection,
-    read_wip_orders, read_machine_master, read_machine_daily, read_routing_master,
+    read_wip_orders, read_machine_master, read_machine_daily, read_machine_fnl_master,
 )
 
 
@@ -60,7 +60,7 @@ def test_views():
         ("MCH_WIP (wip_orders)", read_wip_orders, "PRODUCTION_ORDER"),
         ("MCH_MACHINE_AVAILABILITY (machine_master)", read_machine_master, "WORK_CENTER"),
         ("MCH_MACHINE_AVAILABILITY_BY_DATE (machine_daily)", read_machine_daily, "WORKING_DATE"),
-        ("MCH_MACHINE_PRIORITY (routing_master)", read_routing_master, "TASK"),
+        ("MCH_MACHINE_FNL_MASTER (routing + fixture/locator master)", read_machine_fnl_master, "TASK"),
     ]
 
     all_ok = True

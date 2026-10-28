@@ -34,7 +34,7 @@ The system has two ML engines:
 The project went through five scheduling-engine designs before arriving at **Model F**, the current and final design:
 
 - **Model B** (retired, never shipped): CP-SAT, one machine locked per whole operation (`assign[t,m]`) plus a hard contiguity constraint forcing every slot between start and end to be occupied. A single closed slot anywhere in that span made the model INFEASIBLE even at ~5% utilisation. Deleted for this reason.
-- **Model C** (shipped, Phases 0–4 complete — see `PHASE2_SUMMARY.md`–`PHASE4_SUMMARY.md`): CP-SAT allocating integer piece-quantities into discrete `(machine, date, shift)` capacity buckets on a global slot index, with `SETUP_TIME`-based setup economics and a guaranteed greedy fallback. This is what is actually running in the codebase today (`engine1_scheduler.py`), pending the Model E rebuild described in this document.
+- **Model C** (shipped, Phases 0–4 complete — see `PHASE2_SUMMARY.md`–`PHASE4_SUMMARY.md`): CP-SAT allocating integer piece-quantities into discrete `(machine, date, shift)` capacity buckets on a global slot index, with `SETUP_TIME`-based setup economics and a guaranteed greedy fallback. Its code (`engine1_scheduler.py`, `preprocess.py`, `pipeline.py`) was deleted in Phase 3; only the summary files remain as history.
 - **Model D** (target spec, superseded before full implementation — only schema/audit groundwork landed): introduced the core idea Model E keeps — a continuous-time dispatch simulator with no machine-minute cap, driven by a finite plant-wide fixture/locator pool (`MCH_ITEMWISE_FIXTURE_LOCATOR`, `MCH_FIXTURE_LOCATOR`) instead of `SETUP_TIME`. Its batch/fixture key was `SIZE~CLASS~DESIGN` (MOC excluded). Superseded by Model E before its dispatch simulator, batching, or pool-constraint phases were built.
 - **Model E** (shipped, superseded by Model F): keeps Model D's continuous-time/fixture-pool architecture, but **includes MOC in the batch/fixture key everywhere** (`SIZE~CLASS~MOC~DESIGN`), replaces Model D's abstract "fixture runs, locator-ordered" batching with an explicit, fully-specified priority-walk batching algorithm, adds a `REMARK` column so every WIP row is auditable (scheduled or not), surfaces each order's overall completion date/shift directly on every one of its rows, and fully retires CP-SAT. Live-data validation (E-6) surfaced two real limits in this design, both of which Model F exists to fix: (1) a fixture run's start time was pinned to whichever single member became ready *last*, leaving the machine idle the whole time even when every other member had been ready for days (fixed mid-Model-E as a point patch, but the underlying cause — placement driven by depth-ordered "rounds" rather than true event time — remained); (2) `MCH_MACHINE_PRIORITY` and `MCH_ITEMWISE_FIXTURE_LOCATOR` are two separately-maintained tables keyed on the same combo+task+machine grain, and were found to disagree on which machine is valid for 258 real combos — a structural hazard a single merged source removes entirely.
 - **Model F** (current, final): same continuous-time/fixture-pool/REMARK/CDD-priority foundation as Model E — §E.1-§E.4, §E.7-§E.9, §E.11-§E.14 below are **unchanged** and keep their original `§E.n` numbering for stability (cross-referenced throughout this document). What Model F actually changes: a single unified machine+fixture+locator source of truth (`MCH_MACHINE_FNL_MASTER`, §E.15) replacing the two-table join; a hard-exclusion policy for fixture-required tasks with no master-table row (§E.15); one universal "does this disturb a near-term order's CDD" admission check replacing the two narrower mechanisms Model E had (§E.16); within-run reordering for readiness, not a plant-wide event-driven redesign (§E.17 — see its own note on why the originally-planned full event-driven loop was built, measured, and reverted); partial-quantity (lot-streaming) handoff between operations instead of whole-batch-only handoff (§E.18); and a fully named determinism contract (§E.19) covering every tie-break rule the engine relies on. Machine selection (§E.5) is also revised under Model F — see that section.
@@ -158,7 +158,7 @@ A `TimePoint`'s `minute` offset is assumed to map linearly onto real clock time 
 ### holiday_calendar → L750.TCCCP019 (read-only table, cross-schema) — Model E
 **Exact Oracle columns:** CALENDAR_CODE, DATE_1, DESCRIPTION
 - The confirmed company holiday calendar — **not** one of the other six MCH_* ERP views; a separate, pre-existing cross-schema table (`L750.TCCCP019`), read-only to this application exactly like the rest.
-- **On every date listed here, `AVAILABLE_MINS` is forced to `0` for all three shifts, for every machine** — a plant-wide closure, taking precedence over both the `MCH_MACHINE_AVAILABILITY_BY_DATE` override and the `MCH_MACHINE_AVAILABILITY` baseline (`model_e_data.ResolvedAvailability` checks holiday first, unconditionally).
+- **On every date listed here, `AVAILABLE_MINS` is forced to `0` for all three shifts, for every machine** — a plant-wide closure, taking precedence over both the `MCH_MACHINE_AVAILABILITY_BY_DATE` override and the `MCH_MACHINE_AVAILABILITY` baseline (`model_f_data.ResolvedAvailability` checks holiday first, unconditionally).
 - The table also carries old/historical entries (2008, 2013, 2014, …) alongside forward-looking ones — harmless to read in full; a date that never falls inside a schedule's horizon simply never gets looked up. No filtering by `CALENDAR_CODE` is applied (every row observed in live data is `'VEL'`); revisit if a second calendar code is ever introduced for a different purpose.
 
 ---
@@ -414,9 +414,9 @@ A frontend page ("Priority Shuffler", Engine 1 side — not part of Engine 2) th
 
 ---
 
-## Engine 2 — independent what-if engine (design AGREED; **Phase 1 BUILT**, Phases 2–3 not yet)
+## Engine 2 — independent what-if engine (**Phases 1, 2 and 3 DONE**; more scenario kinds are optional extensions)
 
-**Phase 1 status (built):** package `backend/engine2/` — `snapshot.py` (read-only input copy), `scenarios.py` (`ElevateOrders`, `MachinePriority`: edits to a copy of the inputs), `runner.py` (calls Engine 1's `run_dispatch_simulation` unchanged, mirroring `model_f_pipeline`'s call), `metrics.py` (diff, risk, verdict), `service.py` (cached snapshot+baseline, bounded in-memory result store, optional save), `api.py` (router mounted by one `include_router` line in `main.py`). Endpoints: `GET /whatif/status`, `POST /whatif/refresh`, `GET /whatif/orders`, `POST /whatif/run` (`kind: elevate | machine_priority`), `GET /whatif/result/{id}`, `POST /whatif/result/{id}/save`. Frontend: **What-If** page (`WhatIf.jsx`, replaces the Order Board / Impact Analyser tabs; loads only when first opened because every page stays mounted and a first load is ~10s), shared `WhatIfResult.jsx`, and a **Preview impact** button on the Priority Shuffler (reorder or add-machine drafts; read-only). Tests: `backend/testing/test_engine2.py` (14, synthetic data, no Oracle) plus the **live parity tripwire** `backend/testing/engine2_live_parity.py` (read-only; runs Engine 1's real `generate_schedule` with its two Oracle write calls stubbed and diffs every row against `engine2.runner.simulate` — **EXACT on live data: 5809 rows, every machine/start/end/qty/REMARK identical**; re-run it after ANY change to Engine 1's simulator or pipeline). Verified live through the real API and UI (read-only; nothing saved): elevating one order took 5–15s per run, the Shuffler "Preview impact" correctly reported "No effect" for a combo whose reorder changes no placement, and 8 simultaneous requests on a cold server, a data refresh mid-run, and a reload mid-request all completed. The result panel's note "saved schedule is out of date" appears whenever `MCH_SCHEDULE_OUTPUT` differs from a fresh simulation of today's data (it did on the first live run: the saved schedule predates today's WIP/run date) — parity above proves that is staleness, not Engine 2 drift. `vite.config.js` accepts an optional `API_TARGET` env var to proxy a second test frontend at another backend port. Verdict rule as implemented: fewer late committed orders → less total lateness → neutral/no-effect (changeover count is not yet part of the rule: engine rows carry no per-run charge type). The old Model C Engine 2 backend files and `OrderBoard.jsx`/`ImpactAnalyser.jsx` still exist on disk, unreachable from the UI, for deletion in Phase 3.
+**Phase 1 status (built):** package `backend/engine2/` — `snapshot.py` (read-only input copy), `scenarios.py` (`ElevateOrders`, `MachinePriority`: edits to a copy of the inputs), `runner.py` (calls Engine 1's `run_dispatch_simulation` unchanged, mirroring `model_f_pipeline`'s call), `metrics.py` (diff, risk, verdict), `service.py` (cached snapshot+baseline, bounded in-memory result store, optional save), `api.py` (router mounted by one `include_router` line in `main.py`). Endpoints: `GET /whatif/status`, `POST /whatif/refresh`, `GET /whatif/orders`, `POST /whatif/run` (`kind: elevate | machine_priority`), `GET /whatif/result/{id}`, `POST /whatif/result/{id}/save`. Frontend: **What-If** page (`WhatIf.jsx`, replaces the Order Board / Impact Analyser tabs; loads only when first opened because every page stays mounted and a first load is ~10s), shared `WhatIfResult.jsx`, and a **Preview impact** button on the Priority Shuffler (reorder or add-machine drafts; read-only). Tests: `backend/testing/test_engine2.py` (14, synthetic data, no Oracle) plus the **live parity tripwire** `backend/testing/engine2_live_parity.py` (read-only; runs Engine 1's real `generate_schedule` with its two Oracle write calls stubbed and diffs every row against `engine2.runner.simulate` — **EXACT on live data: 5809 rows, every machine/start/end/qty/REMARK identical**; re-run it after ANY change to Engine 1's simulator or pipeline). Verified live through the real API and UI (read-only; nothing saved): elevating one order took 5–15s per run, the Shuffler "Preview impact" correctly reported "No effect" for a combo whose reorder changes no placement, and 8 simultaneous requests on a cold server, a data refresh mid-run, and a reload mid-request all completed. The result panel's note "saved schedule is out of date" appears whenever `MCH_SCHEDULE_OUTPUT` differs from a fresh simulation of today's data (it did on the first live run: the saved schedule predates today's WIP/run date) — parity above proves that is staleness, not Engine 2 drift. `vite.config.js` accepts an optional `API_TARGET` env var to proxy a second test frontend at another backend port. Verdict rule as implemented: fewer late committed orders → less total lateness → neutral/no-effect (changeover count is not yet part of the rule: engine rows carry no per-run charge type). The old Model C-era Engine 2 (backend files, `/priority/simulate`, `/orders/wip`, the Order Board / Impact Analyser pages) was deleted in Phase 3.
 
 Engine 2 answers "what happens if…?" questions about the schedule without changing anything real. It **replaces** the Model C-era Engine 2 (see "Superseded" below).
 
@@ -448,25 +448,11 @@ No new tables. Scenarios and results live **in server memory only** (bounded, mo
 
 ### Build phases
 1. **Core + K1 + K2 + Shuffler preview + What-If UI** (input-edit scenarios only — lowest risk, calls Engine 1's `run_dispatch_simulation` unchanged).
-2. **Runs view + K3/K4** (own outer loop, parity-test gated).
-3. Further scenario kinds; delete the superseded Model C-era Engine 2 code once replaced.
+2. **Runs view + K3/K4** (own outer loop, parity-test gated). **Spike DONE, gate PASSED:** `engine2/plan.py` (`build_plan`, `replay` — Engine 2's own copy of Engine 1's outer loop, driving Engine 1's placement functions unchanged; tests `test_engine2_plan.py`; live check folded into `engine2_live_parity.py`). On live data an UNEDITED replay of the 209 formed runs reproduces Engine 1 on all 5298 rows with zero differences, and that run exercised the risky dynamic paths (151 admission-merged rows, 21 safety-stock-deferred rows, 100 machine-dropout rows). Live plan shape: 209 runs (150 solo, the rest up to 73 members), 14 runs whose placements span more than one machine (dropouts/deferrals), a downstream run has a median of 1 and a max of 7 feeder runs. **Phase 2 BUILT** (`engine2/run_edits.py`, `GET /whatif/runs`, `POST /whatif/run` with `kind: "runs"`, page **Move / Reorder Runs** `WhatIfRuns.jsx`; tests `test_engine2_run_edits.py`, 8). Agreed edit rules: (1) **`MoveRun(run, machine)`** restricts the run's members' candidate machines to the target; a PARTIAL move (target cannot take every order) keeps the orders it can take in the run (pinned) and splits the rest off as their own solo runs placed right after it — the same way Engine 1 splits a dropout — with "covers N of M" reported; a moved run's admission merges are switched off and its orders are removed from other runs' merge candidates so the move cannot be merged away. (2) **`PlaceBefore(run X, before Y, pin=True)`** puts X just before Y in placement order and **pulls forward every feeder run** (recursively) not already ahead of Y, listing them; X cannot go before a run it depends on; `pin` keeps X and Y on the machines they have today so the result isolates ORDER. (3) One primitive covers "shuffle on one machine". (4) Several edits per scenario, applied in order. A merge candidate whose own run now precedes its host is dropped from the host (never placed twice). Invariant (also in `engine2_live_parity.py`): pinning runs to their current machines leaves every placement unchanged (REMARK wording may differ). Live-verified read-only: moves, partial moves, a depth-8 run reordered with 42 feeder runs pulled forward, composed edits, and both validation errors; each scenario ~3-4s once the plan is cached (first load ~10-20s). Note: the replay loop in `engine2/plan.py` is a deliberate COPY of Engine 1's outer loop — re-run `engine2_live_parity.py` after any change to `dispatch_orchestrator.run_dispatch_simulation`.
+3. ✅ DONE: the superseded Model C-era Engine 2 code was deleted (see F-11). Further scenario kinds (machine down for N days, delay a release, …) remain optional extensions.
 
-### Previous (Model C-era) Engine 2 — SUPERSEDED, deleted when replaced
-`engine2_recommender.py`, `pipeline2.py`, `risk_classifier.py` (its pure SAFE/AT_RISK/BREACH + top-impacted logic may be reused by the new package), `/priority/simulate`, the Order Board / Impact Analyser views. The notes below describe that old design only.
-
-### Trigger
-Planner selects one or more orders to elevate via the Order Board UI.
-
-### Process
-1. Read current `MCH_SCHEDULE_OUTPUT` → old_completion_date per order (baseline snapshot; use `ORDER_COMPLETION_DATE`).
-2. Force the elevated order(s) to the top of the priority queue (§2) — highest priority, ahead of all CDD-based ordering.
-3. Re-run Engine 1 (the Model E dispatch simulator).
-4. For every other order in the new schedule: `slip_days = new_completion_date − old_completion_date`, `slack = CDD − new_completion_date`.
-5. Classify risk: **SAFE** (`slack > risk_safe_threshold_days`), **AT_RISK** (`0 ≤ slack ≤ risk_safe_threshold_days`), **BREACH** (`slack < 0`).
-6. Write all results to `MCH_SIM_RESULTS`.
-7. Return top-5 most impacted orders (highest slip_days).
-
-Since the dispatch simulator is deterministic and fast (not an iterative solver with a time budget), `engine2_time_limit_seconds` is retired along with the rest of the CP-SAT-era config (see Configuration section).
+### Previous (Model C-era) Engine 2 — DELETED in Phase 3
+`engine2_recommender.py`, `pipeline2.py`, `risk_classifier.py`, `/priority/simulate`, `/orders/wip`, `test_engine2_e2e.py` and the Order Board / Impact Analyser pages are gone. Its elevate-an-order idea lives on as scenario K1 above, and its SAFE/AT_RISK/BREACH classification as `engine2/metrics.classify_risk`. `MCH_SIM_RESULTS` is kept: the optional "Save this result" writes to it.
 
 ---
 
@@ -498,7 +484,7 @@ CREATE TABLE MCH_SCHEDULE_OUTPUT (
         PRIMARY KEY (PRODUCTION_ORDER, OPERATION_NO, LINE_NO)
 );
 ```
-Full DDL with indexes: `backend/testing/model_e_schedule_output_schema.sql`. **This has already been applied manually in Oracle SQL Developer** — `models.py::ScheduleOutputRow`, `db.py`, `pipeline.py`, and the FastAPI response shapes in `main.py` still need to be migrated to match (tracked as implementation work, not yet done — the old shape had `START_OFFSET_MIN`/`END_OFFSET_MIN` and a different PK, both retired).
+Full DDL with indexes: `backend/testing/model_e_schedule_output_schema.sql`. **This has already been applied manually in Oracle SQL Developer** — `db.py`, `model_f_pipeline.py`, and the FastAPI response shapes in `main.py` were migrated to match (the old shape had `START_OFFSET_MIN`/`END_OFFSET_MIN` and a different PK, both retired; the old `ScheduleOutputRow` model was deleted in Phase 3).
 
 **No historical retention.** Each `/schedule/generate` run DELETEs all existing rows before writing the new schedule.
 
@@ -573,14 +559,13 @@ Credentials stored in `.env` (never committed to git). Local dev DSN: `localhost
 
 Framework: FastAPI | ASGI server: Uvicorn | Port: 8000
 
-### Endpoints (10 original + 4 Priority Shuffler: `GET /fnl/master`, `PUT /fnl/priorities`, `POST /fnl/machine`, `GET /fnl/audit` — see "Priority Shuffler")
+### Endpoints (Engine 1 + data + config, plus 4 Priority Shuffler and the `/whatif/*` Engine 2 router — `GET /fnl/master`, `PUT /fnl/priorities`, `POST /fnl/machine`, `GET /fnl/audit` — see "Priority Shuffler")
 - POST /schedule/generate — triggers Engine 1, writes to MCH_SCHEDULE_OUTPUT
-- GET  /schedule/current — reads the latest MCH_SCHEDULE_OUTPUT: every row (no row cap), ordered PRODUCTION_ORDER/OPERATION_NO/LINE_NO, with START/END_TIMESTAMP, REMARK, ORDER_COMPLETION_DATE/SHIFT, LINE_NO
+- GET  /schedule/current — reads the latest MCH_SCHEDULE_OUTPUT: every row (no row cap), ordered PRODUCTION_ORDER/OPERATION_NO/LINE_NO, with START/END_TIMESTAMP, REMARK, ORDER_COMPLETION_DATE/SHIFT, LINE_NO, plus `cdd` (LEFT JOIN to MCH_WIP's per-order CDD — read-only; null for safety stock / rows with no WIP CDD)
 - POST /schedule/freeze — copies the current MCH_SCHEDULE_OUTPUT into MCH_SCHEDULE_OUTPUT_ARCHIVE (append-only historical snapshot). Triggered by the frontend's "Freeze schedule" button. Does not re-run Engine 1, does not touch MCH_SCHEDULE_OUTPUT. Idempotent per RUN_ID.
-- POST /priority/simulate — triggers Engine 2 with payload `{orders: [...]}`, writes to MCH_SIM_RESULTS
-- GET  /orders/wip — returns active MCH_WIP rows (CT > 0, routable, balance_qty > 0)
-- GET  /machines/capacity — returns resolved machine availability for next N days
-- POST /data/refresh — re-fetches all 7 read-only sources from Oracle (6 MCH_* ERP views + holiday_calendar)
+- `/whatif/*` — Engine 2 (see its section): `GET /whatif/status|orders|runs`, `POST /whatif/refresh|run`, `GET /whatif/result/{id}`, `POST /whatif/result/{id}/save`. (The old `POST /priority/simulate` and `GET /orders/wip` were deleted in Phase 3.)
+- GET  /machines/capacity — returns resolved machine availability for next N days — the SAME availability the scheduler uses (`model_f_data.ResolvedAvailability`: holiday calendar, then by-date override, then baseline)
+- POST /data/refresh — re-fetches every read-only source the scheduler uses (MCH_WIP, availability baseline + by-date, MCH_MACHINE_FNL_MASTER, MCH_FIXTURE_LOCATOR, holiday calendar) and returns row counts
 - GET  /machines/daily — returns MCH_MACHINE_AVAILABILITY_BY_DATE rows for a date range (read-only display)
 - GET  /config — returns current config.json contents
 - PUT  /config — updates config.json
@@ -595,13 +580,13 @@ CORS enabled for React frontend origin. Schedule regeneration: manual trigger on
 
 Framework: React 18 + Vite | Styling: TailwindCSS | Charts: Recharts | Drag-and-drop: React DnD
 
-### Views (Engine 1 side fully on Model F; Engine 2 views pending the redesign)
+### Views
 1. **Schedule view ("Pending Load Queue")** — Gantt chart per machine rendered against `START_TIMESTAMP`/`END_TIMESTAMP` (continuous time); one operation can have several `LINE_NO` slices (§E.18), drawn as separate "·n/m" bars; tooltip carries REMARK. Also the Size×Class bubble chart (colour = MOC, shape = DESIGN, size = orders) and the filterable table. Needs a **"Freeze schedule"** button that calls `POST /schedule/freeze` (archives the current schedule into `MCH_SCHEDULE_OUTPUT_ARCHIVE` for historical backup — see Write tables).
-2. **Order board** — WIP order cards, drag-to-reprioritise, trigger Engine 2 simulation.
-3. **Impact analyser** — MCH_SIM_RESULTS: risk scores, slip days, SAFE/AT_RISK/BREACH badges.
-4. **Machine availability & settings** — read-only view of MCH_MACHINE_AVAILABILITY_BY_DATE + settings panel for the Model E config.json shape.
+2. **Machine availability & settings** — read-only view of MCH_MACHINE_AVAILABILITY_BY_DATE + settings panel for the Model E config.json shape.
 
-Other Engine 1 pages currently in the app: **Overview** (generate/freeze), **Machine Utilisation**, **Priority Shuffler** (see its section), **Planned Completion**, **Run Comparison**, **Download Archive**, **Machines & Settings**. Engine 2 pages (**Order Board**, **Impact Analyser**) still exist but call the old Model C-era Engine 2 — to be replaced by the independent Engine 2 redesign.
+**Table convention (all tables and the Gantt):** wrap in a `table-scroll thin-scroll max-h-[68vh]` container (`index.css`) — the table scrolls in BOTH directions inside a fixed-height box, so the horizontal scrollbar is always attached to the visible box (never at the bottom of a long page) and the header row stays pinned (`.table-scroll thead th` is sticky). Do not use bare `overflow-x-auto` for a table. The Pending Load Queue table shows each order's CDD (column after Order).
+
+Other Engine 1 pages currently in the app: **Overview** (generate/freeze), **Machine Utilisation**, **Priority Shuffler** (see its section), **Planned Completion**, **Run Comparison**, **Download Archive**, **Machines & Settings**. Engine 2 pages: **What-If** (elevate orders) and **Move / Reorder Runs**; the Priority Shuffler also carries Engine 2's **Preview impact**. The old Order Board / Impact Analyser were deleted in Phase 3.
 
 ### API proxy
 Development: `vite.config.js` proxies `/api` → `http://localhost:8000`. Production: Express.js handles the `/api` → Uvicorn proxy.
@@ -614,6 +599,8 @@ Development: `vite.config.js` proxies `/api` → `http://localhost:8000`. Produc
 Terminal 1:  cd backend && uvicorn main:app --reload --port 8000
 Terminal 2:  cd frontend && npm run dev   (Vite dev server on port 5173)
 ```
+
+**The one Python environment is `backend/venv`** (run everything with `backend/venv/Scripts/python.exe`, including tests: `backend/venv/Scripts/python.exe -m pytest backend/testing/test_engine2.py -q`). Earlier duplicate environments (`backend/.venv`, a project-root `venv`) were removed — do not recreate them.
 
 ---
 
@@ -662,9 +649,8 @@ tov-mlo/
 ├── server.js                     ← Express.js production server
 ├── package.json                  ← express + http-proxy-middleware
 ├── backend/
-│   ├── main.py                   ← FastAPI app + all 9 endpoints. /schedule/generate, /schedule/current,
-│   │                                /data/refresh now call the Model E pipeline. /orders/wip and
-│   │                                /priority/simulate (Engine 2) still call Model C-era code — not yet migrated.
+│   ├── main.py                   ← FastAPI app: Engine 1 (/schedule/*), data/config endpoints, Priority Shuffler
+│   │                                (/fnl/*), and the mounted Engine 2 router (/whatif/*).
 │   ├── db.py                     ← Oracle connection pool + read/write helpers. write_schedule_output /
 │   │                                delete_schedule_output rewritten for the Model E schema.
 │   │                                archive_schedule_output copies MCH_SCHEDULE_OUTPUT into the
@@ -673,9 +659,9 @@ tov-mlo/
 │   │                                service / api. Calls Engine 1 read-only; Engine 1 never imports it.
 │   ├── fnl_master_admin.py       ← Priority Shuffler: the ONLY writer into MCH_MACHINE_FNL_MASTER (PRIORITY
 │   │                                re-rank + add-machine, audited into MCH_FNL_MASTER_AUDIT). See "Priority Shuffler".
-│   ├── model_e_data.py           ← adapts live Oracle DataFrames into the dispatch engine's plain input types
+│   ├── model_f_data.py           ← adapts live Oracle DataFrames into the dispatch engine's plain input types
 │   │                                (RawWipRow/RoutingIndex/FixtureIndex/DevicePool/ResolvedAvailability).
-│   ├── model_e_pipeline.py       ← the single entry point: data load → dispatch_orders → dispatch_orchestrator
+│   ├── model_f_pipeline.py       ← the single entry point: data load → dispatch_orders → dispatch_orchestrator
 │   │                                → dispatch_writer → db.py write. What /schedule/generate actually calls.
 │   ├── dispatch_orders.py        ← layer 1: raw WIP rows → classified, precedence-bridged OrderChains.
 │   ├── dispatch_batching.py / dispatch_consolidation_window.py / dispatch_machine_selection.py /
@@ -693,22 +679,16 @@ tov-mlo/
 │   │                                a real datetime.
 │   ├── dispatch_writer.py        ← FinalRow → MCH_SCHEDULE_OUTPUT row dict (RUN_ID/LINE_NO/GENERATED_AT +
 │   │                                shift_clock conversion).
-│   ├── preprocess.py             ← Model C-era preprocessing pipeline (historical — no longer called by main.py)
-│   ├── engine1_scheduler.py      ← Model C CP-SAT engine (historical — superseded by the dispatch_* modules above)
-│   ├── batch_grouping.py         ← now Model E's SIZE~CLASS~MOC~DESIGN batch key (compute_batch_key), used by
-│   │                                both the historical Model C path and dispatch_orders.py
-│   ├── engine2_recommender.py    ← priority simulation + risk scoring — still Model C-era, not yet migrated
-│   │                                to call the Model E pipeline (CLAUDE.md's Engine 2 section says it should)
-│   ├── pipeline.py / pipeline2.py← Model C-era orchestration for Engine 1 / Engine 2 runs (pipeline.py no
-│   │                                longer called by main.py; pipeline2.py still is, via engine2_recommender.py)
-│   ├── models.py                 ← Pydantic schemas. Config migrated to the Model E shape;
-│   │                                ScheduleGenerateResponse added for /schedule/generate's new response.
+│   ├── batch_grouping.py         ← just `compute_batch_key` — the SIZE~CLASS~MOC~DESIGN batch key, used by
+│   │                                dispatch_batching.py / dispatch_orders.py
+│   ├── models.py                 ← API-facing Pydantic schemas only (Config, /schedule/* responses, Priority
+│   │                                Shuffler requests); the Model C CP-SAT schemas were deleted in Phase 3.
 │   ├── config.json               ← Model E shape (see Configuration section) — migrated
 │   ├── testing/                   ← cleaned up (F-6): every Model B/C/D-era one-off diagnostic and
 │   │   │                             throwaway test script has been deleted now that Model F is the
 │   │   │                             only live engine. What's left is all current:
 │   │   ├── model_e_schedule_output_schema.sql   ← Model E DDL (applied)
-│   │   ├── test_dispatch_*.py / test_shift_clock.py / test_model_e_data_holidays.py /
+│   │   ├── test_dispatch_*.py / test_shift_clock.py / test_model_f_data_holidays.py /
 │   │   │   test_soft_consolidation.py           ← the 17-file regression suite, one per dispatch_* module
 │   │   ├── e6_validate_real_data.py             ← E-6 audit script: runs the full pipeline against live
 │   │   │                                            Oracle WIP data and checks precedence/pool/REMARK/row-count
@@ -717,10 +697,9 @@ tov-mlo/
 │   │   │                                            beyond-window feature specifically
 │   │   ├── benchmark_soft_window.py             ← live read-only sizing diagnostic for that same feature
 │   │   ├── test_connection.py / test_api_startup.py ← basic Oracle connectivity / FastAPI startup checks
-│   │   └── test_engine2_e2e.py                  ← still Model C-era (Engine 2 hasn't been migrated yet —
-│   │                                                see "What's left" below) but kept because it's live,
-│   │                                                not deprecated — it's the only regression coverage
-│   │                                                Engine 2 currently has
+│   │   ├── test_engine2.py / test_engine2_plan.py / test_engine2_run_edits.py ← Engine 2 (synthetic data)
+│   │   ├── test_fnl_master_admin.py / test_config_roundtrip.py ← Priority Shuffler write path (SQLite stand-in) / config round-trip
+│   │   └── engine2_live_parity.py               ← live tripwire: Engine 2 == Engine 1, replay == simulator (read-only)
 │   └── requirements.txt
 └── frontend/
     ├── package.json
@@ -729,8 +708,8 @@ tov-mlo/
     └── src/
         ├── App.jsx
         ├── views/            (Overview, ScheduleView, MachineUtilisation, PriorityShuffler, CompletedMaterials,
-        │                      RunComparison, DownloadArchive, MachineAvailability; Engine 2 pending redesign: OrderBoard, ImpactAnalyser)
-        ├── components/       (GanttChart, OrderCard, RiskBadge, ...)
+        │                      RunComparison, DownloadArchive, MachineAvailability, WhatIf, WhatIfRuns)
+        ├── components/       (GanttChart, ScheduleTable, WhatIfResult, RiskBadge, ...)
         └── api/client.js
 ```
 
@@ -742,25 +721,26 @@ tov-mlo/
 |-------|-------------|--------|
 | 0 — Foundation | Oracle connection, original write-table DDL, test_connection.py, .env | ✅ Done |
 | 1 — Engine 1 (Model C) | preprocess.py, engine1_scheduler.py (CP-SAT), write MCH_SCHEDULE_OUTPUT | ✅ Done |
-| 2 — Engine 2 | engine2_recommender.py, risk classifier, write MCH_SIM_RESULTS | ✅ Done |
+| 2 — Engine 2 (Model C era) | engine2_recommender.py, risk classifier, write MCH_SIM_RESULTS | ✅ Done then — SUPERSEDED and deleted in Phase 3 (F-11); the current Engine 2 is the independent `engine2/` package |
 | 3 — FastAPI | All 9 endpoints, config GET/PUT, Pydantic schemas, CORS, error handling | ✅ Done |
 | 4 — React UI | All 4 views, config settings panel, drag-drop Order Board | ✅ Done, verified end-to-end (see `PHASE4_SUMMARY.md`) |
 | E-1 — Model E schema | Rebuild `MCH_SCHEDULE_OUTPUT` (new PK, REMARK, ORDER_COMPLETION_*, drop offset columns) | ✅ Done (`backend/testing/model_e_schedule_output_schema.sql`, applied manually) |
 | E-2 — Model E data layer | Loaders for MCH_ITEMWISE_FIXTURE_LOCATOR / MCH_FIXTURE_LOCATOR; batch/fixture key migrated to SIZE~CLASS~MOC~DESIGN | ✅ Done (`model_e_data.py`, validated against live Oracle data) |
 | E-3 — Dispatch simulator core | Priority-walk batching (§4), continuous timeline + cooling (§7), machine selection (§5), pool constraint (§9), safety-stock policy (§10, full speculative check) | ✅ Done — all `dispatch_*` modules built, unit-tested, and wired together via `dispatch_orchestrator.py` |
 | E-4 — REMARK & completion surfacing | §12 REMARK taxonomy, ORDER_COMPLETION_DATE/SHIFT population | ✅ Done (`dispatch_scope.py`, `dispatch_orchestrator.py`), verified against live data — every WIP row produces exactly one output row |
-| E-5 — API/UI migration | `models.py`, `main.py` response shapes, `GanttChart.jsx` continuous-time rendering, config.json migration | ✅ Engine 1 side done — backend (`config.json`/`models.Config` migrated, `/schedule/generate`+`/schedule/current`+`/data/refresh` call the Model F pipeline) and frontend (see F-7). **Still open, Engine 2 only:** `/orders/wip` and `/priority/simulate` (+ Order Board / Impact Analyser views) still call Model C-era code — being replaced by the independent Engine 2 redesign, not migrated |
+| E-5 — API/UI migration | `models.py`, `main.py` response shapes, `GanttChart.jsx` continuous-time rendering, config.json migration | ✅ Engine 1 side done — backend (`config.json`/`models.Config` migrated, `/schedule/generate`+`/schedule/current`+`/data/refresh` call the Model F pipeline) and frontend (see F-7). The Engine 2 items that were open here were resolved by the independent Engine 2 rebuild and the Phase 3 cleanup (F-11). |
 | E-6 — Validation | Full-run audit: precedence intact, pool never exceeded, per-order CDD attainment, replicate the two worked batching examples exactly | ✅ Done against live Oracle WIP data (5005 rows) — see `backend/testing/e6_validate_real_data.py`. Found and fixed 3 real bugs along the way: a `select_machine` int/TimePoint default-type crash, missing compound-device (`"+"`-joined LOCATOR) and `"NA"`-sentinel handling in the fixture/locator pool (both confirmed real ERP conventions), and a precedence bug where `_place_no_fixture_op` never advanced `ready_at`. All invariants pass; CDD attainment on the current live backlog is 28.5% — a real finding about the backlog, not an engine defect |
 | F-1 — Unified FNL master (§E.15) | `MCH_MACHINE_FNL_MASTER` replaces the two-table routing+fixture join; `fixture_required_tasks` hard-exclusion policy | ✅ Done — `model_e_data.py` loaders, `dispatch_scope.py` exclusion outcome, unit-tested (`test_dispatch_scope.py`) and live-validated |
 | F-2 — Priority-first machine selection (§E.5) | Reverses Model E's earliest-free-first rule: ascending `PRIORITY`, first currently-available candidate wins | ✅ Done — `dispatch_machine_selection.py`, unit-tested, live-validated |
 | F-3 — Universal admission check (§E.16) | One fork/compare mechanism replacing Model E's two separate beyond-window/safety-stock resolvers | ✅ Done — `dispatch_orchestrator.py` (`_decide_admission`, `_make_committed_safe_resolver`), `dispatch_parallel.py` (separate-process fork/compare), unit-tested (`test_soft_consolidation.py`, `test_dispatch_safety_stock_speculation.py`) and live-validated |
 | F-4 — Within-run reordering for readiness (§E.17) | Fixes a fixture run's late-ready member from blocking every later-sequenced member, without a full event-driven plant-wide redesign | ✅ Done — a full event-driven rewrite was built, measured on live data, found to produce identical results to the simpler depth-round loop, and deliberately reverted (see §E.17's own note for why); the real, kept fix is the lookahead in `dispatch_engine._simulate_run_timing`. Closed a confirmed 13-day idle gap on live data (machine `2PMH19`); live CDD attainment improved 72.8% → 73.4% |
 | F-5 — Partial-quantity lot-streaming (§E.18) | Part 1: shift-boundary quantity slicing into multiple `LINE_NO` rows. Part 2: downstream ops consume upstream per-piece completions early instead of waiting for the whole batch | ✅ Done, both parts — see §E.18 above for the full writeup, including the real `_effective_ready()` bug found and fixed during Part 2. Live CDD attainment improved 73.5% → 75.9% |
-| F-6 — Engine 1 codebase cleanup | Remove one-off Model B/C/D-era diagnostic and throwaway test scripts left over from superseded designs, now that Model F is the only live engine | ✅ Done — 22 files deleted (`deep_diagnostic.py`, `diagnose_duplication.py`, `regenerate_schedule.py`, and 19 `testing/` scripts: Model B's `_smoke_test_engine1.py`, Model C's `clean_and_test.py`/`diagnose_candidate_divergence.py`/`diagnose_vb05_routing.py`/`test_batch_fix.py`/`test_engine1_e2e.py`/`test_phase1_phase2.py`/`test_phase3_batch_continuity.py`/`verify_fix.py`, Model D's `phase_d1_fixture_locator_validation.py`/`phase_d1_vocabulary_audit.py`, and ad-hoc scratch scripts `check_overscheduled.py`/`diagnostic.py`/`diagnostic2.py`/`check_db.py`/`check_db_state.py`/`validate_excel_export.py`/`validate_excel_export2.py`/`validate_schedule.py`). Confirmed none were imported by any live code path before deletion; the full 17-file dispatch regression suite still passes. **Deliberately NOT deleted:** `preprocess.py`, `engine1_scheduler.py`, `pipeline.py`, `batch_grouping.py` — still load-bearing for Engine 2 (`engine2_recommender.py`/`pipeline2.py`) and two un-migrated `main.py` endpoints (`/orders/wip`, `/machines/capacity`); removing them now would break the running app, not clean it up. They become deletable once step 2 (Engine 2 migration) and the rest of E-5 land |
+| F-6 — Engine 1 codebase cleanup | Remove one-off Model B/C/D-era diagnostic and throwaway test scripts left over from superseded designs, now that Model F is the only live engine | ✅ Done — 22 files deleted (`deep_diagnostic.py`, `diagnose_duplication.py`, `regenerate_schedule.py`, and 19 `testing/` scripts: Model B's `_smoke_test_engine1.py`, Model C's `clean_and_test.py`/`diagnose_candidate_divergence.py`/`diagnose_vb05_routing.py`/`test_batch_fix.py`/`test_engine1_e2e.py`/`test_phase1_phase2.py`/`test_phase3_batch_continuity.py`/`verify_fix.py`, Model D's `phase_d1_fixture_locator_validation.py`/`phase_d1_vocabulary_audit.py`, and ad-hoc scratch scripts `check_overscheduled.py`/`diagnostic.py`/`diagnostic2.py`/`check_db.py`/`check_db_state.py`/`validate_excel_export.py`/`validate_excel_export2.py`/`validate_schedule.py`). Confirmed none were imported by any live code path before deletion; the full 17-file dispatch regression suite still passes. The files that were deliberately kept then (`preprocess.py`, `engine1_scheduler.py`, `pipeline.py`, `batch_grouping.py`'s Model C path) were deleted in Phase 3 (F-11) once nothing depended on them |
 | F-7 — Frontend multi-`LINE_NO` migration | Gantt/table/charts handle §E.18 quantity slices; no row cap on `/schedule/current` | ✅ Done — `GanttChart.jsx` already rendered `START_TIMESTAMP`/`END_TIMESTAMP`; added "·n/m" slice labels + outline, tooltip "slice n/m, x of total pcs", bars grouped per machine. **Real bugs fixed:** `/schedule/current` had `FETCH FIRST 5000 ROWS` (live run is ~5.8k rows, so late operations were silently dropped — cap removed, now ordered `PRODUCTION_ORDER, OPERATION_NO, LINE_NO`); `BatchBubbleChart`/`MachineUtilisation` counted only ONE slice of a split operation (now sum slices of the same operation); `ScheduleTable` labelled the row's END date "Start Date" (now Line / Start / End timestamps / End Shift / Order Done). |
 | F-8 — Priority Shuffler | Planner-editable `PRIORITY` + add-machine on `MCH_MACHINE_FNL_MASTER`, audited | ✅ Done — see "Priority Shuffler" section. `fnl_master_admin.py`, `/fnl/*` endpoints, `PriorityShuffler.jsx`, `MCH_FNL_MASTER_AUDIT` (DDL applied, live-tested: master + audit rows verified). |
 | F-9 — Persistent admission-check pool | `dispatch_parallel` reuses one `ProcessPoolExecutor` instead of one per call (§E.16) | ✅ Done — profiled first: 97% of a live run (62s of 64s, 48 checks) was per-call spawn+import; now 7.4s total, identical output (5521 rows / 210 orders). Dead-pool rebuild + one retry; a wedged worker now raises `TimeoutError` after 600s (pool discarded) instead of waiting forever; tests in `test_dispatch_parallel.py`. |
 | F-10 — Bubble chart redesign | Size × Class chart made legible when many batches share a cell | ✅ Done — colour = MOC (vivid), shape = DESIGN (hexagon first, echoing the honeycomb theme), size = order count; batches sharing a Size×Class are spread side by side ("Spread overlapping batches" toggle; tooltip always shows true values); hover isolates one batch. |
+| F-11 — Phase 3 cleanup | Delete the Model C-era Engine 2 and the Model C core | ✅ Done, verified after each of 4 steps (full dispatch suite, 40 pytest tests, `engine2_live_parity.py` EXACT, frontend build, live API/browser). **Deleted:** `engine2_recommender.py`, `pipeline2.py`, `risk_classifier.py`, `preprocess.py` (454 lines), `pipeline.py`, `engine1_scheduler.py` (858 lines, the CP-SAT solver), `test_engine2_e2e.py`; frontend `OrderBoard`/`ImpactAnalyser`/`OrderCard`/`ElevateTray`/`useSimulationReport` and the `react-dnd` packages; endpoints `/priority/simulate`, `/orders/wip`; the Model C classes in `models.py`; `ortools` from `requirements.txt`; the retired readers `read_routing_master`/`read_fixture_locator_master`/`refresh_all_views`; the four Model C helpers in `batch_grouping.py` (kept only `compute_batch_key`). **Migrated first:** `/machines/capacity` now uses the scheduler's own availability (identical on all 3150 live slots; differs only on holiday dates, where it now correctly shows 0). `/data/refresh` now reports MCH_MACHINE_FNL_MASTER instead of the two retired views. `test_connection.py` fixed (wrong import path). |
 | **Engine 1 (Model F): feature-complete.** | Every dispatch-simulator behavior in CLAUDE.md's Model F spec (§E.1–§E.19) is implemented, unit-tested, and live-validated. | ✅ |
 | 5 — Deploy | NSSM Windows services (Uvicorn + Express), end-to-end integration test | ❌ Not started |
 
@@ -771,11 +751,11 @@ tov-mlo/
 Engine 1 (the Model F dispatch simulator) is feature-complete and live-validated end to end. What remains is everything CLAUDE.md's E-5 row and Phase 5 already flagged as outstanding, now enumerated as a concrete punch list:
 
 1. ~~Investigate remaining machine idle gaps~~ — done this session: root-caused to `MCH_MACHINE_FNL_MASTER.PRIORITY` ranking (a business-rule/data outcome, not an engine defect — planner to re-rank priorities for specific combos if load-sharing is desired).
-2. **Engine 2 — rebuild as the independent what-if engine** (design agreed, see the Engine 2 section; phase 1 first). Replaces, not migrates, `/priority/simulate` + `engine2_recommender.py`/`pipeline2.py`, which still call Model C-era code (`preprocess.py`/`engine1_scheduler.py`/`pipeline.py`). `/orders/wip` moves to the Model F scope rules as part of it.
-3. ~~Frontend migration~~ — done for every Engine 1 view (F-7). Only the Engine 2 views (Order Board, Impact Analyser) remain, and they are replaced by the Engine 2 redesign.
+2. ~~Engine 2 — rebuild as the independent what-if engine~~ — done (Phases 1–3, see the Engine 2 section and F-11). Optional later: more scenario kinds (machine down for N days, delay a release, …).
+3. ~~Frontend migration~~ — done (F-7); the old Engine 2 views are deleted (F-11).
 4. ~~Admission-check parallelism~~ — done: persistent process pool in `dispatch_parallel.py` (see §E.16 Parallelism). Live Engine 1 run 64s → 7.4s.
 5. **Deploy (Phase 5)** — NSSM Windows services (Uvicorn + Express), end-to-end integration test. Not started at all.
-6. Once steps 2–5 land, the Engine 1 Model C fallback code (`preprocess.py`, `engine1_scheduler.py`, `pipeline.py`, `batch_grouping.py`'s Model C path) becomes genuinely dead and can be deleted in a follow-up cleanup pass (F-6's deferred half).
+6. ~~Delete the Model C fallback code~~ — done in Phase 3 (F-11).
 7. **Config drift** — part 1 ✅ FIXED: `Config(**json)` silently dropped `fixture_required_tasks` (undeclared field), so `/schedule/generate` ran with the §E.15 hard-exclusion policy OFF, and `PUT /config` (`model_dump()` → file) would have erased the key from `config.json`. Now `models.Config` declares `fixture_required_tasks` (documented default) and uses `extra="allow"` so any undeclared `config.json` key round-trips through GET/PUT instead of vanishing; `model_f_pipeline` indexes the key strictly (no `.get(..., [])` fallback). Tests: `testing/test_config_roundtrip.py`. Measured on live data: no schedule was actually affected (every fixture-required operation currently has a master row, outcomes identical with/without the policy) — the bug was latent. **Part 2 ✅ DECIDED (docs aligned to code):** `allow_soft_consolidation_beyond_window` is kept as a supported **opt-in config switch** (currently `true`) governing §E.16's beyond-window half, with `soft_consolidation_max_extra_days` (default 90) as its live horizon bound; this document no longer calls them "retired" (see Configuration, §E.6, §E.16). `admission_check_max_horizon_days` was never implemented and has been removed from the documented config.
 
 ---

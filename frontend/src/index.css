@@ -69,9 +69,25 @@
   width: 8px;
 }
 .thin-scroll::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: #454c56;
   border-radius: 4px;
 }
 .thin-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
+.thin-scroll::-webkit-scrollbar-thumb:hover {
+  background: #5c6370;
+}
+
+/* Tables scroll in BOTH directions inside a fixed-height box, so the horizontal scrollbar sits at the
+   bottom of what is visible (never at the bottom of a long page) and the header row stays put. */
+.table-scroll {
+  overflow: auto;
+}
+.table-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: #111722;
+}
+

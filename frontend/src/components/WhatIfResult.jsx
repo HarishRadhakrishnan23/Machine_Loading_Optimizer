@@ -18,6 +18,12 @@ function fmtDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+function fmtTs(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`
+}
+
 function Slip({ days }) {
   if (days == null) return <span className="text-text-faint">—</span>
   if (days === 0) return <span className="text-text-muted font-mono">0</span>
@@ -31,7 +37,7 @@ function Slip({ days }) {
 function OrderTable({ rows, empty }) {
   if (!rows.length) return <p className="text-xs text-text-faint py-3">{empty}</p>
   return (
-    <div className="overflow-x-auto thin-scroll border border-ink-600 rounded-xl">
+    <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-[68vh]">
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide">
@@ -131,6 +137,37 @@ export default function WhatIfResult({ result }) {
         <StatTile label="Placements changed" value={result.placements_changed} sub={`${result.counts.orders_changed} orders affected`} tone="sky" />
       </div>
 
+      {/* Phase 2: the runs that were edited / pulled forward */}
+      {result.runs_changed?.length > 0 && (
+        <div>
+          <h4 className="section-title">Runs affected <span className="text-text-faint font-normal">(edited or pulled forward)</span></h4>
+          <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-72">
+            <table className="w-full text-xs border-collapse">
+              <thead>
+                <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide sticky top-0">
+                  {['Run', 'Task', 'Orders', 'Role', 'Machine', 'Starts', 'Ends'].map((h) => (
+                    <th key={h} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {result.runs_changed.map((c) => (
+                  <tr key={c.run} className="border-b border-ink-700">
+                    <td className="px-3 py-2 font-mono text-text">#{c.run}</td>
+                    <td className="px-3 py-2">{c.task}</td>
+                    <td className="px-3 py-2 font-mono">{c.orders}</td>
+                    <td className="px-3 py-2 text-text-muted">{c.role}</td>
+                    <td className="px-3 py-2 font-mono whitespace-nowrap">{c.before.machines.join(', ') || '—'} → {c.after.machines.join(', ') || '—'}</td>
+                    <td className="px-3 py-2 font-mono whitespace-nowrap">{fmtTs(c.before.start)} → {fmtTs(c.after.start)}</td>
+                    <td className="px-3 py-2 font-mono whitespace-nowrap">{fmtTs(c.before.end)} → {fmtTs(c.after.end)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Targets */}
       {targets.length > 0 && (
         <div>
@@ -155,7 +192,7 @@ export default function WhatIfResult({ result }) {
       {result.machines.length > 0 && (
         <div>
           <h4 className="section-title">Machine load shift <span className="text-text-faint font-normal">(scheduled span, hours)</span></h4>
-          <div className="overflow-x-auto thin-scroll border border-ink-600 rounded-xl max-h-72 overflow-y-auto">
+          <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-72">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide sticky top-0">
