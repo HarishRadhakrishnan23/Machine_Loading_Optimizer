@@ -3,6 +3,7 @@ import clsx from 'clsx'
 
 import StatTile from './StatTile'
 import RiskBadge from './RiskBadge'
+import { useColumnFilters, FilterHeader, NoMatchRow } from './ColumnFilter'
 import { useToast } from '../hooks/useToast'
 import { saveWhatIfResult } from '../api/client'
 
@@ -34,20 +35,54 @@ function Slip({ days }) {
   )
 }
 
+const ORDER_COLS = [
+  { label: 'Order', get: (o) => o.order },
+  { label: 'CDD', get: (o) => fmtDate(o.cdd) },
+  { label: 'Was', get: (o) => fmtDate(o.old_completion) },
+  { label: 'Now', get: (o) => fmtDate(o.new_completion) },
+  { label: 'Slip', get: (o) => (o.slip_days == null ? '—' : o.slip_days > 0 ? `+${o.slip_days}d` : `${o.slip_days}d`) },
+  { label: 'Risk before', get: (o) => o.old_risk },
+  { label: 'Risk now', get: (o) => o.new_risk },
+]
+
+const RUN_COLS = [
+  { label: 'Run', get: (c) => `#${c.run}` },
+  { label: 'Task', get: (c) => c.task },
+  { label: 'Orders', get: (c) => c.orders },
+  { label: 'Role', get: (c) => c.role },
+  { label: 'Machine', get: (c) => `${c.before.machines.join(', ') || '—'} → ${c.after.machines.join(', ') || '—'}` },
+  { label: 'Starts', get: (c) => `${fmtTs(c.before.start)} → ${fmtTs(c.after.start)}` },
+  { label: 'Ends', get: (c) => `${fmtTs(c.before.end)} → ${fmtTs(c.after.end)}` },
+]
+
+const fmtLocal = (v) => (v ? new Date(v).toLocaleString() : '—')
+const MACHINE_COLS = [
+  { label: 'Machine', get: (m) => m.machine },
+  { label: 'Before', get: (m) => m.before_hours },
+  { label: 'After', get: (m) => m.after_hours },
+  { label: 'Change', get: (m) => `${m.delta_hours > 0 ? '+' : ''}${m.delta_hours}` },
+  { label: 'Last finish before', get: (m) => fmtLocal(m.before_last_finish) },
+  { label: 'Last finish after', get: (m) => fmtLocal(m.after_last_finish) },
+]
+
+const FILTER_TH = 'px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap align-top'
+
 function OrderTable({ rows, empty }) {
+  const cf = useColumnFilters(rows, ORDER_COLS)
   if (!rows.length) return <p className="text-xs text-text-faint py-3">{empty}</p>
   return (
     <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-[68vh]">
       <table className="w-full text-xs border-collapse">
         <thead>
           <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide">
-            {['Order', 'CDD', 'Was', 'Now', 'Slip', 'Risk before', 'Risk now'].map((h) => (
-              <th key={h} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap">{h}</th>
+            {ORDER_COLS.map((c, i) => (
+              <th key={c.label} className={FILTER_TH}><FilterHeader cf={cf} i={i} /></th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((o) => (
+          {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={ORDER_COLS.length} />}
+          {cf.rows.map((o) => (
             <tr key={o.order} className="border-b border-ink-700">
               <td className="px-3 py-2 font-mono text-text">{o.order}</td>
               <td className="px-3 py-2 font-mono">{fmtDate(o.cdd)}</td>
@@ -56,6 +91,69 @@ function OrderTable({ rows, empty }) {
               <td className="px-3 py-2"><Slip days={o.slip_days} /></td>
               <td className="px-3 py-2"><RiskBadge flag={o.old_risk} size="sm" /></td>
               <td className="px-3 py-2"><RiskBadge flag={o.new_risk} size="sm" /></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function RunsChangedTable({ rows }) {
+  const cf = useColumnFilters(rows, RUN_COLS)
+  return (
+    <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-72">
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide">
+            {RUN_COLS.map((c, i) => (
+              <th key={c.label} className={FILTER_TH}><FilterHeader cf={cf} i={i} /></th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={RUN_COLS.length} />}
+          {cf.rows.map((c) => (
+            <tr key={c.run} className="border-b border-ink-700">
+              <td className="px-3 py-2 font-mono text-text">#{c.run}</td>
+              <td className="px-3 py-2">{c.task}</td>
+              <td className="px-3 py-2 font-mono">{c.orders}</td>
+              <td className="px-3 py-2 text-text-muted">{c.role}</td>
+              <td className="px-3 py-2 font-mono whitespace-nowrap">{c.before.machines.join(', ') || '—'} → {c.after.machines.join(', ') || '—'}</td>
+              <td className="px-3 py-2 font-mono whitespace-nowrap">{fmtTs(c.before.start)} → {fmtTs(c.after.start)}</td>
+              <td className="px-3 py-2 font-mono whitespace-nowrap">{fmtTs(c.before.end)} → {fmtTs(c.after.end)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function MachineLoadTable({ rows }) {
+  const cf = useColumnFilters(rows, MACHINE_COLS)
+  return (
+    <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-72">
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide">
+            {MACHINE_COLS.map((c, i) => (
+              <th key={c.label} className={FILTER_TH}><FilterHeader cf={cf} i={i} /></th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={MACHINE_COLS.length} />}
+          {cf.rows.map((m) => (
+            <tr key={m.machine} className="border-b border-ink-700">
+              <td className="px-3 py-2 font-medium text-text">{m.machine}</td>
+              <td className="px-3 py-2 font-mono">{m.before_hours}</td>
+              <td className="px-3 py-2 font-mono">{m.after_hours}</td>
+              <td className={clsx('px-3 py-2 font-mono font-semibold', m.delta_hours > 0 ? 'text-sky' : m.delta_hours < 0 ? 'text-accent' : 'text-text-muted')}>
+                {m.delta_hours > 0 ? '+' : ''}{m.delta_hours}
+              </td>
+              <td className="px-3 py-2 font-mono">{fmtLocal(m.before_last_finish)}</td>
+              <td className="px-3 py-2 font-mono">{fmtLocal(m.after_last_finish)}</td>
             </tr>
           ))}
         </tbody>
@@ -141,30 +239,7 @@ export default function WhatIfResult({ result }) {
       {result.runs_changed?.length > 0 && (
         <div>
           <h4 className="section-title">Runs affected <span className="text-text-faint font-normal">(edited or pulled forward)</span></h4>
-          <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-72">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide sticky top-0">
-                  {['Run', 'Task', 'Orders', 'Role', 'Machine', 'Starts', 'Ends'].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.runs_changed.map((c) => (
-                  <tr key={c.run} className="border-b border-ink-700">
-                    <td className="px-3 py-2 font-mono text-text">#{c.run}</td>
-                    <td className="px-3 py-2">{c.task}</td>
-                    <td className="px-3 py-2 font-mono">{c.orders}</td>
-                    <td className="px-3 py-2 text-text-muted">{c.role}</td>
-                    <td className="px-3 py-2 font-mono whitespace-nowrap">{c.before.machines.join(', ') || '—'} → {c.after.machines.join(', ') || '—'}</td>
-                    <td className="px-3 py-2 font-mono whitespace-nowrap">{fmtTs(c.before.start)} → {fmtTs(c.after.start)}</td>
-                    <td className="px-3 py-2 font-mono whitespace-nowrap">{fmtTs(c.before.end)} → {fmtTs(c.after.end)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <RunsChangedTable rows={result.runs_changed} />
         </div>
       )}
 
@@ -192,31 +267,7 @@ export default function WhatIfResult({ result }) {
       {result.machines.length > 0 && (
         <div>
           <h4 className="section-title">Machine load shift <span className="text-text-faint font-normal">(scheduled span, hours)</span></h4>
-          <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-72">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide sticky top-0">
-                  {['Machine', 'Before', 'After', 'Change', 'Last finish before', 'Last finish after'].map((h) => (
-                    <th key={h} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.machines.map((m) => (
-                  <tr key={m.machine} className="border-b border-ink-700">
-                    <td className="px-3 py-2 font-medium text-text">{m.machine}</td>
-                    <td className="px-3 py-2 font-mono">{m.before_hours}</td>
-                    <td className="px-3 py-2 font-mono">{m.after_hours}</td>
-                    <td className={clsx('px-3 py-2 font-mono font-semibold', m.delta_hours > 0 ? 'text-sky' : m.delta_hours < 0 ? 'text-accent' : 'text-text-muted')}>
-                      {m.delta_hours > 0 ? '+' : ''}{m.delta_hours}
-                    </td>
-                    <td className="px-3 py-2 font-mono">{m.before_last_finish ? new Date(m.before_last_finish).toLocaleString() : '—'}</td>
-                    <td className="px-3 py-2 font-mono">{m.after_last_finish ? new Date(m.after_last_finish).toLocaleString() : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <MachineLoadTable rows={result.machines} />
         </div>
       )}
 

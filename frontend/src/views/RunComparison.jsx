@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import PageHeader from '../components/PageHeader'
 import StatTile from '../components/StatTile'
 import SearchableSelect from '../components/SearchableSelect'
+import { useColumnFilters, FilterHeader, NoMatchRow } from '../components/ColumnFilter'
 import { LoadingPanel, ErrorPanel, EmptyPanel } from '../components/LoadingState'
 import { getArchivedRuns, compareRuns, compareRunToCurrent } from '../api/client'
 
@@ -11,6 +12,72 @@ const CURRENT_VALUE = '__current__'
 
 function fmt(ts) {
   return new Date(ts).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+const TH = 'py-1.5 pr-3 align-top'
+const DATE_COLS = [
+  { label: 'Order', get: (o) => o.production_order },
+  { label: 'Completion Date', get: (o) => o.completion_date ?? '—' },
+]
+const CHANGED_COLS = [
+  { label: 'Order', get: (c) => c.production_order },
+  { label: 'PDD', get: (c) => c.cdd ?? '—' },
+  { label: 'Old Completion', get: (c) => c.old_completion_date ?? '—' },
+  { label: 'New Completion', get: (c) => c.new_completion_date ?? '—' },
+  { label: 'Delta (days)', get: (c) => (c.delta_days > 0 ? `+${c.delta_days}` : c.delta_days) },
+]
+
+function OrderDateTable({ rows }) {
+  const cf = useColumnFilters(rows, DATE_COLS)
+  return (
+    <div className="table-scroll thin-scroll max-h-72">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-text-muted font-mono uppercase text-left">
+            {DATE_COLS.map((c, i) => <th key={c.label} className={TH}><FilterHeader cf={cf} i={i} /></th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={DATE_COLS.length} />}
+          {cf.rows.map((o) => (
+            <tr key={o.production_order} className="border-t border-ink-700">
+              <td className="py-1.5 pr-3 text-text">{o.production_order}</td>
+              <td className="py-1.5 pr-3">{o.completion_date ?? '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function ChangedTable({ rows }) {
+  const cf = useColumnFilters(rows, CHANGED_COLS)
+  return (
+    <div className="table-scroll thin-scroll max-h-72">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-text-muted font-mono uppercase text-left">
+            {CHANGED_COLS.map((c, i) => <th key={c.label} className={TH}><FilterHeader cf={cf} i={i} /></th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={CHANGED_COLS.length} />}
+          {cf.rows.map((c) => (
+            <tr key={c.production_order} className="border-t border-ink-700">
+              <td className="py-1.5 pr-3 text-text">{c.production_order}</td>
+              <td className="py-1.5 pr-3">{c.cdd ?? '—'}</td>
+              <td className="py-1.5 pr-3">{c.old_completion_date ?? '—'}</td>
+              <td className="py-1.5 pr-3">{c.new_completion_date ?? '—'}</td>
+              <td className={clsx('py-1.5 pr-3 font-mono', c.delta_days > 0 ? 'text-status-risk' : 'text-status-safe')}>
+                {c.delta_days > 0 ? `+${c.delta_days}` : c.delta_days}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 export default function RunComparison() {
@@ -101,78 +168,21 @@ export default function RunComparison() {
             {result.added.length > 0 && (
               <div className="card p-4">
                 <h3 className="section-title mb-0">Added Orders — new in Run B</h3>
-                <div className="table-scroll thin-scroll max-h-72">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-text-muted font-mono uppercase text-left">
-                        <th className="py-1.5 pr-3">Order</th>
-                        <th className="py-1.5 pr-3">Completion Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.added.map((o) => (
-                        <tr key={o.production_order} className="border-t border-ink-700">
-                          <td className="py-1.5 pr-3 text-text">{o.production_order}</td>
-                          <td className="py-1.5 pr-3">{o.completion_date ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <OrderDateTable rows={result.added} />
               </div>
             )}
 
             {result.removed.length > 0 && (
               <div className="card p-4">
                 <h3 className="section-title mb-0">Completed Orders — only in Run A</h3>
-                <div className="table-scroll thin-scroll max-h-72">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-text-muted font-mono uppercase text-left">
-                        <th className="py-1.5 pr-3">Order</th>
-                        <th className="py-1.5 pr-3">Completion Date</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.removed.map((o) => (
-                        <tr key={o.production_order} className="border-t border-ink-700">
-                          <td className="py-1.5 pr-3 text-text">{o.production_order}</td>
-                          <td className="py-1.5 pr-3">{o.completion_date ?? '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <OrderDateTable rows={result.removed} />
               </div>
             )}
 
             {result.changed.length > 0 && (
               <div className="card p-4">
                 <h3 className="section-title mb-0">Changed Completion Dates</h3>
-                <div className="table-scroll thin-scroll max-h-72">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-text-muted font-mono uppercase text-left">
-                        <th className="py-1.5 pr-3">Order</th>
-                        <th className="py-1.5 pr-3">Old Completion</th>
-                        <th className="py-1.5 pr-3">New Completion</th>
-                        <th className="py-1.5 pr-3">Delta (days)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {result.changed.map((c) => (
-                        <tr key={c.production_order} className="border-t border-ink-700">
-                          <td className="py-1.5 pr-3 text-text">{c.production_order}</td>
-                          <td className="py-1.5 pr-3">{c.old_completion_date ?? '—'}</td>
-                          <td className="py-1.5 pr-3">{c.new_completion_date ?? '—'}</td>
-                          <td className={clsx('py-1.5 pr-3 font-mono', c.delta_days > 0 ? 'text-status-risk' : 'text-status-safe')}>
-                            {c.delta_days > 0 ? `+${c.delta_days}` : c.delta_days}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <ChangedTable rows={result.changed} />
               </div>
             )}
           </>

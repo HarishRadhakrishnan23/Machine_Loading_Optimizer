@@ -1,3 +1,7 @@
+// A theme colour: a CSS variable holding "R G B"; with `alpha` it is a fixed translucent tint,
+// without it Tailwind's opacity modifiers (`bg-ink-700/40`) work.
+const v = (name, alpha) => (alpha === undefined ? `rgb(var(${name}) / <alpha-value>)` : `rgb(var(${name}) / ${alpha})`)
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,jsx}'],
@@ -5,38 +9,41 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Apeiron design tokens — carried over from the prototype's dark
-        // navy/orange/sky-blue identity (Frontend doc: "always follow a
-        // strict colour pattern"), formalized here instead of inline hex.
+        // Apeiron design tokens. Every value is a CSS variable (RGB channels, so `/40` opacity
+        // modifiers keep working) defined in index.css for BOTH themes: dark (default, charcoal +
+        // Emerson orange) and light (`:root[data-theme='light']`, blue palette). Never hard-code a
+        // hex in a component - add or reuse a token here.
         ink: {
-          950: '#0d1117', // page background
-          900: '#111722',
-          800: '#161b22', // card background
-          700: '#1c2330',
-          600: '#30363d', // border
-          500: '#454c56',
+          950: v('--ink-950'), // page background
+          900: v('--ink-900'), // inset surfaces: inputs, table header, sidebar
+          800: v('--ink-800'), // card background
+          700: v('--ink-700'), // hover / secondary fill / row divider
+          600: v('--ink-600'), // border
+          500: v('--ink-500'),
         },
         text: {
-          DEFAULT: '#e6edf3',
-          muted: '#8b949e',
-          faint: '#5c6370',
+          DEFAULT: v('--text'),
+          muted: v('--text-muted'),
+          faint: v('--text-faint'),
         },
         accent: {
-          DEFAULT: '#f97316', // Emerson orange
-          hover: '#fb923c',
-          soft: '#f9731622',
+          DEFAULT: v('--accent'), // dark: Emerson orange | light: electric blue
+          hover: v('--accent-hover'),
+          soft: v('--accent', 0.13),
         },
+        onAccent: v('--on-accent'), // text/icon colour that sits ON an accent fill
         sky: {
-          DEFAULT: '#38bdf8',
-          soft: '#38bdf822',
+          DEFAULT: v('--sky'), // secondary highlight (dark: sky blue | light: indigo-violet)
+          soft: v('--sky', 0.13),
         },
+        partial: v('--partial'), // heatmap "partially open"
         status: {
-          safe: '#22c55e',
-          safeBg: '#22c55e1a',
-          warn: '#eab308',
-          warnBg: '#eab3081a',
-          risk: '#ef4444',
-          riskBg: '#ef44441a',
+          safe: v('--status-safe'),
+          safeBg: v('--status-safe', 0.1),
+          warn: v('--status-warn'),
+          warnBg: v('--status-warn', 0.1),
+          risk: v('--status-risk'),
+          riskBg: v('--status-risk', 0.1),
         },
         // Legacy brand/risk tokens kept so untouched components (Engine 2
         // views, minimal-change per Frontend doc) don't break mid-migration.
@@ -55,9 +62,9 @@ export default {
         mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
       boxShadow: {
-        card: '0 1px 3px 0 rgb(0 0 0 / 0.25), 0 1px 2px -1px rgb(0 0 0 / 0.2)',
-        popover: '0 10px 25px -5px rgb(0 0 0 / 0.45), 0 8px 10px -6px rgb(0 0 0 / 0.3)',
-        glow: '0 0 0 1px rgb(249 115 22 / 0.3), 0 0 24px rgb(249 115 22 / 0.15)',
+        card: 'var(--shadow-card)',
+        popover: 'var(--shadow-popover)',
+        glow: 'var(--shadow-glow)',
       },
     },
   },

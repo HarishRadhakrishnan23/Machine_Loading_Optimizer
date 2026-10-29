@@ -5,18 +5,91 @@ import {
 } from 'recharts'
 
 import PageHeader from '../components/PageHeader'
+import { useColumnFilters, FilterHeader, NoMatchRow } from '../components/ColumnFilter'
 import { LoadingPanel, ErrorPanel, EmptyPanel } from '../components/LoadingState'
+import { useTheme } from '../theme/ThemeContext'
 import { getCurrentSchedule, getMachinesCapacity } from '../api/client'
 
 const OEE_TARGET = 80
 const HORIZON_DAYS = 30
-const PIE_COLORS = ['#f97316', '#38bdf8', '#a78bfa', '#f472b6', '#fbbf24', '#34d399', '#818cf8', '#2dd4bf']
+
+const DETAIL_COLS = [
+  { label: 'Machine', get: (d) => d.machine },
+  { label: 'Orders', get: (d) => d.orders },
+  { label: 'Busy (h)', get: (d) => Math.round(d.busyMins / 60) },
+  { label: 'Available (h)', get: (d) => Math.round(d.availMins / 60) },
+  { label: 'Util %', get: (d) => `${d.pct}%` },
+]
+const OPERATION_COLS = [
+  { label: 'Operation', get: (d) => d.task },
+  { label: 'Orders', get: (d) => d.orders },
+  { label: 'Load (h)', get: (d) => Math.round(d.mins / 60) },
+  { label: 'Share %', get: (d) => `${d.pctShare}%` },
+]
+const TH = 'py-1.5 pr-2 align-top'
+
+function MachineDetailTable({ rows }) {
+  const cf = useColumnFilters(rows, DETAIL_COLS)
+  return (
+    <div className="table-scroll thin-scroll max-h-72">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-text-muted font-mono uppercase text-left">
+            {DETAIL_COLS.map((c, i) => <th key={c.label} className={TH}><FilterHeader cf={cf} i={i} /></th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={DETAIL_COLS.length} />}
+          {cf.rows.map((d) => (
+            <tr key={d.machine} className="border-t border-ink-700">
+              <td className="py-1.5 pr-2 text-text">{d.machine}</td>
+              <td className="py-1.5 pr-2">{d.orders}</td>
+              <td className="py-1.5 pr-2">{Math.round(d.busyMins / 60)}</td>
+              <td className="py-1.5 pr-2">{Math.round(d.availMins / 60)}</td>
+              <td className="py-1.5 pr-2">{d.pct}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function OperationDetailTable({ rows }) {
+  const cf = useColumnFilters(rows, OPERATION_COLS)
+  return (
+    <div className="table-scroll thin-scroll max-h-72">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-text-muted font-mono uppercase text-left">
+            {OPERATION_COLS.map((c, i) => <th key={c.label} className={TH}><FilterHeader cf={cf} i={i} /></th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={OPERATION_COLS.length} />}
+          {cf.rows.map((d) => (
+            <tr key={d.task} className="border-t border-ink-700">
+              <td className="py-1.5 pr-2 text-text">{d.task}</td>
+              <td className="py-1.5 pr-2">{d.orders}</td>
+              <td className="py-1.5 pr-2">{Math.round(d.mins / 60)}</td>
+              <td className="py-1.5 pr-2">{d.pctShare}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 export default function MachineUtilisation() {
   const [assignments, setAssignments] = useState(null)
   const [capacity, setCapacity] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const { colors } = useTheme()
+  const tipStyle = { background: colors.tipBg, border: `1px solid ${colors.tipBorder}`, borderRadius: 8 }
+  const tipLabel = { color: colors.tipLabel, fontWeight: 600 }
+  const tipItem = { color: colors.tipText }
 
   useEffect(() => {
     Promise.all([getCurrentSchedule(), getMachinesCapacity(HORIZON_DAYS)])
@@ -135,20 +208,20 @@ export default function MachineUtilisation() {
                 <h3 className="section-title mb-0">Orders Queued per Machine</h3>
                 <ResponsiveContainer width="100%" height={Math.max(180, data.ordersQueued.length * 28)}>
                   <BarChart data={data.ordersQueued} layout="vertical" margin={{ left: 8, right: 24 }}>
-                    <CartesianGrid stroke="#30363d" horizontal={false} />
-                    <XAxis type="number" tick={{ fontSize: 11, fill: '#8b949e' }} />
-                    <YAxis type="category" dataKey="machine" width={110} tick={{ fontSize: 10, fill: '#8b949e' }} />
+                    <CartesianGrid stroke={colors.grid} horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: colors.axis }} />
+                    <YAxis type="category" dataKey="machine" width={110} tick={{ fontSize: 10, fill: colors.axis }} />
                     <Tooltip
-                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-                      contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8 }}
-                      labelStyle={{ color: '#f97316', fontWeight: 600 }}
-                      itemStyle={{ color: '#e6edf3' }}
+                      cursor={{ fill: colors.cursor }}
+                      contentStyle={tipStyle}
+                      labelStyle={tipLabel}
+                      itemStyle={tipItem}
                       formatter={(v, name, props) => [
                         name === 'orders' ? `${v} orders · ${props.payload.qty} pieces` : v,
                         'Queued',
                       ]}
                     />
-                    <Bar dataKey="orders" radius={[0, 4, 4, 0]} barSize={14} fill="#f97316" />
+                    <Bar dataKey="orders" radius={[0, 4, 4, 0]} barSize={14} fill={colors.primary} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -157,20 +230,20 @@ export default function MachineUtilisation() {
                 <h3 className="section-title mb-0">Utilisation % (dashed = {OEE_TARGET}% OEE target)</h3>
                 <ResponsiveContainer width="100%" height={Math.max(180, data.utilisation.length * 28)}>
                   <BarChart data={data.utilisation} layout="vertical" margin={{ left: 8, right: 24 }}>
-                    <CartesianGrid stroke="#30363d" horizontal={false} />
-                    <XAxis type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 11, fill: '#8b949e' }} />
-                    <YAxis type="category" dataKey="machine" width={110} tick={{ fontSize: 10, fill: '#8b949e' }} />
+                    <CartesianGrid stroke={colors.grid} horizontal={false} />
+                    <XAxis type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 11, fill: colors.axis }} />
+                    <YAxis type="category" dataKey="machine" width={110} tick={{ fontSize: 10, fill: colors.axis }} />
                     <Tooltip
-                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-                      contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8 }}
-                      labelStyle={{ color: '#f97316', fontWeight: 600 }}
-                      itemStyle={{ color: '#e6edf3' }}
+                      cursor={{ fill: colors.cursor }}
+                      contentStyle={tipStyle}
+                      labelStyle={tipLabel}
+                      itemStyle={tipItem}
                       formatter={(v) => [`${v}%`, 'Utilisation']}
                     />
-                    <ReferenceLine x={OEE_TARGET} stroke="#f97316" strokeDasharray="4 4" />
+                    <ReferenceLine x={OEE_TARGET} stroke={colors.primary} strokeDasharray="4 4" />
                     <Bar dataKey="pct" radius={[0, 4, 4, 0]} barSize={14}>
                       {data.utilisation.map((d, i) => (
-                        <Cell key={i} fill={d.pct >= OEE_TARGET ? '#22c55e' : d.pct >= 50 ? '#eab308' : '#ef4444'} />
+                        <Cell key={i} fill={d.pct >= OEE_TARGET ? colors.good : d.pct >= 50 ? colors.mid : colors.bad} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -181,30 +254,7 @@ export default function MachineUtilisation() {
             {/* Machine Detail — full-width, below the two top charts */}
             <div className="card p-4">
               <h3 className="section-title mb-0">Machine Detail</h3>
-              <div className="table-scroll thin-scroll max-h-72">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-text-muted font-mono uppercase text-left">
-                      <th className="py-1.5 pr-2">Machine</th>
-                      <th className="py-1.5 pr-2">Orders</th>
-                      <th className="py-1.5 pr-2">Busy (h)</th>
-                      <th className="py-1.5 pr-2">Available (h)</th>
-                      <th className="py-1.5 pr-2">Util %</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.detail.map((d) => (
-                      <tr key={d.machine} className="border-t border-ink-700">
-                        <td className="py-1.5 pr-2 text-text">{d.machine}</td>
-                        <td className="py-1.5 pr-2">{d.orders}</td>
-                        <td className="py-1.5 pr-2">{Math.round(d.busyMins / 60)}</td>
-                        <td className="py-1.5 pr-2">{Math.round(d.availMins / 60)}</td>
-                        <td className="py-1.5 pr-2">{d.pct}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <MachineDetailTable rows={data.detail} />
             </div>
 
             {/* Load Share by Operation (left) + Operation Detail (right) */}
@@ -215,13 +265,13 @@ export default function MachineUtilisation() {
                   <PieChart>
                     <Pie data={data.loadShare} dataKey="mins" nameKey="task" innerRadius={55} outerRadius={95} paddingAngle={1}>
                       {data.loadShare.map((_, i) => (
-                        <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
+                        <Cell key={i} fill={colors.pie[i % colors.pie.length]} />
                       ))}
                     </Pie>
                     <Tooltip
-                      contentStyle={{ background: '#161b22', border: '1px solid #30363d', borderRadius: 8 }}
-                      labelStyle={{ color: '#f97316', fontWeight: 600 }}
-                      itemStyle={{ color: '#e6edf3' }}
+                      contentStyle={tipStyle}
+                      labelStyle={tipLabel}
+                      itemStyle={tipItem}
                       formatter={(v, n) => [`${Math.round(v / 60)}h`, n]}
                     />
                   </PieChart>
@@ -230,28 +280,7 @@ export default function MachineUtilisation() {
 
               <div className="card p-4 md:col-span-3">
                 <h3 className="section-title mb-0">Operation Detail</h3>
-                <div className="table-scroll thin-scroll max-h-72">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-text-muted font-mono uppercase text-left">
-                        <th className="py-1.5 pr-2">Operation</th>
-                        <th className="py-1.5 pr-2">Orders</th>
-                        <th className="py-1.5 pr-2">Load (h)</th>
-                        <th className="py-1.5 pr-2">Share %</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.operationDetail.map((d) => (
-                        <tr key={d.task} className="border-t border-ink-700">
-                          <td className="py-1.5 pr-2 text-text">{d.task}</td>
-                          <td className="py-1.5 pr-2">{d.orders}</td>
-                          <td className="py-1.5 pr-2">{Math.round(d.mins / 60)}</td>
-                          <td className="py-1.5 pr-2">{d.pctShare}%</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <OperationDetailTable rows={data.operationDetail} />
               </div>
             </div>
           </>

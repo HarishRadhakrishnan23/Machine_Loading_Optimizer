@@ -6,6 +6,7 @@ import SearchableSelect from '../components/SearchableSelect'
 import { LoadingPanel, ErrorPanel } from '../components/LoadingState'
 import { useToast } from '../hooks/useToast'
 import WhatIfResult from '../components/WhatIfResult'
+import { useColumnFilters, FilterHeader, NoMatchRow } from '../components/ColumnFilter'
 import { addFnlMachine, getFnlAudit, getFnlMaster, putFnlPriorities, runWhatIf } from '../api/client'
 
 // Selection order = narrowing order. Blank MOC/DESIGN are real ERP values.
@@ -21,6 +22,51 @@ const BLANK_LABEL = '(blank)'
 
 function sortValues(values) {
   return [...values].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+}
+
+const AUDIT_COLS = [
+  { label: 'When', get: (a) => (a.changed_at ? new Date(a.changed_at).toLocaleString() : '—') },
+  { label: 'By', get: (a) => a.changed_by ?? '—' },
+  { label: 'Action', get: (a) => a.action },
+  { label: 'Combination', get: (a) => [a.size_inch, a.class, a.moc, a.design].join('~') },
+  { label: 'Task', get: (a) => a.task },
+  { label: 'Machine', get: (a) => a.work_center },
+  { label: 'From', get: (a) => a.old_priority ?? '—' },
+  { label: 'To', get: (a) => a.new_priority ?? '—' },
+  { label: 'Note', get: (a) => a.note ?? '' },
+]
+
+function AuditTable({ rows }) {
+  const cf = useColumnFilters(rows, AUDIT_COLS)
+  return (
+    <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-80">
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide">
+            {AUDIT_COLS.map((c, i) => (
+              <th key={c.label} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap align-top"><FilterHeader cf={cf} i={i} /></th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={AUDIT_COLS.length} />}
+          {cf.rows.map((a, i) => (
+            <tr key={i} className="border-b border-ink-700">
+              <td className="px-3 py-2 whitespace-nowrap font-mono">{AUDIT_COLS[0].get(a)}</td>
+              <td className="px-3 py-2">{a.changed_by ?? '—'}</td>
+              <td className="px-3 py-2">{a.action}</td>
+              <td className="px-3 py-2 font-mono whitespace-nowrap">{AUDIT_COLS[3].get(a)}</td>
+              <td className="px-3 py-2">{a.task}</td>
+              <td className="px-3 py-2">{a.work_center}</td>
+              <td className="px-3 py-2 font-mono">{a.old_priority ?? '—'}</td>
+              <td className="px-3 py-2 font-mono">{a.new_priority ?? '—'}</td>
+              <td className="px-3 py-2 text-text-muted">{a.note ?? ''}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
 }
 
 function loadName() {
@@ -426,34 +472,7 @@ export default function PriorityShuffler() {
               </div>
               {auditError && <p className="text-xs text-status-risk">{auditError}</p>}
               {audit && audit.length === 0 && <p className="text-xs text-text-faint">No changes recorded yet.</p>}
-              {audit && audit.length > 0 && (
-                <div className="table-scroll thin-scroll border border-ink-600 rounded-xl max-h-80">
-                  <table className="w-full text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide sticky top-0">
-                        {['When', 'By', 'Action', 'Combination', 'Task', 'Machine', 'From', 'To', 'Note'].map((h) => (
-                          <th key={h} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {audit.map((a, i) => (
-                        <tr key={i} className="border-b border-ink-700">
-                          <td className="px-3 py-2 whitespace-nowrap font-mono">{a.changed_at ? new Date(a.changed_at).toLocaleString() : '—'}</td>
-                          <td className="px-3 py-2">{a.changed_by ?? '—'}</td>
-                          <td className="px-3 py-2">{a.action}</td>
-                          <td className="px-3 py-2 font-mono whitespace-nowrap">{[a.size_inch, a.class, a.moc, a.design].join('~')}</td>
-                          <td className="px-3 py-2">{a.task}</td>
-                          <td className="px-3 py-2">{a.work_center}</td>
-                          <td className="px-3 py-2 font-mono">{a.old_priority ?? '—'}</td>
-                          <td className="px-3 py-2 font-mono">{a.new_priority ?? '—'}</td>
-                          <td className="px-3 py-2 text-text-muted">{a.note ?? ''}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              {audit && audit.length > 0 && <AuditTable rows={audit} />}
             </div>
           </>
         )}

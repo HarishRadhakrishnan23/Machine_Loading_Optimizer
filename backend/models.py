@@ -105,6 +105,7 @@ class RunCompareOrderDiff(BaseModel):
     old_completion_date: Optional[date]
     new_completion_date: Optional[date]
     delta_days: Optional[int]
+    cdd: Optional[date] = None  # the order's CDD from current MCH_WIP; None for safety stock / not in WIP
 
 
 class RunCompareOrder(BaseModel):

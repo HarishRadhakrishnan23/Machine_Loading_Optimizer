@@ -64,7 +64,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
               }}
               className={clsx(
                 'w-full text-left px-3 py-1.5 text-sm transition-colors',
-                o.value === value ? 'bg-accent text-ink-950' : 'text-text hover:bg-ink-700',
+                o.value === value ? 'bg-accent text-onAccent' : 'text-text hover:bg-ink-700',
               )}
             >
               {o.label}

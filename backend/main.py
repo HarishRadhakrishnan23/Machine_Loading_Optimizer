@@ -163,6 +163,52 @@ def generate_schedule(run_date: Optional[date] = Query(None)):
     return ScheduleGenerateResponse(**result.__dict__)
 
 
+@app.get("/schedule/summary", tags=["Engine 1"])
+def schedule_summary():
+    """
+    Order/quantity funnel for the Pending Load Queue page, from current MCH_WIP vs the current
+    MCH_SCHEDULE_OUTPUT (read-only). Quantities: WIP = pieces ordered; Scheduled = pieces still to go
+    through the final operation; Unscheduled = WIP minus Scheduled, split into pieces already completed
+    (QAINSP Completed), pieces of orders waiting on QA inspection (final-op balance) and the rest
+    (rejected pieces, rework / non-machine leftovers) so the three parts always add up.
+    """
+    from db import get_connection, read_wip_orders
+
+    try:
+        w = read_wip_orders()
+        w["BAL"] = w["QUANTITY_ORDERED"] - w["QUANTITY_COMPLETED"].fillna(0) - w["QUANTITY_REJECTED"].fillna(0)
+        w = w.sort_values(["PRODUCTION_ORDER", "OPERATION"])
+        last = w.groupby("PRODUCTION_ORDER").last()
+        with get_connection() as conn:
+            o = pd.read_sql("SELECT DISTINCT PRODUCTION_ORDER FROM MCH_SCHEDULE_OUTPUT WHERE WORK_CENTER IS NOT NULL", conn)
+        o.columns = [c.upper() for c in o.columns]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to build summary: {e}")
+
+    all_orders = set(last.index)
+    open_orders = set(w[w["BAL"] > 0]["PRODUCTION_ORDER"])
+    sched = set(o["PRODUCTION_ORDER"]) & all_orders
+    finished = all_orders - open_orders
+    open_ops = w[w["BAL"] > 0]
+    qa_open = set(open_ops[open_ops["WORK_CENTER"].astype(str).str.contains("QAINSP")]["PRODUCTION_ORDER"])
+    qa_wait = (open_orders - sched) & qa_open
+    rest = all_orders - sched - finished - qa_wait
+
+    wip_qty = int(last["QUANTITY_ORDERED"].sum())
+    sched_qty = int(last.loc[list(sched), "BAL"].clip(lower=0).sum())
+    uns_qty = wip_qty - sched_qty
+    done_qty = int(last["QUANTITY_COMPLETED"].fillna(0).sum())  # pieces already through the final operation
+    qa_qty = int(last.loc[list(qa_wait), "BAL"].clip(lower=0).sum()) if qa_wait else 0
+    return {
+        "wip": {"orders": len(all_orders), "qty": wip_qty},
+        "scheduled": {"orders": len(sched), "qty": sched_qty},
+        "unscheduled": {"orders": len(all_orders) - len(sched), "qty": uns_qty},
+        "qa_completed": {"orders": len(finished), "qty": done_qty},
+        "qa_not_completed": {"orders": len(qa_wait), "qty": qa_qty},
+        "rest": {"orders": len(rest), "qty": uns_qty - done_qty - qa_qty},
+    }
+
+
 @app.get("/schedule/current", tags=["Engine 1"])
 def get_current_schedule():
     """
@@ -384,6 +430,17 @@ def _diff_completions(df_a: pd.DataFrame, df_b: pd.DataFrame, run_a: str, run_b:
     removed = [RunCompareOrder(production_order=o, completion_date=_d(a_by_order[o])) for o in sorted(orders_a - orders_b)]
     added = [RunCompareOrder(production_order=o, completion_date=_d(b_by_order[o])) for o in sorted(orders_b - orders_a)]
 
+    cdd_by_order = {}
+    try:
+        from db import get_connection
+
+        with get_connection() as conn:
+            cdd_df = pd.read_sql("SELECT PRODUCTION_ORDER, MAX(CDD) AS CDD FROM MCH_WIP GROUP BY PRODUCTION_ORDER", conn)
+        cdd_df.columns = [c.upper() for c in cdd_df.columns]
+        cdd_by_order = {r["PRODUCTION_ORDER"]: _d(r["CDD"]) for _, r in cdd_df.iterrows()}
+    except Exception:
+        pass  # CDD is a display extra - never fail the comparison over it
+
     changed = []
     unchanged_count = 0
     for order_id in sorted(orders_a & orders_b):
@@ -394,6 +451,7 @@ def _diff_completions(df_a: pd.DataFrame, df_b: pd.DataFrame, run_a: str, run_b:
             delta = (new_d - old_d).days if (old_d is not None and new_d is not None) else None
             changed.append(RunCompareOrderDiff(
                 production_order=order_id, old_completion_date=old_d, new_completion_date=new_d, delta_days=delta,
+                cdd=cdd_by_order.get(order_id),
             ))
 
     return RunCompareResponse(
@@ -501,6 +559,15 @@ def freeze_schedule():
     try:
         run_id, rows_archived = archive_schedule_output()
     except Exception as e:
+        if "ORA-00001" in str(e) and "ARCHIVE" in str(e):
+            # The archive's primary key lacks RUN_ID, so only the first frozen run fits (see archive_pk_fix.sql).
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Freeze schedule failed: MCH_SCHEDULE_OUTPUT_ARCHIVE's primary key does not include RUN_ID, so a "
+                    "second run cannot be stored. Run backend/testing/archive_pk_fix.sql once in Oracle, then freeze again."
+                ),
+            )
         raise HTTPException(status_code=500, detail=f"Freeze schedule failed: {e}")
     return FreezeScheduleResponse(run_id=run_id, rows_archived=rows_archived)
 

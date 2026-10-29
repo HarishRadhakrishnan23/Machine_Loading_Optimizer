@@ -2,17 +2,11 @@ import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 
-// MOC (material of construction) -> COLOUR. Vivid, glow-friendly hues on the
-// Apeiron navy: the two dominant MOCs keep the project's orange / sky identity
-// (pushed to full saturation), the rest are spread across clearly different
-// hue families so no two read as shades of the same colour.
-const FIXED_MOC_COLORS = {
-  'Carbon Steel': '#ff7a1a', // Emerson orange, vivid
-  'Stainless Steel': '#1ec8ff', // electric sky
-  Duplex: '#b05cff', // vivid violet
-  'Super Duplex': '#2dffa8', // neon mint
-}
-const PALETTE = ['#ff3d8b', '#ffe14d', '#6b7bff', '#b6ff3d', '#ff5a4d', '#2de2e6']
+import { useTheme } from '../theme/ThemeContext'
+
+// MOC (material of construction) -> COLOUR. The per-theme colours live in theme/chartColors.js
+// (`moc` for the four known MOCs, `mocFallback` for any other, assigned by index). Dark: vivid,
+// glow-friendly hues on charcoal (Carbon Steel = Emerson orange). Light: blue/cyan/violet/teal, no orange.
 
 // DESIGN -> SHAPE. A bubble's colour says MOC, its shape says Design, its
 // size says order count. The hexagon is deliberately first: it echoes the
@@ -77,17 +71,17 @@ function ShapeMark({ shape, cx, cy, r, fill, stroke, strokeWidth = 1.2, opacity 
 }
 
 /** Recharts custom shape: MOC colour fill, Design shape, glow, dim-others-on-hover. */
-function BatchShape({ cx, cy, payload, hoveredKey, onHover }) {
+function BatchShape({ cx, cy, payload, hoveredKey, onHover, colors }) {
   if (cx == null || cy == null) return null
   const dimmed = hoveredKey && hoveredKey !== payload.key
   return (
     <g
       onMouseEnter={() => onHover(payload.key)}
       onMouseLeave={() => onHover(null)}
-      style={{ filter: dimmed ? 'none' : `drop-shadow(0 0 3px ${payload.color}88)`, cursor: 'pointer' }}
+      style={{ filter: dimmed || !colors.markGlow ? 'none' : `drop-shadow(0 0 3px ${payload.color}88)`, cursor: 'pointer' }}
       opacity={dimmed ? 0.22 : 1}
     >
-      <ShapeMark shape={payload.shape} cx={cx} cy={cy} r={payload.r} fill={payload.color} stroke="#0d1117" strokeWidth={1.4} />
+      <ShapeMark shape={payload.shape} cx={cx} cy={cy} r={payload.r} fill={payload.color} stroke={colors.markStroke} strokeWidth={1.4} />
     </g>
   )
 }
@@ -104,6 +98,7 @@ function BatchShape({ cx, cy, payload, hoveredKey, onHover }) {
 export default function BatchBubbleChart({ assignments }) {
   const [spread, setSpread] = useState(true)
   const [hoveredKey, setHoveredKey] = useState(null)
+  const { colors } = useTheme()
 
   const { points, mocLegend, designLegend, classes } = useMemo(() => {
     const byKey = {}
@@ -139,7 +134,7 @@ export default function BatchBubbleChart({ assignments }) {
     let nextPaletteIndex = 0
     const colorForMoc = {}
     for (const moc of mocOrder) {
-      colorForMoc[moc] = FIXED_MOC_COLORS[moc] || PALETTE[nextPaletteIndex++ % PALETTE.length]
+      colorForMoc[moc] = colors.moc[moc] || colors.mocFallback[nextPaletteIndex++ % colors.mocFallback.length]
     }
 
     // Design -> shape, most-used Design first so the commonest gets the hexagon.
@@ -203,7 +198,7 @@ export default function BatchBubbleChart({ assignments }) {
     const designLegend = designsRanked.map((d) => ({ design: d, shape: shapeForDesign[d] }))
 
     return { points, mocLegend, designLegend, classes }
-  }, [assignments])
+  }, [assignments, colors])
 
   if (points.length === 0) {
     return <p className="text-sm text-text-faint py-8 text-center">No batch data to plot yet.</p>
@@ -215,15 +210,15 @@ export default function BatchBubbleChart({ assignments }) {
     <div>
       <div className="flex justify-end -mb-1">
         <label className="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer select-none">
-          <input type="checkbox" className="accent-[#f97316]" checked={spread} onChange={(e) => setSpread(e.target.checked)} />
+          <input type="checkbox" className="accent-accent" checked={spread} onChange={(e) => setSpread(e.target.checked)} />
           Spread overlapping batches
         </label>
       </div>
 
       <ResponsiveContainer width="100%" height={400}>
         <ScatterChart margin={{ top: 10, right: 20, bottom: 10, left: 0 }}>
-          <CartesianGrid stroke="#30363d" />
-          <XAxis type="number" dataKey="x" name="Size" unit='"' domain={[0, 50]} tick={{ fontSize: 11, fill: '#8b949e' }} />
+          <CartesianGrid stroke={colors.grid} />
+          <XAxis type="number" dataKey="x" name="Size" unit='"' domain={[0, 50]} tick={{ fontSize: 11, fill: colors.axis }} />
           {/* Numeric (not category) so batches can be nudged inside their class band;
               ticks are pinned to whole indexes and printed as the class value. */}
           <YAxis
@@ -234,13 +229,13 @@ export default function BatchBubbleChart({ assignments }) {
             ticks={classes.map((_, i) => i)}
             interval={0}
             tickFormatter={(v) => classes[v] ?? ''}
-            tick={{ fontSize: 11, fill: '#8b949e' }}
+            tick={{ fontSize: 11, fill: colors.axis }}
           />
           <ZAxis type="number" dataKey="count" range={[60, 900]} name="Orders" />
           <Tooltip cursor={{ strokeDasharray: '3 3' }} content={<BubbleTooltip />} />
           <Scatter
             data={plotted}
-            shape={(props) => <BatchShape {...props} hoveredKey={hoveredKey} onHover={setHoveredKey} />}
+            shape={(props) => <BatchShape {...props} hoveredKey={hoveredKey} onHover={setHoveredKey} colors={colors} />}
             isAnimationActive={false}
           />
         </ScatterChart>
@@ -254,7 +249,7 @@ export default function BatchBubbleChart({ assignments }) {
             <div key={moc} className="flex items-center gap-1.5 text-[11px] text-text-muted">
               <span
                 className="w-2.5 h-2.5 rounded-full shrink-0"
-                style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}` }}
+                style={{ backgroundColor: color, boxShadow: colors.markGlow ? `0 0 6px ${color}` : 'none' }}
               />
               {moc}
             </div>
@@ -265,7 +260,7 @@ export default function BatchBubbleChart({ assignments }) {
           {designLegend.map(({ design, shape }) => (
             <div key={design || '(none)'} className="flex items-center gap-1.5 text-[11px] text-text-muted">
               <svg width="16" height="16" viewBox="0 0 16 16">
-                <ShapeMark shape={shape} cx={8} cy={8} r={5.5} fill="#8b949e" stroke="#0d1117" strokeWidth={1} />
+                <ShapeMark shape={shape} cx={8} cy={8} r={5.5} fill={colors.neutralMark} stroke={colors.markStroke} strokeWidth={1} />
               </svg>
               {design || '(no design)'}
             </div>
@@ -287,6 +282,7 @@ export default function BatchBubbleChart({ assignments }) {
  * Design line carries the same shape used on the chart.
  */
 function BubbleTooltip({ active, payload }) {
+  const { colors } = useTheme()
   const p = active && payload && payload.length > 0 ? payload[0].payload : null
   return (
     <AnimatePresence>
@@ -296,11 +292,11 @@ function BubbleTooltip({ active, payload }) {
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ duration: 0.15, ease: 'easeOut' }}
           style={{
-            background: '#161b22',
-            border: '1px solid #30363d',
+            background: colors.tipBg,
+            border: `1px solid ${colors.tipBorder}`,
             borderLeft: `3px solid ${p.color}`,
             borderRadius: 8,
-            boxShadow: '0 10px 25px -5px rgb(0 0 0 / 0.45)',
+            boxShadow: 'var(--shadow-popover)',
           }}
           className="px-3.5 py-2.5 text-xs min-w-[170px]"
         >
@@ -314,7 +310,7 @@ function BubbleTooltip({ active, payload }) {
             </p>
             <p className="flex items-center gap-1.5">
               <svg width="14" height="14" viewBox="0 0 16 16">
-                <ShapeMark shape={p.shape} cx={8} cy={8} r={5} fill={p.color} stroke="#0d1117" strokeWidth={1} />
+                <ShapeMark shape={p.shape} cx={8} cy={8} r={5} fill={p.color} stroke={colors.markStroke} strokeWidth={1} />
               </svg>
               Design: {p.design || '(none)'}
             </p>

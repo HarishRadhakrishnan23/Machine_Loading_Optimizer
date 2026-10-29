@@ -34,6 +34,7 @@ export const putConfig = (config) =>
 export const generateSchedule = (runDate) =>
   request(`/schedule/generate${runDate ? `?run_date=${runDate}` : ''}`, { method: 'POST' })
 export const getCurrentSchedule = () => request('/schedule/current')
+export const getScheduleSummary = () => request('/schedule/summary')
 export const freezeSchedule = () => request('/schedule/freeze', { method: 'POST' })
 
 /** Fetches a file-download endpoint and triggers a browser save. Shared by every .xlsx export button. */

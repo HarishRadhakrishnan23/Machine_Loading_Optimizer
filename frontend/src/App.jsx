@@ -2,6 +2,7 @@ import { useState } from 'react'
 import clsx from 'clsx'
 
 import { ToastProvider } from './hooks/useToast'
+import { useTheme } from './theme/ThemeContext'
 import HoneycombBackground from './components/HoneycombBackground'
 import Overview from './views/Overview'
 import ScheduleView from './views/ScheduleView'
@@ -29,14 +30,15 @@ const TABS = [
 
 export default function App() {
   const [active, setActive] = useState('overview')
+  const { theme, toggle: toggleTheme } = useTheme()
 
   return (
     <ToastProvider>
-      <div className="min-h-screen flex">
+      <div className="h-screen overflow-hidden flex">
         <HoneycombBackground />
 
         {/* Sidebar */}
-        <aside className="w-64 shrink-0 bg-ink-900 text-text flex flex-col border-r border-ink-600">
+        <aside className="sidebar-surface w-64 shrink-0 bg-ink-900 text-text flex flex-col border-r border-ink-600">
           <div className="px-5 py-5 border-b border-ink-600 flex items-center gap-2.5">
             <span className="text-accent text-xl">⚙</span>
             <div>
@@ -44,7 +46,7 @@ export default function App() {
               <p className="text-[11px] text-text-muted font-mono">Machine Loading Scheduler</p>
             </div>
           </div>
-          <nav className="flex-1 px-2 py-4 flex flex-col gap-1 overflow-y-auto">
+          <nav className="thin-scroll flex-1 px-2 py-4 flex flex-col gap-1 overflow-y-auto overscroll-contain">
             {TABS.map((tab, i) => (
               <div key={tab.key}>
                 {tab.group && (TABS[i - 1]?.group !== tab.group) && (
@@ -57,7 +59,7 @@ export default function App() {
                   className={clsx(
                     'w-full flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-medium text-left transition-colors',
                     active === tab.key
-                      ? 'bg-accent text-ink-950'
+                      ? 'bg-accent text-onAccent'
                       : 'text-text-muted hover:bg-ink-700 hover:text-text',
                   )}
                 >
@@ -67,15 +69,26 @@ export default function App() {
               </div>
             ))}
           </nav>
-          <div className="px-4 py-4 border-t border-ink-600 text-[11px] text-text-faint font-mono">
-            Emerson Process Management
-            <br />
-            Valve Manufacturing
+          <div className="px-4 pt-3 pb-4 border-t border-ink-600">
+            <button
+              onClick={toggleTheme}
+              className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 mb-3 text-xs font-medium text-text-muted hover:bg-ink-700 hover:text-text transition-colors"
+              title="Switch between light and dark mode"
+              aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+            >
+              <span className="text-base w-4 text-center">{theme === 'light' ? '☾' : '☀'}</span>
+              {theme === 'light' ? 'Dark mode' : 'Light mode'}
+            </button>
+            <div className="text-[11px] text-text-faint font-mono">
+              Emerson Process Management
+              <br />
+              Valve Manufacturing
+            </div>
           </div>
         </aside>
 
         {/* Main content — all views stay mounted so state/data persists across tab switches */}
-        <main className="flex-1 min-w-0 overflow-y-auto h-screen relative">
+        <main className="page-scroll thin-scroll flex-1 min-w-0 overflow-y-auto h-screen relative">
           <div className={active === 'overview' ? '' : 'hidden'}>
             <Overview />
           </div>

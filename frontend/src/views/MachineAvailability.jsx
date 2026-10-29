@@ -118,6 +118,7 @@ function CapacityPanel() {
   const [overrides, setOverrides] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [machineQ, setMachineQ] = useState('') // column filter under the "Machine" header of the heatmap
 
   const load = useCallback(async (d) => {
     setLoading(true)
@@ -154,6 +155,11 @@ function CapacityPanel() {
     }
   }, [slots])
 
+  const shownMachines = useMemo(() => {
+    const q = machineQ.trim().toLowerCase()
+    return q ? machines.filter((m) => m.toLowerCase().includes(q)) : machines
+  }, [machines, machineQ])
+
   const closedCount = slots?.filter((s) => !s.is_open).length ?? 0
   const overrideCount = overrides?.length ?? 0
 
@@ -186,7 +192,7 @@ function CapacityPanel() {
               <span className="h-2.5 w-2.5 rounded bg-status-safe" /> Open (full)
             </span>
             <span className="flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded bg-amber-300" /> Partial
+              <span className="h-2.5 w-2.5 rounded bg-partial" /> Partial
             </span>
             <span className="flex items-center gap-1">
               <span className="h-2.5 w-2.5 rounded bg-ink-600" /> Closed
@@ -201,8 +207,15 @@ function CapacityPanel() {
             <table className="border-collapse text-xs w-full">
               <thead>
                 <tr>
-                  <th className="sticky left-0 bg-ink-800 border-b border-r border-ink-600 px-3 py-2 text-left font-semibold text-text-muted">
-                    Machine
+                  <th className="sticky left-0 z-[3] bg-ink-800 border-b border-r border-ink-600 px-3 py-2 text-left font-semibold text-text-muted align-top">
+                    <div>Machine</div>
+                    <input
+                      value={machineQ}
+                      onChange={(e) => setMachineQ(e.target.value)}
+                      placeholder="Filter…"
+                      aria-label="Filter Machine"
+                      className="mt-1.5 block w-full min-w-[6rem] rounded border border-ink-600 bg-ink-900 px-1.5 py-1 text-[11px] font-normal text-text placeholder:text-text-faint outline-none focus:border-accent"
+                    />
                   </th>
                   {dates.map((d) => (
                     <th
@@ -216,7 +229,7 @@ function CapacityPanel() {
                 </tr>
               </thead>
               <tbody>
-                {machines.map((m) => (
+                {shownMachines.map((m) => (
                   <tr key={m}>
                     <td className="sticky left-0 bg-ink-800 border-r border-b border-ink-700 px-3 py-1.5 font-medium text-text whitespace-nowrap">
                       {m}
@@ -225,7 +238,7 @@ function CapacityPanel() {
                       SHIFTS.map((s) => {
                         const slot = byKey[`${m}|${d}|${s}`]
                         const pct = slot ? Math.min(100, (slot.available_mins / 480) * 100) : 0
-                        const color = pct === 0 ? 'bg-ink-600' : pct >= 90 ? 'bg-status-safe' : 'bg-amber-300'
+                        const color = pct === 0 ? 'bg-ink-600' : pct >= 90 ? 'bg-status-safe' : 'bg-partial'
                         return (
                           <td key={`${m}-${d}-${s}`} className="border-l border-b border-ink-700 p-1 text-center">
                             <div

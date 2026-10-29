@@ -2,12 +2,60 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 
 import PageHeader from '../components/PageHeader'
-import StatTile from '../components/StatTile'
 import GanttChart from '../components/GanttChart'
 import BatchBubbleChart from '../components/BatchBubbleChart'
 import ScheduleTable from '../components/ScheduleTable'
 import { LoadingPanel, EmptyPanel, ErrorPanel } from '../components/LoadingState'
-import { getCurrentSchedule } from '../api/client'
+import { getCurrentSchedule, getScheduleSummary } from '../api/client'
+
+const fmt = (n) => (n ?? 0).toLocaleString()
+
+/** One summary figure: label, big order count, quantity. `big` = the large centred style used in the square boxes. */
+function Pair({ label, orders, qty, tone = 'text-text', big = false }) {
+  return (
+    <div className="flex flex-col items-center justify-center text-center px-2">
+      <p className={clsx('font-medium text-text-muted uppercase tracking-wide font-mono leading-tight',
+        big ? 'text-sm mb-3' : 'text-[11px] mb-2 min-h-[2.2em] flex items-center')}>{label}</p>
+      <p className={clsx('font-semibold tabular-nums leading-none', big ? 'text-6xl' : 'text-3xl', tone)}>{fmt(orders)}</p>
+      <p className={clsx('text-text-faint uppercase tracking-wider font-mono', big ? 'text-xs mt-2' : 'text-[10px] mt-1')}>orders</p>
+      <p className={clsx('tabular-nums text-text', big ? 'text-2xl font-medium mt-4' : 'text-base font-medium mt-3')}>
+        {fmt(qty)} <span className={clsx('text-text-faint font-normal', big ? 'text-sm' : 'text-xs')}>qty</span>
+      </p>
+    </div>
+  )
+}
+
+/** Two square boxes (Total in WIP, Scheduled) and one wide box (Total Unscheduled and its split). */
+function SummaryBoxes({ summary }) {
+  if (!summary) return null
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="card p-5 flex items-center justify-center">
+        <Pair big label="Total in WIP" orders={summary.wip.orders} qty={summary.wip.qty} />
+      </div>
+      <div className="card p-5 flex items-center justify-center">
+        <Pair big label="Scheduled" orders={summary.scheduled.orders} qty={summary.scheduled.qty} tone="text-accent" />
+      </div>
+      <div className="card p-5 col-span-2 flex flex-col justify-between">
+        <div className="grid grid-cols-2 md:grid-cols-4 md:divide-x divide-ink-600 gap-y-5">
+          <Pair label="Total Unscheduled" orders={summary.unscheduled.orders} qty={summary.unscheduled.qty} tone="text-status-risk" />
+          <Pair label="QAINSP Completed" orders={summary.qa_completed.orders} qty={summary.qa_completed.qty} tone="text-status-safe" />
+          <Pair label="QAINSP Not Completed" orders={summary.qa_not_completed.orders} qty={summary.qa_not_completed.qty} tone="text-status-warn" />
+          <Pair label="Rest orders" orders={summary.rest.orders} qty={summary.rest.qty} />
+        </div>
+        {/* Block centred in the box; its lines are left-aligned so every line starts at the same edge. */}
+        <div className="mt-4 pt-3 border-t border-ink-700 flex justify-center">
+          <p className="text-[11px] text-text-faint text-left">
+            The last three add up to Total Unscheduled.
+            <br />QAINSP Completed = pieces already finished.
+            <br />QAINSP Not Completed = pieces waiting for QAINSP.
+            <br />Rest = rejected, rework and other omitted pieces.
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 const FILTERS = [
   { key: 'all', label: 'All' },
@@ -36,6 +84,7 @@ export default function ScheduleView() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [filter, setFilter] = useState('all')
+  const [summary, setSummary] = useState(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -43,6 +92,7 @@ export default function ScheduleView() {
     try {
       const data = await getCurrentSchedule()
       setAssignments(data.assignments || [])
+      getScheduleSummary().then(setSummary).catch(() => setSummary(null)) // extra, never blocks the page
     } catch (e) {
       setError(e.message)
     } finally {
@@ -53,19 +103,6 @@ export default function ScheduleView() {
   useEffect(() => {
     load()
   }, [load])
-
-  const stats = useMemo(() => {
-    if (!assignments) return null
-    let scheduled = 0, noFixture = 0, excluded = 0, safetyStock = 0
-    for (const a of assignments) {
-      const c = classify(a)
-      if (c === 'scheduled') scheduled++
-      else if (c === 'no_fixture') noFixture++
-      else excluded++
-      if (a.is_safety_stock) safetyStock++
-    }
-    return { scheduled, noFixture, excluded, safetyStock, total: assignments.length }
-  }, [assignments])
 
   const filtered = useMemo(() => {
     if (!assignments) return []
@@ -92,18 +129,10 @@ export default function ScheduleView() {
           />
         )}
 
-        {!loading && !error && assignments && assignments.length > 0 && stats && (
+        {!loading && !error && assignments && assignments.length > 0 && (
           <>
-            {/* KPI row */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <StatTile label="Scheduled" value={stats.scheduled} sub="operations" tone="brand" />
-              {/* Neutral tone, not a warning tone — this just means the
-                  operation has no fixture/locator on file, not that
-                  anything is wrong; it's still a normal scheduled row. */}
-              <StatTile label="No-fixture caveat" value={stats.noFixture} sub="operations" tone="neutral" />
-              <StatTile label="Excluded" value={stats.excluded} sub="operations" tone="breach" />
-              <StatTile label="Safety stock" value={stats.safetyStock} sub="operations" tone="sky" />
-            </div>
+            {/* Order / quantity summary: current WIP vs current schedule */}
+            <SummaryBoxes summary={summary} />
 
             {/* Bubble chart */}
             <div className="card p-4">
@@ -127,7 +156,7 @@ export default function ScheduleView() {
                     className={clsx(
                       'px-3 py-1.5 rounded-full text-xs font-medium transition-colors',
                       filter === f.key
-                        ? 'bg-accent text-ink-950'
+                        ? 'bg-accent text-onAccent'
                         : 'bg-ink-700 text-text-muted hover:bg-ink-600',
                     )}
                   >

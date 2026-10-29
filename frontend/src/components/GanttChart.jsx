@@ -1,14 +1,12 @@
 import { useMemo, useState } from 'react'
 
-// Deterministic color per task code so the same job always gets the same color.
-const PALETTE = [
-  '#f97316', '#38bdf8', '#a78bfa', '#f472b6', '#fb7185',
-  '#fbbf24', '#34d399', '#818cf8', '#2dd4bf', '#f87171',
-]
-function colorFor(key) {
+import { useTheme } from '../theme/ThemeContext'
+
+// Deterministic color per task code so the same job always gets the same color (palette is per theme).
+function colorFor(key, palette) {
   let hash = 0
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) % PALETTE.length
-  return PALETTE[Math.abs(hash) % PALETTE.length]
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) % palette.length
+  return palette[Math.abs(hash) % palette.length]
 }
 
 const PX_PER_HOUR = 10
@@ -27,6 +25,7 @@ const ROW_HEIGHT = 34
  */
 export default function GanttChart({ assignments }) {
   const [hovered, setHovered] = useState(null)
+  const { colors } = useTheme()
 
   const { machines, barsByMachine, totalHours, dayMarkers } = useMemo(() => {
     const timed = assignments.filter((a) => a.start_timestamp && a.end_timestamp && a.machine_name)
@@ -134,7 +133,7 @@ export default function GanttChart({ assignments }) {
                     // dispatch_engine._placement_remark — so that signal
                     // would flag every single bar). Still surfaced in the
                     // tooltip below for anyone who wants the detail.
-                    const color = colorFor(b.task || b.production_order)
+                    const color = colorFor(b.task || b.production_order, colors.gantt)
                     return (
                       <div
                         key={cellKey}
@@ -146,9 +145,9 @@ export default function GanttChart({ assignments }) {
                           backgroundColor: color,
                           // Quantity slices of one operation (§E.18) get a thin
                           // outline so adjacent slices read as separate rows.
-                          outline: b.sliceCount > 1 ? '1px solid rgba(0,0,0,0.45)' : undefined,
+                          outline: b.sliceCount > 1 ? `1px solid ${colors.ganttOutline}` : undefined,
                           outlineOffset: -1,
-                          opacity: hovered && hovered !== cellKey ? 0.35 : 0.92,
+                          opacity: hovered && hovered !== cellKey ? 0.35 : colors.ganttBarOpacity,
                         }}
                         onMouseEnter={() => setHovered(cellKey)}
                         onMouseLeave={() => setHovered(null)}
@@ -160,7 +159,7 @@ export default function GanttChart({ assignments }) {
                           (b.remark ? `\n${b.remark}` : '')
                         }
                       >
-                        <span className="truncate px-1.5 text-ink-950 drop-shadow-sm">
+                        <span className="truncate px-1.5 text-onAccent drop-shadow-sm">
                           {b.task || b.production_order.slice(-6)}
                           {b.sliceCount > 1 ? ` ·${b.line_no}/${b.sliceCount}` : ''}
                         </span>

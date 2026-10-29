@@ -46,7 +46,7 @@ export default function Overview() {
           <motion.path
             d="M 0 150 Q 150 50 300 150 T 600 150 T 1000 100"
             fill="none"
-            stroke="#f97316"
+            style={{ stroke: 'rgb(var(--accent))' }}
             strokeWidth="2"
             initial={{ pathLength: 0 }}
             animate={{ pathLength: 1 }}
@@ -74,7 +74,7 @@ export default function Overview() {
             <h1 className="title-gradient relative text-6xl font-bold tracking-tight">Apeiron</h1>
             <motion.div
               className="h-[3px] rounded-full mt-2"
-              style={{ background: 'linear-gradient(90deg, #f97316, #38bdf8)', transformOrigin: 'left' }}
+              style={{ background: 'linear-gradient(90deg, var(--grad-1), var(--grad-3))', transformOrigin: 'left' }}
               initial={{ scaleX: 0 }}
               animate={{ scaleX: 1 }}
               transition={{ delay: 0.4, duration: 0.9, ease: 'easeOut' }}

@@ -8,6 +8,8 @@ import {
   flexRender,
 } from '@tanstack/react-table'
 
+import { useColumnFilters, FilterHeader } from './ColumnFilter'
+
 // Row-level real start/end (§E.14). `scheduled_date`/`shift` are derived from
 // END_TIMESTAMP, so they are shown as the row's end, never as its start.
 function fmtTs(v) {
@@ -18,7 +20,7 @@ function fmtTs(v) {
 
 const COLUMNS = [
   { accessorKey: 'production_order', header: 'Order' },
-  { accessorKey: 'cdd', header: 'CDD', cell: (i) => i.getValue() ?? '—' },
+  { accessorKey: 'cdd', header: 'PDD', cell: (i) => i.getValue() ?? '—' },
   { accessorKey: 'operation_no', header: 'Op' },
   { accessorKey: 'line_no', header: 'Line', cell: (i) => i.getValue() ?? 1 },
   { accessorKey: 'task', header: 'Task' },
@@ -43,15 +45,36 @@ const COLUMNS = [
   },
 ]
 
+// Per-column filter text = what the cell shows, same order as COLUMNS.
+const dash = (v) => v ?? '—'
+const FILTER_COLS = [
+  { label: 'Order', get: (r) => r.production_order },
+  { label: 'PDD', get: (r) => dash(r.cdd) },
+  { label: 'Op', get: (r) => r.operation_no },
+  { label: 'Line', get: (r) => r.line_no ?? 1 },
+  { label: 'Task', get: (r) => r.task },
+  { label: 'Machine', get: (r) => dash(r.machine_name) },
+  { label: 'Start', get: (r) => fmtTs(r.start_timestamp) },
+  { label: 'End', get: (r) => fmtTs(r.end_timestamp) },
+  { label: 'End Shift', get: (r) => dash(r.shift) },
+  { label: 'Order Done', get: (r) => dash(r.order_completion_date) },
+  { label: 'Order Done Shift', get: (r) => dash(r.order_completion_shift) },
+  { label: 'Qty', get: (r) => r.balance_qty },
+  { label: 'Batch Key', get: (r) => r.batch_key },
+  { label: 'Safety Stock', get: (r) => (r.is_safety_stock ? 'Y' : '—') },
+  { label: 'Remark', get: (r) => r.remark ?? '' },
+]
+
 /** Paginated, sortable, filterable table over the (potentially 5000+-row) MCH_SCHEDULE_OUTPUT. */
 export default function ScheduleTable({ rows }) {
   const [sorting, setSorting] = useState([])
   const [globalFilter, setGlobalFilter] = useState('')
+  const cf = useColumnFilters(rows, FILTER_COLS)
 
   const columns = useMemo(() => COLUMNS, [])
 
   const table = useReactTable({
-    data: rows,
+    data: cf.rows,
     columns,
     state: { sorting, globalFilter },
     onSortingChange: setSorting,
@@ -81,14 +104,16 @@ export default function ScheduleTable({ rows }) {
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr>
-              {table.getHeaderGroups()[0].headers.map((h) => (
+              {table.getHeaderGroups()[0].headers.map((h, i) => (
                 <th
                   key={h.id}
-                  onClick={h.column.getToggleSortingHandler()}
-                  className="bg-ink-900 border-b border-ink-600 px-3 py-2 text-left font-mono uppercase tracking-wide text-text-muted cursor-pointer select-none whitespace-nowrap"
+                  className="bg-ink-900 border-b border-ink-600 px-3 py-2 text-left font-mono uppercase tracking-wide text-text-muted select-none whitespace-nowrap align-top"
                 >
-                  {flexRender(h.column.columnDef.header, h.getContext())}
-                  {{ asc: ' ▲', desc: ' ▼' }[h.column.getIsSorted()] ?? ''}
+                  <div onClick={h.column.getToggleSortingHandler()} className="cursor-pointer">
+                    {flexRender(h.column.columnDef.header, h.getContext())}
+                    {{ asc: ' ▲', desc: ' ▼' }[h.column.getIsSorted()] ?? ''}
+                  </div>
+                  <FilterHeader cf={cf} i={i} bare />
                 </th>
               ))}
             </tr>
@@ -106,7 +131,8 @@ export default function ScheduleTable({ rows }) {
             {table.getRowModel().rows.length === 0 && (
               <tr>
                 <td colSpan={columns.length} className="px-3 py-8 text-center text-text-faint">
-                  No rows match this filter.
+                  No rows match this filter.{' '}
+                  {cf.isFiltering && <button className="text-accent underline" onClick={cf.clear}>Clear column filters</button>}
                 </td>
               </tr>
             )}

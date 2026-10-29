@@ -3,11 +3,22 @@ import clsx from 'clsx'
 
 import PageHeader from '../components/PageHeader'
 import WhatIfResult from '../components/WhatIfResult'
+import { useColumnFilters, FilterHeader, NoMatchRow } from '../components/ColumnFilter'
 import { LoadingPanel, ErrorPanel, Spinner } from '../components/LoadingState'
 import { useToast } from '../hooks/useToast'
 import { getWhatIfRuns, refreshWhatIf, runWhatIf } from '../api/client'
 
 const PAGE = 60
+
+// Per-column filters: text as shown in each cell (Orders also matches the order numbers inside the run).
+const RUN_FILTER_COLS = [
+  { label: 'Run', get: (r) => `#${r.run}` },
+  { label: 'Task', get: (r) => r.task },
+  { label: 'Orders', get: (r) => `${r.n_orders} ${r.pieces} pcs ${r.orders.join(' ')}` },
+  { label: 'Machine', get: (r) => r.machines.join(', ') },
+  { label: 'Starts', get: (r) => fmtTs(r.start) },
+  { label: 'Ends', get: (r) => fmtTs(r.end) },
+]
 
 function fmtTs(iso) {
   if (!iso) return '—'
@@ -75,7 +86,9 @@ export default function WhatIfRuns({ active }) {
       .sort((a, b) => a.start.localeCompare(b.start) || a.run - b.run)
   }, [runs, machineFilter, taskFilter, query])
 
-  useEffect(() => setShown(PAGE), [machineFilter, taskFilter, query])
+  const cf = useColumnFilters(filtered, RUN_FILTER_COLS)
+
+  useEffect(() => setShown(PAGE), [machineFilter, taskFilter, query, cf.filters])
 
   function addMove(run, machine) {
     if (!machine) return
@@ -143,7 +156,7 @@ export default function WhatIfRuns({ active }) {
               <div className="flex items-center justify-between mb-3">
                 <h3 className="section-title mb-0">1 · Your edits ({edits.length})</h3>
                 <label className="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer select-none" title="Keep the reordered runs on the machines they have today, so the result shows the effect of ORDER only">
-                  <input type="checkbox" className="accent-[#f97316]" checked={pin} onChange={(e) => setPin(e.target.checked)} />
+                  <input type="checkbox" className="accent-accent" checked={pin} onChange={(e) => setPin(e.target.checked)} />
                   Pin machines when reordering
                 </label>
               </div>
@@ -220,13 +233,16 @@ export default function WhatIfRuns({ active }) {
                 <table className="w-full text-xs border-collapse">
                   <thead>
                     <tr className="bg-ink-900 text-text-muted font-mono uppercase tracking-wide">
-                      {['Run', 'Task', 'Orders', 'Machine', 'Starts', 'Ends', 'Move to…', 'Order'].map((h) => (
-                        <th key={h} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap">{h}</th>
+                      {RUN_FILTER_COLS.map((c, i) => (
+                        <th key={c.label} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap align-top"><FilterHeader cf={cf} i={i} /></th>
+                      ))}
+                      {['Move to…', 'Order'].map((h) => (
+                        <th key={h} className="px-3 py-2 text-left border-b border-ink-600 whitespace-nowrap align-top">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.slice(0, shown).map((r) => {
+                    {cf.rows.slice(0, shown).map((r) => {
                       const isPending = pending === r.run
                       const open = expanded.has(r.run)
                       return (
@@ -269,15 +285,13 @@ export default function WhatIfRuns({ active }) {
                         </tr>
                       )
                     })}
-                    {filtered.length === 0 && (
-                      <tr><td colSpan={8} className="px-3 py-8 text-center text-text-faint">No runs match this filter.</td></tr>
-                    )}
+                    {cf.rows.length === 0 && <NoMatchRow cf={cf} colSpan={8} />}
                   </tbody>
                 </table>
               </div>
-              {filtered.length > shown && (
+              {cf.rows.length > shown && (
                 <div className="mt-3 text-center">
-                  <button className="btn-secondary" onClick={() => setShown(shown + PAGE)}>Show {Math.min(PAGE, filtered.length - shown)} more</button>
+                  <button className="btn-secondary" onClick={() => setShown(shown + PAGE)}>Show {Math.min(PAGE, cf.rows.length - shown)} more</button>
                 </div>
               )}
             </div>

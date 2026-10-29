@@ -1,0 +1,73 @@
+How to judge a result
+
+Look at four things in the result panel:
+
+Late orders (67 → ?) and total lateness (1,662 → ?). A change of a few days is noise. Treat a change of 3+ late orders or 50+ days as significant.
+Improved vs. delayed counts. One run moving often helps some orders and hurts others, so both numbers matter.
+Placements changed. A large number with no change in late orders is just reshuffling.
+Runs affected and the notes. These show which runs were pulled forward and which orders were split off.
+Problem 1: A run feeding late orders is stuck behind other runs on a busy machine
+
+Use: Reorder.
+Steps:
+
+Filter by the machine, or search a late order’s number, to find its run.
+Click Run earlier… on that run.
+Click ← Before this on the earliest run on the same machine.
+Leave Pin machines on, then click Run what-if.
+
+Significant example: Run #93 (VB03, 2 orders, 1 late) placed before run #21 on 3PMW05.
+
+Late orders: 67 → 58. Total lateness: 1,662 → 1,474 days (−188).
+77 orders finish earlier, 22 finish later, and 10 stop being late.
+The cost: 1 order becomes newly late.
+
+Warning, same type of edit: Run #169 (VB06, 1 order) placed before run #39 on 3PMH92 made late orders go from 67 to 88 (+21). Of the 35 reorders I tried, 7 helped and 27 hurt.
+
+No-difference example: Run #21 placed before run #1. They use different machines and fixtures, so 0 placements changed and the verdict was “No effect”.
+
+Rule of thumb: Reordering takes machine time from some runs and gives it to others. It helps when the run you pull forward feeds many late orders and the runs it displaces have slack.
+
+Problem 2: Move a late order’s run to a different machine
+
+Use: Move.
+Steps:
+
+Find the run, open its Move to… dropdown, and pick a machine that shows full coverage (for example “covers 18/18”).
+Click Run what-if.
+
+No significant gain found: The best of 28 tries (run #30 moved to 2PMC17) saved 1 day of lateness. In effect it did nothing.
+
+No-difference example: Run #1 (18 orders, 16 of them late) moved from 2PMC16 to 2PMC17. 126 placements changed, but late orders and total lateness were both unchanged.
+
+Significant harm: Run #160 (3 orders) moved from 3PMH91 to 2PMC17 raised late orders from 67 to 69 and lateness by 144 days, with 948 placements changed. A small move into a busy machine can ripple through the schedule.
+
+Takeaway: Moving a run to another machine rarely rescues late orders, and it can do damage.
+
+Problem 3: Relieve the busiest machines
+
+Use: Move, on the largest runs of the busiest machines.
+Steps: Filter by the busiest machine, move one of its big runs to a less-loaded machine with full coverage, and compare.
+
+Best result: Run #18 moved from 2PMC16 (463 hours) to 2PMC17 (488 hours) saved 3 days, with 29 orders improved and 1 delayed. That is small.
+
+No-difference example: Run #67 (10 orders) moved between the same two machines: late orders and lateness unchanged.
+
+Worse result: Run #4 (19 orders) moved from 3PMC22 to 2PMC16 added 4 days.
+
+Why so little: The three busiest machines carry similar loads (463–488 hours), so there’s little imbalance to fix.
+
+Problem 4: “What if a machine is out?”
+
+Use: Several Move edits, one per run on that machine.
+Important limit: There is no outage switch. My test moved only runs that sit entirely on that machine, so runs that span several machines still used it. Treat this as a rough drill, not a true breakdown.
+
+Larger effect: 3PMC22 “down” (4 runs moved): late orders 67 → 68, lateness +13 days, and 53 orders finished later.
+
+No-difference example: 3PMW05 “down” (its 832 hours, but only 1 run sits fully on it): lateness −1 day.
+
+Summary
+Reorder on a shared machine is the only edit I found with large effects, in both directions. It’s worth testing before acting.
+Move is mostly neutral and sometimes harmful.
+Always check the delayed count and the runs pulled forward before trusting a good headline number.
+The results are advisory: Engine 1 can’t carry out these changes, so you would act on the shop floor.

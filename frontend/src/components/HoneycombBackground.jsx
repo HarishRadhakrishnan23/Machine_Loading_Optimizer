@@ -1,5 +1,7 @@
 import { useMemo } from 'react'
 
+import { useTheme } from '../theme/ThemeContext'
+
 /**
  * A bottom-right ambient glow — hexagons styled after recessed ceiling
  * lighting (warm glow bleeding from within each cell, dark frame edge),
@@ -13,7 +15,6 @@ import { useMemo } from 'react'
 const HEX_R = 50
 const COLS = 7
 const ROWS = 8
-const GLOW_COLORS = ['#f97316', '#38bdf8', '#fb923c']
 
 function hexPoints(cx, cy, r) {
   const pts = []
@@ -25,6 +26,8 @@ function hexPoints(cx, cy, r) {
 }
 
 export default function HoneycombBackground() {
+  const { colors } = useTheme()
+  const GLOW_COLORS = colors.glow // dark: orange/sky | light: blues (no orange)
   const { hexes, pulses, boxW, boxH } = useMemo(() => {
     const colSpacing = HEX_R * 1.5
     const rowSpacing = Math.sqrt(3) * HEX_R
@@ -62,7 +65,7 @@ export default function HoneycombBackground() {
     })
 
     return { hexes, pulses, boxW, boxH }
-  }, [])
+  }, [GLOW_COLORS])
 
   const maskId = 'honeycomb-fade-mask'
 
@@ -121,7 +124,7 @@ export default function HoneycombBackground() {
         </g>
 
         {/* Faint frame edge, like a recessed light fixture's housing */}
-        <g fill="none" stroke="#e6edf3" strokeOpacity="0.1" strokeWidth="1">
+        <g fill="none" stroke={colors.honeyFrame} strokeOpacity="0.1" strokeWidth="1">
           {hexes.map((h, i) => (
             <polygon key={i} points={h.points} />
           ))}
