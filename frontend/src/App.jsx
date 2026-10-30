@@ -4,6 +4,7 @@ import clsx from 'clsx'
 import { ToastProvider } from './hooks/useToast'
 import { useTheme } from './theme/ThemeContext'
 import HoneycombBackground from './components/HoneycombBackground'
+import AuroraBackground from './components/AuroraBackground'
 import Overview from './views/Overview'
 import ScheduleView from './views/ScheduleView'
 import MachineUtilisation from './views/MachineUtilisation'
@@ -35,7 +36,7 @@ export default function App() {
   return (
     <ToastProvider>
       <div className="h-screen overflow-hidden flex">
-        <HoneycombBackground />
+        {theme === 'light' ? <AuroraBackground /> : <HoneycombBackground />}
 
         {/* Sidebar */}
         <aside className="sidebar-surface w-64 shrink-0 bg-ink-900 text-text flex flex-col border-r border-ink-600">

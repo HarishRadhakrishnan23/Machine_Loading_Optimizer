@@ -93,8 +93,8 @@ export default function HoneycombBackground() {
       <defs>
         {hexes.map((h) => (
           <radialGradient key={h.gradId} id={h.gradId} cx="50%" cy="45%" r="65%">
-            <stop offset="0%" stopColor={h.color} stopOpacity="0.58" />
-            <stop offset="60%" stopColor={h.color} stopOpacity="0.28" />
+            <stop offset="0%" stopColor={h.color} stopOpacity="0.88" />
+            <stop offset="60%" stopColor={h.color} stopOpacity="0.38" />
             <stop offset="100%" stopColor={h.color} stopOpacity="0" />
           </radialGradient>
         ))}
